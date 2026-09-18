@@ -13,4 +13,4 @@ package build
 // version handshake does not fire on a difference that is not real.
 //
 //	go build -ldflags "-X github.com/mtchen/keeper/internal/build.Version=1.2.3"
-var Version = "0.0.3"
+var Version = "0.0.4"

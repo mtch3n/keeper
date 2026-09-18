@@ -8,13 +8,12 @@
 # Run it with `uvx git-cliff`; nothing needs installing.
 
 [changelog]
-header = """
-# Changelog
-
-Generated from the commit history. Every commit appears somewhere: one that does
-not follow the convention lands under *Other* rather than vanishing, because a
-changelog that silently drops entries is worse than no changelog at all.
-"""
+# Empty, because `make changelog` uses --prepend. git-cliff writes the header
+# on every run, so a non-empty one is inserted above the file's existing
+# preamble each release: 0.0.3 shipped with two "# Changelog" headings and the
+# duplicate was removed by hand. The real preamble lives in CHANGELOG.md, which
+# is where a reader finds it and where it can say things the generator cannot.
+header = ""
 
 body = """
 {% if version %}\
