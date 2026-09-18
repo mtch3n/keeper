@@ -86,13 +86,16 @@ func (v *Vault) Unlock(ctx context.Context, passphrase string) error {
 	switch {
 	case err == nil:
 		// resolved; fall through
-	case errors.Is(err, errNoKeySource) && !exists:
+	case errors.Is(err, ErrNoKeySource) && !exists:
 		key, source, err = bootstrap(v.dir, passphrase)
 		if err != nil {
 			return err
 		}
-	case errors.Is(err, errNoKeySource):
-		return errors.New("vault: no key source available; set KEEPER_MASTER_KEY, provide key.age, or supply a passphrase")
+	case errors.Is(err, ErrNoKeySource):
+		// Wrapped, not restated: the API boundary maps this sentinel to
+		// CodeVaultLocked so `keeper vault unlock` can tell "this install needs a
+		// passphrase" from "something broke", and only then prompts for one.
+		return fmt.Errorf("%w; set KEEPER_MASTER_KEY, provide key.age, or supply a passphrase", ErrNoKeySource)
 	default:
 		return err
 	}

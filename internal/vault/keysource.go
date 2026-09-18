@@ -39,11 +39,11 @@ const (
 	argonSaltLen = 16
 )
 
-// errNoKeySource means none of the four sources resolved and no passphrase
+// ErrNoKeySource means none of the four sources resolved and no passphrase
 // was supplied. It is distinguished from every other resolution error so
 // Unlock can tell "nothing configured yet" (bootstrap candidate) from "a
 // configured source is broken" (hard failure, never silently degraded).
-var errNoKeySource = errors.New("vault: no key source available")
+var ErrNoKeySource = errors.New("vault: no key source available")
 
 // keychainGet and keychainSet seam the OS keychain for tests: a test process
 // must never touch the real system keyring. Production code never reassigns
@@ -54,7 +54,7 @@ var (
 )
 
 // resolveMasterKey tries the key source chain in order and returns the first
-// one that resolves, or errNoKeySource if none does and no passphrase was
+// one that resolves, or ErrNoKeySource if none does and no passphrase was
 // given. A source that is present but malformed is a hard error: falling
 // through in that case would be exactly the silent degradation R4.3 forbids.
 func resolveMasterKey(dir, passphrase string) (key []byte, source string, err error) {
@@ -97,7 +97,7 @@ func resolveMasterKey(dir, passphrase string) (key []byte, source string, err er
 		// same "no key source available" error every other absence would.
 	}
 
-	return nil, "", errNoKeySource
+	return nil, "", ErrNoKeySource
 }
 
 // keyFromKeychain reads the master key from the OS keychain. Any retrieval
