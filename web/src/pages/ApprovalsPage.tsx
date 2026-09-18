@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
+import { AcceptedFindingsMark } from '@/components/wrappers/AcceptedFindingsMark'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { decideApproval, listApprovals, subscribeToEvents } from '@/lib/api'
+import { useSessionScope } from '@/lib/session-scope'
 import { age, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
 import type { ApprovalItem } from '@/lib/types'
 
@@ -28,6 +30,7 @@ import type { ApprovalItem } from '@/lib/types'
  *     product exists to avoid.
  */
 export function ApprovalsPage() {
+  const { sessionId, setSessionId } = useSessionScope()
   const [items, setItems] = useState<ApprovalItem[] | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -66,16 +69,29 @@ export function ApprovalsPage() {
 
   if (items === null) return <Skeleton className="h-40 w-full" />
 
-  if (items.length === 0) {
+  // Scoping to one agent narrows the queue but never reorders it: oldest
+  // first is the whole point, and a filtered queue that reads as empty would
+  // be the one way this screen could lie.
+  const scoped = sessionId ? items.filter((item) => item.session.id === sessionId) : items
+
+  if (scoped.length === 0) {
     return (
       <Empty>
         <EmptyHeader>
           <EmptyTitle>Nothing is waiting</EmptyTitle>
           <EmptyDescription>
-            Escalations from every agent session arrive here, oldest first. A day with none is a day nothing
-            needed you.
+            {sessionId
+              ? `Nothing from this agent. ${items.length} item(s) are waiting from others.`
+              : 'Escalations from every agent session arrive here, oldest first. A day with none is a day nothing needed you.'}
           </EmptyDescription>
         </EmptyHeader>
+        {sessionId ? (
+          <EmptyContent>
+            <Button variant="outline" size="sm" onClick={() => setSessionId(null)}>
+              Show every agent
+            </Button>
+          </EmptyContent>
+        ) : null}
       </Empty>
     )
   }
@@ -83,6 +99,19 @@ export function ApprovalsPage() {
   return (
     <div className="flex flex-col gap-6">
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
+
+      {/* A narrowed queue that looks like the whole queue is the one way this
+          screen could mislead: it would read as "nothing else needs you". */}
+      {sessionId && scoped.length !== items.length ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-muted-foreground">
+            Showing one agent. {items.length - scoped.length} item(s) from others are hidden.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => setSessionId(null)}>
+            Show every agent
+          </Button>
+        </div>
+      ) : null}
 
       <Table>
         <TableHeader>
@@ -97,7 +126,7 @@ export function ApprovalsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {items.map((item) => (
+          {scoped.map((item) => (
             <TableRow
               key={item.ticket_id}
               onClick={() => setOpen(open === item.ticket_id ? null : item.ticket_id)}
@@ -138,17 +167,6 @@ export function ApprovalsPage() {
  * this screen other than the waiting lamp, and it carries the same meaning: this
  * needs you to know something.
  */
-function AcceptedFindingsMark() {
-  return (
-    <span
-      className="ml-2 text-waiting"
-      title="This connection runs with accepted privilege findings: keeper's database-level protection does not apply to it."
-    >
-      (!)
-    </span>
-  )
-}
-
 /**
  * §9.2's layout: facts first, SQL last. A human cannot tell from
  * `SELECT * FROM users WHERE created_at > '2024-01-01'` that it returns 50,000

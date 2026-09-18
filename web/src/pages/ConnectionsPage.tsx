@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
+import { RegisterDialog } from '@/components/wrappers/RegisterDialog'
 import { Lamp } from '@/components/wrappers/Lamp'
 import {
   acceptFindings,
@@ -15,7 +16,6 @@ import {
   removeConnection,
   getConnection,
   listConnections,
-  registerConnection,
   type ConnectionDetail,
 } from '@/lib/api'
 import { age } from '@/lib/render'
@@ -71,13 +71,24 @@ export function ConnectionsPage() {
     <div className="flex flex-col gap-8">
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
 
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-title">Connections</h1>
+        <RegisterDialog
+          onRegistered={async (c) => {
+            await refresh()
+            await open(c.id)
+          }}
+          onError={setError}
+        />
+      </div>
+
       {list.length === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyTitle>No connections</EmptyTitle>
             <EmptyDescription>
-              Register a database below. keeper audits the credential and shows you what it found; it does not
-              refuse one.
+              Register one and keeper audits the credential, then shows you what it found. It does not refuse
+              a credential; it makes holding a broad one impossible by accident.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -121,14 +132,6 @@ export function ConnectionsPage() {
         />
       ) : null}
 
-      <Separator />
-      <RegisterForm
-        onRegistered={async (c) => {
-          await refresh()
-          await open(c.id)
-        }}
-        onError={setError}
-      />
     </div>
   )
 }
@@ -323,91 +326,6 @@ function FindingsAcceptance({
         </Button>
       </div>
     </div>
-  )
-}
-
-function RegisterForm({
-  onRegistered,
-  onError,
-}: {
-  onRegistered: (c: { id: string }) => Promise<void>
-  onError: (e: string) => void
-}) {
-  const [name, setName] = useState('')
-  const [dsn, setDsn] = useState('')
-  const [writeDsn, setWriteDsn] = useState('')
-  const [catalogPath, setCatalogPath] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="text-heading">Register a database</h2>
-      <p className="text-sm text-muted-foreground">
-        keeper audits the role and reports what it holds. It stores the connection disabled and enables it once
-        you have accepted each finding. A separate write credential is optional; without one, write mode does not
-        exist for this connection and no setting here creates it.
-      </p>
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1">
-          <span className="text-label text-muted-foreground">name</span>
-          <Input value={name} onChange={(e) => setName(e.target.value)} className="w-48" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-label text-muted-foreground">connection string</span>
-          <Input
-            type="password"
-            value={dsn}
-            onChange={(e) => setDsn(e.target.value)}
-            className="w-96"
-            placeholder="postgres://user:password@host:5432/database"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-label text-muted-foreground">write connection string (optional)</span>
-          <Input
-            type="password"
-            value={writeDsn}
-            onChange={(e) => setWriteDsn(e.target.value)}
-            className="w-96"
-            placeholder="leave empty and write mode does not exist"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-label text-muted-foreground">catalog path</span>
-          <Input
-            value={catalogPath}
-            onChange={(e) => setCatalogPath(e.target.value)}
-            className="w-64"
-            placeholder=".keeper/catalog.yaml"
-          />
-        </label>
-        <Button
-          disabled={busy || name.trim() === '' || dsn.trim() === ''}
-          onClick={async () => {
-            setBusy(true)
-            try {
-              const c = await registerConnection({
-                name: name.trim(),
-                dsn: dsn.trim(),
-                write_dsn: writeDsn.trim() || undefined,
-                catalog_path: catalogPath.trim() || undefined,
-              })
-              setName('')
-              setDsn('')
-              setWriteDsn('')
-              setCatalogPath('')
-              await onRegistered(c)
-            } catch (e) {
-              onError(e instanceof Error ? e.message : String(e))
-            } finally {
-              setBusy(false)
-            }
-          }}
-        >
-          Audit and store
-        </Button>
-      </div>
-    </section>
   )
 }
 
