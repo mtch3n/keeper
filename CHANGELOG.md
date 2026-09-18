@@ -8,6 +8,36 @@ changelog at all.
 The 0.0.1 entry below is written by hand, because a first release has no previous
 tag to generate a range from. Every entry after it is produced from the commits.
 
+## 0.0.2 — 2026-09-18
+
+Plugin fixes. The binaries are unchanged; the version moves because the plugin's
+does, and a plugin whose version does not move is never reinstalled.
+
+### Fixed
+
+- `.mcp.json` declared `"type": "stdio"` alongside `command`, and the host took
+  the type as the executable — `Executable not found in $PATH: stdio`. Working
+  stdio plugins carry no `type` field at all.
+- `plugin.json` did not declare `"skills": "./skills/"`, so neither skill loaded.
+  The command did, which made the failure look like a naming collision.
+- The skill and the command both answered to `keeper:keeper`. The command is now
+  `/keeper:ui` and does one thing a skill cannot: print the dashboard's address,
+  which is unguessable because the port is chosen at startup. Handing over a
+  sensitive value is back where it belongs — in the skill, since the model is
+  what has to drive that exchange.
+- The MCP server is reached through `keeper mcp` via a launcher that explains
+  itself when the binary is missing, instead of failing with a bare `ENOENT`.
+- `keeper daemon restart` could not restart a version-mismatched daemon, which
+  is the one situation it exists for: it handshook first, and the handshake is
+  what refuses on a mismatch. The error told you to run the only command that
+  could not work. It now posts the stop request straight to the socket — nothing
+  about stopping needs a session.
+
+### Added
+
+- A `keeper-install` skill: install has state in it — binary, version, daemon,
+  vault, findings, catalog — and each of those has a different fix.
+
 ## 0.0.1 — 2026-09-18
 
 First tagged build. PostgreSQL reads end to end.

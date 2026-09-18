@@ -10,8 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
-
-	"github.com/mtchen/keeper/internal/types"
 )
 
 // DefaultSocketPath returns $XDG_RUNTIME_DIR/keeper.sock, or a per-user
@@ -133,10 +131,13 @@ func findKeeper() (string, []string, error) {
 // the queries that minted them have to be re-run (SPEC R3.4d). That is a cost
 // one window must not impose on the others without a person choosing it.
 func RestartDaemon(ctx context.Context, socketPath string) error {
-	if c, err := Dial(ctx, socketPath, types.ClientInfo{Name: "keeper"}); err == nil {
-		_ = c.do(ctx, http.MethodPost, "/v1/daemon/shutdown", nil, nil)
-		c.Close()
-	}
+	// Ask it to stop without handshaking first.
+	//
+	// A version mismatch is the main reason anyone runs this, and Dial refuses on
+	// exactly that — so going through Dial would make the command the error
+	// message recommends the one command that cannot work. Nothing here needs a
+	// session: stopping is not an operation on one.
+	shutdown(ctx, socketPath)
 
 	// Wait for the socket to stop answering before starting a new one, so the
 	// replacement does not race the old process's listener.
@@ -150,4 +151,30 @@ func RestartDaemon(ctx context.Context, socketPath string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return StartDaemon(ctx, socketPath)
+}
+
+// shutdown posts the stop request straight to the socket, with no handshake and
+// no session. A daemon that is not there, or does not answer, is not an error:
+// the caller is about to start a new one either way.
+func shutdown(ctx context.Context, socketPath string) {
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", socketPath)
+			},
+		},
+		Timeout: 5 * time.Second,
+	}
+	defer client.CloseIdleConnections()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/daemon/shutdown", nil)
+	if err != nil {
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
 }
