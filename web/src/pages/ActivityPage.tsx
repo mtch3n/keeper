@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { getActivityRecord, listActivity } from '@/lib/api'
+import { useSessionScope } from '@/lib/session-scope'
 import { age, durationMs, relationList, renderSQL } from '@/lib/render'
 import type { AuditRecord, Transform } from '@/lib/types'
 
@@ -27,11 +28,19 @@ export function ActivityPage() {
   const [records, setRecords] = useState<AuditRecord[] | null>(null)
   const [open, setOpen] = useState<AuditRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const { sessionId } = useSessionScope()
   const [filters, setFilters] = useState<{ session: string; connection: string; tier: string }>({
     session: '',
     connection: '',
     tier: '',
   })
+
+  // Choosing an agent in the sidebar is the same act as typing its id here,
+  // so it writes the filter rather than shadowing it: the field keeps showing
+  // what the list is actually filtered by, and clearing it still clears.
+  useEffect(() => {
+    setFilters((f) => (f.session === (sessionId ?? '') ? f : { ...f, session: sessionId ?? '' }))
+  }, [sessionId])
 
   const refresh = useCallback(async () => {
     try {

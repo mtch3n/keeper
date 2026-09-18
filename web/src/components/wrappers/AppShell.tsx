@@ -7,10 +7,25 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Lamp } from '@/components/wrappers/Lamp'
 import { KeeperMark } from '@/components/wrappers/KeeperMark'
 import { ThemeToggle } from '@/components/wrappers/ThemeToggle'
-import { ConnectionSwitcher } from '@/components/wrappers/ConnectionSwitcher'
+import { AppSidebar, type Scope } from '@/components/wrappers/AppSidebar'
+import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { useLiveStatus } from '@/lib/live-status'
 
 export type Section = 'connections' | 'approvals' | 'permissions' | 'activity' | 'catalog' | 'policy' | 'settings'
+
+/** Which scope a screen reads. `Approvals`, `Permissions` and `Activity` are
+ * read one agent at a time (SPEC R9.1, R9.3e, §10); `Catalog` and `Policy`
+ * are per-connection (UI.md §2.3). `Connections` and `Settings` are about the
+ * daemon rather than either scope, so neither group is dimmed for them. */
+const SCOPE: Record<Section, Scope> = {
+  connections: null,
+  approvals: 'session',
+  permissions: 'session',
+  activity: 'session',
+  catalog: 'connection',
+  policy: 'connection',
+  settings: null,
+}
 
 const SECTIONS: { section: Section; label: string; to: string }[] = [
   { section: 'connections', label: 'Connections', to: '/connections' },
@@ -22,9 +37,14 @@ const SECTIONS: { section: Section; label: string; to: string }[] = [
 ]
 
 /**
- * The persistent chrome every screen sits inside: the mark, the connection
- * scope control, the six sections, the daemon's `Lamp`, the theme toggle,
- * and settings as the right-most control (CONTRACT.md §5, UI.md §2.3). The
+ * The persistent chrome every screen sits inside: `AppSidebar` down the left
+ * holding both scopes, and across the top the mark, the six sections, the
+ * theme toggle and settings as the right-most control (CONTRACT.md §5,
+ * UI.md §2.3). The scope controls left the bar because four of the six
+ * sections ignored the one that used to sit there, and a control that is
+ * always present and only sometimes effective is unreadable. The daemon's
+ * `Lamp` joins the bar only when the stream is degraded, never when it is
+ * healthy. The
  * current section is marked by a foreground rule that grows from the centre,
  * never by the amber accent — amber is spent entirely on `waiting` (UI.md
  * §1's governing rule: three colours carry meaning and nothing else does).
@@ -38,18 +58,19 @@ const SECTIONS: { section: Section; label: string; to: string }[] = [
 export function AppShell({ section, children }: { section?: Section; children: ReactNode }) {
   const { status } = useLiveStatus()
 
-  // The daemon Lamp only ever uses three of the four states: it never
-  // "waits" for a human decision the way an approval row does, so its amber
-  // means "reconnecting" rather than "needs you" — still the same meaning,
-  // attention, just aimed at the connection instead of a queue item.
+  // The daemon reports itself only when it has something to report. A live
+  // daemon is the expected state, and a permanent "Live" lamp spends the
+  // chrome's attention budget on the one reading that never needs acting on
+  // — the same reason `idle` stays silent, since it is what the first paint
+  // shows before the stream has opened. Amber here means "reconnecting" and
+  // red means "not responding": both are the connection asking for attention,
+  // which is what the vocabulary is for (UI.md §2.1).
   const daemon =
-    status === 'live'
-      ? { lamp: 'live' as const, label: 'Live', title: 'Receiving live updates from keeperd' }
-      : status === 'waiting'
-        ? { lamp: 'waiting' as const, label: 'Reconnecting', title: 'Live updates dropped; reconnecting' }
-        : status === 'blocked'
-          ? { lamp: 'blocked' as const, label: 'Offline', title: 'keeperd is not responding' }
-          : { lamp: 'idle' as const, label: 'Idle', title: 'No live stream open' }
+    status === 'waiting'
+      ? { lamp: 'waiting' as const, label: 'Reconnecting', title: 'Live updates dropped; reconnecting' }
+      : status === 'blocked'
+        ? { lamp: 'blocked' as const, label: 'Offline', title: 'keeperd is not responding' }
+        : null
 
   const tab =
     'relative flex items-center px-2.5 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground sm:px-4 ' +
@@ -57,16 +78,17 @@ export function AppShell({ section, children }: { section?: Section; children: R
     'aria-[current=page]:text-foreground aria-[current=page]:after:scale-x-100'
 
   return (
-    <>
-      <div className="sticky top-0 z-20 flex h-shell items-stretch gap-3 border-b border-border bg-background px-6 sm:gap-6 lg:px-8">
+    <SidebarProvider>
+      <AppSidebar scope={section ? SCOPE[section] : null} />
+      <SidebarInset>
+      <div className="sticky top-0 z-20 flex h-shell items-stretch gap-3 bg-background px-6 sm:gap-6 lg:px-8">
+        <div className="flex items-center">
+          <SidebarTrigger />
+        </div>
         <Link to="/connections" className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <KeeperMark />
           keeper
         </Link>
-
-        <div className="flex items-center">
-          <ConnectionSwitcher />
-        </div>
 
         <nav className="-ml-2 flex min-w-0 overflow-x-auto">
           {SECTIONS.map((item) => (
@@ -82,12 +104,14 @@ export function AppShell({ section, children }: { section?: Section; children: R
         </nav>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
-          <span className={cn('flex items-center gap-2 text-xs text-muted-foreground')} title={daemon.title}>
-            <Lamp state={daemon.lamp} label={daemon.label} />
-            <span aria-hidden="true" className="max-sm:hidden">
-              {daemon.label}
+          {daemon && (
+            <span className="flex items-center gap-2 text-xs text-muted-foreground" title={daemon.title}>
+              <Lamp state={daemon.lamp} label={daemon.label} />
+              <span aria-hidden="true" className="max-sm:hidden">
+                {daemon.label}
+              </span>
             </span>
-          </span>
+          )}
           <ThemeToggle />
           <Tooltip>
             <TooltipTrigger
@@ -115,6 +139,7 @@ export function AppShell({ section, children }: { section?: Section; children: R
           of an ultra-wide monitor (UI.md — keeper is tables and facts, not
           a page of prose). */}
       <main className="mx-auto w-full max-w-page px-6 pt-8 pb-16 lg:px-8">{children}</main>
-    </>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }
