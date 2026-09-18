@@ -8,6 +8,49 @@ changelog at all.
 The 0.0.1 entry below is written by hand, because a first release has no previous
 tag to generate a range from. Every entry after it is produced from the commits.
 
+
+## 0.0.4 — 2026-09-18
+
+`keeper update`. The manual upgrade was five commands, and the README's
+version of it had been broken since the first release.
+
+### Added
+
+- **`keeper update`** verifies the published archive against its checksum
+  before a byte is written, replaces this binary, and restarts the daemon onto
+  it. `--check` reports what is published and changes nothing.
+
+  It reads the daemon **before** downloading anything. Completing an update
+  means restarting, and a restart permanently invalidates every token every
+  session holds and cancels every pending ticket. When there is something to
+  lose it names what it found and stops without touching the binary, leaving
+  `--force` as a decision rather than a surprise. A daemon at a different
+  version — the state a half-finished update leaves behind — counts as
+  unknown rather than as nothing, because that is the one dial failure where
+  guessing wrong silently cancels somebody's work.
+
+  It refuses a binary under a package manager's tree, where the next upgrade
+  of that package would undo it. `/usr/local` is not in that list: it exists
+  for installs outside the package manager, and the README names it.
+
+  It is a CLI command and is not on the MCP surface. An agent that could
+  replace keeper's executable would be removing its own supervision, which is
+  why registering a connection, accepting a finding, approving and granting
+  are not there either.
+
+- The `keeper-install` skill leads with `keeper update` and keeps the manual
+  download as the fallback it now is. Plugin version 0.0.3.
+
+### Fixed
+
+- The README's release install snippet fetched `SHA256SUMS`, ran the checksum
+  check, and then untarred an archive no line had downloaded. It was also
+  pinned to 0.0.1, two releases stale.
+- `make changelog` wrote its own `# Changelog` heading above the file's
+  existing one on every run, and prepended each new section above the preamble
+  rather than under it. 0.0.3 shipped with two headings and the duplicate was
+  removed by hand; `scripts/changelog.sh` now splices the section into place.
+
 ## 0.0.3 — 2026-09-18
 
 The dashboard stops asking which database you are looking at and starts asking

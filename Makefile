@@ -59,7 +59,7 @@ lint-explain:
 ## changelog — prepend the commits since the last tag. TAG=v1.2.3 to head them
 ## under a version. Nothing needs installing; uvx fetches git-cliff.
 changelog:
-	uvx git-cliff@2.10.1 --prepend CHANGELOG.md --unreleased $(if $(TAG),--tag $(TAG),)
+	scripts/changelog.sh $(TAG)
 
 tidy:
 	$(GO) mod tidy
