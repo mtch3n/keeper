@@ -8,6 +8,50 @@ changelog at all.
 The 0.0.1 entry below is written by hand, because a first release has no previous
 tag to generate a range from. Every entry after it is produced from the commits.
 
+## 0.0.3 — 2026-09-18
+
+The dashboard stops asking which database you are looking at and starts asking
+which agent. Underneath it, two fixes: unlocking a vault no longer requires a
+passphrase the keychain had already made unnecessary, and `doctor --json` no
+longer reports a running daemon as stopped.
+
+### Added
+
+- The chrome is a sidebar rather than a switcher in the top bar. Both scopes
+  live in it — agents, grouped into workspace folders, and databases — and the
+  group the current screen does not obey is dimmed. The old switcher sat in the
+  bar where four of the six sections ignored it, and a control that is always
+  present and only sometimes effective cannot be read.
+- Selecting an agent scopes `Activity` and `Approvals`. A narrowed approvals
+  queue says so above the table and offers the way back, because a filtered
+  queue that read as the whole queue would be that screen claiming nothing else
+  needs you. `Permissions` is not scoped: a grant's session id is `json:"-"`
+  and never reaches the browser.
+- Registering a database is a dialog, with host, port, user, password and
+  database as separate fields. A pasted connection string is the one input
+  where a typo is invisible until it returns as a permission error nobody can
+  attribute. The string is assembled from the fields and never rendered back.
+
+### Fixed
+
+- `keeper vault unlock` prompted for a passphrase before asking the daemon
+  anything, which put the three sources that need nothing typed — the keychain,
+  `KEEPER_MASTER_KEY` and `key.age` — out of the CLI's reach. On a keychain
+  install it asked for a secret that install does not have, and because the
+  prompt refuses a non-terminal, an unattended unlock was impossible. It now
+  asks the daemon first, prompts only when a passphrase is genuinely the
+  answer, and names the source that served the key.
+- `keeper doctor --json` reported `"daemon_running": false` beside a complete
+  report from a daemon that was plainly running. The field was declared and
+  never assigned. It is the one a script would branch on to decide whether
+  keeper is up, and a boolean that is always false reads as an answer.
+
+### Changed
+
+- The daemon lamp appears only while the event stream is degraded. A permanent
+  green "Live" spent the chrome's attention on the reading that never needs
+  acting on; `waiting` and `blocked` are unchanged.
+
 ## 0.0.2 — 2026-09-18
 
 Plugin fixes. The binaries are unchanged; the version moves because the plugin's
