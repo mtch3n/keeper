@@ -54,16 +54,38 @@ a summary rather than the list.
 
 ```sh
 # pick your platform from https://github.com/mtch3n/keeper/releases
-curl -fsSLO https://github.com/mtch3n/keeper/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS --ignore-missing
-tar xzf keeper_0.0.1_linux_amd64.tar.gz
-install -m755 keeper_0.0.1_linux_amd64/keeper ~/.local/bin/
+base=https://github.com/mtch3n/keeper/releases/latest/download
+asset=keeper_0.0.4_linux_amd64                 # _darwin_arm64, _linux_arm64, ...
+
+curl -fsSLO "$base/SHA256SUMS"
+curl -fsSLO "$base/$asset.tar.gz"
+sha256sum -c SHA256SUMS --ignore-missing       # shasum -a 256 -c on macOS
+tar xzf "$asset.tar.gz"
+install -m755 "$asset/keeper" ~/.local/bin/
 ```
 
 One binary, three entry points: `keeper` is the CLI, `keeper daemon` runs the
 daemon, `keeper mcp` is the MCP server. Verify the checksum — this is about to
 hold a database credential, and that is the one step that checks what you
 downloaded.
+
+That is the last time you do it by hand:
+
+```sh
+keeper update --check            # what is published, and what you are running
+keeper update                    # verify, replace, and restart onto it
+```
+
+`update` checks the daemon before it downloads anything. If sessions are
+connected or an approval is waiting, it names them and stops without touching
+the binary, because the restart that completes an update cancels every pending
+ticket and permanently invalidates every token those sessions hold. `--force`
+when that is acceptable. It refuses outright when the binary belongs to a
+package manager, since the next upgrade of that package would undo it.
+
+It is a CLI command and is not on the MCP surface. An agent that could replace
+keeper's own executable would be removing its own supervision, which is the
+same reason it cannot register a connection, accept a finding or approve.
 
 ### From source
 
