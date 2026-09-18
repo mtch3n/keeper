@@ -560,6 +560,11 @@ func runDoctor(args []string) error {
 	if err != nil {
 		return daemonlessDoctor(sock, err, *asJSON)
 	}
+	// The daemon does not report its own liveness in the body — reaching this
+	// line is the report. Without this the JSON form said `"daemon_running":
+	// false` beside a full report from a running daemon, which is the one
+	// field a script would branch on.
+	rep.DaemonRunning = true
 	if *asJSON {
 		return printJSON(rep)
 	}
@@ -667,12 +672,35 @@ func runVault(args []string) error {
 
 	switch args[0] {
 	case "unlock":
-		pass, err := readSecret("passphrase: ")
+		// Three of §4.3's four key sources need nothing from the operator: the
+		// keychain, KEEPER_MASTER_KEY and key.age all resolve inside keeperd, and
+		// a first-ever unlock generates a fresh key straight into the keychain.
+		// Only an install that has none of them needs a passphrase, and only
+		// keeperd can say so — so ask it first and prompt on the answer.
+		//
+		// Prompting unconditionally, as this did, asked for a secret that on most
+		// installs is never used, and made an unattended unlock impossible
+		// because readSecret refuses a non-terminal.
+		err := cli.UnlockVault(ctx, "")
+		if client.IsCode(err, types.CodeVaultLocked) {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return err
+			}
+			pass, perr := readSecret("passphrase: ")
+			if perr != nil {
+				return perr
+			}
+			err = cli.UnlockVault(ctx, pass)
+		}
 		if err != nil {
 			return err
 		}
-		if err := cli.UnlockVault(ctx, pass); err != nil {
-			return err
+		// R4.3: the source in use is always named. With the passphrase prompt gone
+		// the operator otherwise has no signal at all about which source answered,
+		// which is precisely the silent degradation that rule is about.
+		if rep, derr := cli.GetDoctor(ctx); derr == nil && rep.KeySource != "" {
+			fmt.Printf("vault unlocked, key source %s\n", rep.KeySource)
+			return nil
 		}
 		fmt.Println("vault unlocked")
 		return nil

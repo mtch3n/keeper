@@ -190,6 +190,9 @@
 
   --spacing-shell: 3.375rem;
   --spacing-under-shell: calc(100svh - 3.375rem);
+  /* How tall a dialog's scrolling body may grow. Bounded so a long form's
+     title and its decision stay on screen on a short laptop. */
+  --spacing-dialog-body: 60svh;
 
   --container-measure: 42rem;
   /* Every screen's content sits in this: keeper is tables and facts, not

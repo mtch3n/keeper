@@ -7,6 +7,7 @@ import (
 
 	"github.com/mtchen/keeper/internal/daemon"
 	"github.com/mtchen/keeper/internal/types"
+	"github.com/mtchen/keeper/internal/vault"
 )
 
 // status maps a keeper code to an HTTP status. CONTRACT §3: 400 for syntax, 403
@@ -56,6 +57,20 @@ func asError(err error) (*types.Error, int) {
 			Summary: e.Field + ": " + e.Reason,
 			Action:  "correct the request and retry",
 		}, http.StatusBadRequest
+	}
+	if errors.Is(err, vault.ErrNoKeySource) {
+		// The vault stayed locked because nothing in the chain resolved, which is
+		// a different thing from a broken source and the only case where a
+		// passphrase is the answer. It is named so `keeper vault unlock` can
+		// prompt for one here and nowhere else (§4.3): the keychain, the
+		// environment and key.age all unlock without asking the operator
+		// anything, and a generic internal error would make the CLI prompt
+		// blindly for a secret this install may never have had.
+		return &types.Error{
+			Code:    types.CodeVaultLocked,
+			Summary: "no key source resolved: the keychain, KEEPER_MASTER_KEY and key.age are all absent",
+			Action:  "supply a passphrase",
+		}, status(types.CodeVaultLocked)
 	}
 	if e, ok := errors.AsType[*daemon.VersionSkew](err); ok {
 		// §3.4: the client errors naming both versions and `keeper daemon

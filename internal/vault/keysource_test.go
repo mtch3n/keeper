@@ -164,8 +164,8 @@ func TestResolveMasterKeyChain(t *testing.T) {
 	t.Run("nothing resolves and no passphrase given", func(t *testing.T) {
 		dir := t.TempDir()
 		_, _, err := resolveMasterKey(dir, "")
-		if !errors.Is(err, errNoKeySource) {
-			t.Fatalf("err = %v, want errNoKeySource", err)
+		if !errors.Is(err, ErrNoKeySource) {
+			t.Fatalf("err = %v, want ErrNoKeySource", err)
 		}
 	})
 
