@@ -46,6 +46,8 @@ func run(args []string) error {
 		return runUI(rest)
 	case "version":
 		return runVersion(rest)
+	case "update":
+		return runUpdate(rest)
 	case "mcp":
 		// The MCP server, on stdio. Nothing else may write to stdout from here
 		// on: the transport is the stream.
@@ -79,6 +81,7 @@ Usage:
   keeper allow ls | keeper allow revoke <id>
   keeper activity [--session S] [--connection C] [--tier N] [--since D] [--limit N]
   keeper doctor
+  keeper update [--check] [--force]
   keeper vault unlock | export | rotate-master
   keeper daemon start | restart | status
   keeper ui
