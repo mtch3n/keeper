@@ -1,0 +1,74 @@
+# git-cliff — the changelog is generated from the commits, not maintained beside
+# them, because a hand-kept changelog drifts from the history the moment anyone
+# is in a hurry.
+#
+#   make changelog          prepend the unreleased commits
+#   make changelog TAG=v1.2 prepend them under a version heading
+#
+# Run it with `uvx git-cliff`; nothing needs installing.
+
+[changelog]
+header = """
+# Changelog
+
+Generated from the commit history. Every commit appears somewhere: one that does
+not follow the convention lands under *Other* rather than vanishing, because a
+changelog that silently drops entries is worse than no changelog at all.
+"""
+
+body = """
+{% if version %}\
+## {{ version | trim_start_matches(pat="v") }} — {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}\
+{% endfor %}\
+{% endfor %}\n
+"""
+
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+# The important one. A commit that does not parse as conventional is still a
+# change somebody made, and dropping it from the record is how a changelog stops
+# being trustworthy.
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+topo_order = false
+sort_commits = "oldest"
+
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^doc", group = "Documentation" },
+  { message = "^spec", group = "Specification" },
+  # keeper's own category. A measurement that closes a gate changes what the
+  # project claims about itself, which is exactly what a reader of a changelog
+  # wants to know and what a "chore" label would hide.
+  { message = "^(measure|integration)", group = "Measured" },
+  { message = "^test", group = "Tests" },
+  { message = "^ci", group = "Build and CI" },
+  { message = "^build", group = "Build and CI" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore", group = "Internal" },
+  { message = "^revert", group = "Reverted" },
+  { message = ".*", group = "Other" },
+]
+
+commit_preprocessors = [
+  # Link issues and PRs without hard-coding the host in every message.
+  { pattern = '\\((\\w+\\s)?#([0-9]+)\\)', replace = "([#${2}](https://github.com/mtch3n/keeper/issues/${2}))" },
+]
+
+tag_pattern = "v[0-9]*"

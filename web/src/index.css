@@ -1,0 +1,282 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@source "./**/*.{js,ts,jsx,tsx}";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * keeper is an instrument, not a landing page. Three colours carry meaning
+ * and nothing else does: amber for waiting (needs you), red for blocked
+ * (refused), green for live (connected). Everything else is achromatic, so a
+ * quiet board reads as quiet — a day with no amber is a day nothing needed
+ * you. `unclassified` cells are the one exception (§2.2): the visible exit
+ * from fail-closed, and the only cell treatment carrying colour.
+ */
+:root {
+  --font-geist: 'Geist Variable', sans-serif;
+  --font-geist-mono: 'Geist Mono Variable', monospace;
+
+  --background: oklch(0.985 0.002 85);
+  --foreground: oklch(0.19 0.008 60);
+  --card: oklch(0.97 0.003 85);
+  --card-foreground: oklch(0.19 0.008 60);
+  --popover: oklch(0.99 0.002 85);
+  --popover-foreground: oklch(0.19 0.008 60);
+  --primary: oklch(0.19 0.008 60);
+  --primary-foreground: oklch(0.985 0.002 85);
+  --secondary: oklch(0.93 0.004 85);
+  --secondary-foreground: oklch(0.24 0.008 60);
+  --muted: oklch(0.93 0.004 85);
+  --muted-foreground: oklch(0.45 0.010 68);
+  --accent: oklch(0.93 0.004 85);
+  --accent-foreground: oklch(0.24 0.008 60);
+  --destructive: oklch(0.545 0.212 27);
+  --border: oklch(0.87 0.006 82);
+  --input: oklch(0.87 0.006 82);
+  --ring: oklch(0.45 0.010 68);
+  --radius: 0rem;
+
+  /* keeper semantics. A lamp is the whole state vocabulary; nothing else in
+     the application is permitted a semantic colour (UI.md §2.1). */
+  --waiting: oklch(0.79 0.155 72);
+  --blocked: oklch(0.545 0.212 27);
+  --live: oklch(0.72 0.17 155);
+  /* The one exception: an unclassified cell's hatched edge (UI.md §2.2). */
+  --unclassified-edge: oklch(0.79 0.155 72);
+  --rule-strong: oklch(0.70 0.014 78);
+
+  /* Shadow colours. Ink, thinned. */
+  --shade: color-mix(in oklch, var(--foreground) 9%, transparent);
+  --shade-strong: color-mix(in oklch, var(--foreground) 16%, transparent);
+  --shade-deep: color-mix(in oklch, var(--foreground) 28%, transparent);
+
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  --background: oklch(0.155 0.006 265);
+  --foreground: oklch(0.925 0.004 265);
+  --card: oklch(0.185 0.007 265);
+  --card-foreground: oklch(0.925 0.004 265);
+  --popover: oklch(0.135 0.006 265);
+  --popover-foreground: oklch(0.925 0.004 265);
+  --primary: oklch(0.925 0.004 265);
+  --primary-foreground: oklch(0.155 0.006 265);
+  --secondary: oklch(0.225 0.008 265);
+  --secondary-foreground: oklch(0.925 0.004 265);
+  --muted: oklch(0.225 0.008 265);
+  --muted-foreground: oklch(0.615 0.012 265);
+  --accent: oklch(0.225 0.008 265);
+  --accent-foreground: oklch(0.925 0.004 265);
+  --destructive: oklch(0.638 0.223 27);
+  --border: oklch(0.255 0.009 265);
+  --input: oklch(0.300 0.010 265);
+  --ring: oklch(0.615 0.012 265);
+
+  --waiting: oklch(0.812 0.152 76);
+  --blocked: oklch(0.638 0.223 27);
+  --live: oklch(0.795 0.175 157);
+  --unclassified-edge: oklch(0.812 0.152 76);
+  --rule-strong: oklch(0.335 0.011 265);
+
+  --shade: oklch(0 0 0 / 30%);
+  --shade-strong: oklch(0 0 0 / 45%);
+  --shade-deep: oklch(0 0 0 / 60%);
+
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+@theme inline {
+  --font-sans: var(--font-geist);
+  --font-mono: var(--font-geist-mono);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-waiting: var(--waiting);
+  --color-blocked: var(--blocked);
+  --color-live: var(--live);
+  --color-unclassified-edge: var(--unclassified-edge);
+  --color-rule-strong: var(--rule-strong);
+
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
+  --radius-3xl: var(--radius);
+  --radius-4xl: var(--radius);
+
+  /* ── TYPE ──────────────────────────────────────────────────────────
+     One scale. Four sizes, seven roles, and nothing outside them; ui-audit
+     rejects any other size, tracking or uppercase utility.
+
+       text-title    24px  600  the one h1 on a screen
+       text-heading  16px  600  an h2 inside a page
+       text-body     15px  400  reading text
+       text-sm       14px  400  the interface: rows, controls, table cells
+       text-xs       12px  400  secondary words: captions, counts
+       text-label    12px  500  names of structure: a column, a group head
+       text-meta     12px  mono identifiers: refs, tokens, ids, paths
+
+     Everything is sentence case. Nothing is tracked out. Hierarchy comes
+     from weight and colour before size. */
+  --text-title: 1.5rem;
+  --text-title--line-height: 1.2;
+  --text-title--letter-spacing: -0.025em;
+  --text-title--font-weight: 600;
+  --text-heading: 1rem;
+  --text-heading--line-height: 1.4;
+  --text-heading--letter-spacing: -0.011em;
+  --text-heading--font-weight: 600;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.65;
+  --text-label: 0.75rem;
+  --text-label--line-height: 1rem;
+  --text-label--font-weight: 500;
+
+  /* ── MOTION ────────────────────────────────────────────────────────
+     Two curves. Things arriving decelerate hard; things settling in place
+     ease out gently. Nothing bounces. */
+  --ease-arrive: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-settle: cubic-bezier(0.25, 1, 0.5, 1);
+  --animate-enter: enter 220ms var(--ease-arrive) both;
+
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(4px); }
+  }
+
+  /* An idle lamp is an outline; a lit one is a flat fill, never a glow. */
+  --shadow-lamp-idle: inset 0 0 0 1px var(--rule-strong);
+
+  --spacing-shell: 3.375rem;
+  --spacing-under-shell: calc(100svh - 3.375rem);
+
+  --container-measure: 42rem;
+  /* Every screen's content sits in this: keeper is tables and facts, not
+     prose, so the container takes the width rather than measuring it — but
+     it still stops short of stretching to the edge of an ultra-wide
+     monitor, the same reasoning as trellis's own --container-overview. */
+  --container-page: 96rem;
+}
+
+@utility text-meta {
+  font-family: var(--font-geist-mono);
+  font-size: 0.75rem;
+  line-height: var(--tw-leading, 1rem);
+  letter-spacing: var(--tw-tracking, 0);
+  font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+    background: var(--background);
+  }
+
+  body {
+    @apply min-h-svh bg-background text-foreground;
+    margin: 0;
+    font-synthesis: none;
+    font-variant-numeric: tabular-nums;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    min-height: 100svh;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--foreground) 18%, transparent);
+  }
+
+  /* Square scrollbar thumbs everywhere — the registry's rounded default is
+     explicitly replaced (UI.md §1). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule-strong) transparent;
+  }
+  *::-webkit-scrollbar { width: 11px; height: 11px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 0; }
+  *::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+}
+
+@layer components {
+  /* Lamp is the whole state vocabulary, so its live state gets a real
+     keyframe rather than a borrowed utility. animate-pulse belongs to
+     Skeleton and ui-audit reserves it. */
+  @keyframes keeper-lamp-live { 50% { opacity: 0.28; } }
+  @keyframes keeper-lamp-blocked { 50% { opacity: 0.22; } }
+
+  .lamp-live { animation: keeper-lamp-live 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+  .lamp-blocked { animation: keeper-lamp-blocked 1.15s steps(1) infinite; }
+
+  /* The unclassified cell: hatched fill, amber edge. The only cell treatment
+     carrying colour (UI.md §2.2). */
+  .cell-unclassified {
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--unclassified-edge) 0,
+      var(--unclassified-edge) 1px,
+      transparent 1px,
+      transparent 6px
+    );
+    background-color: color-mix(in oklch, var(--unclassified-edge) 10%, transparent);
+    box-shadow: inset 0 0 0 1px var(--unclassified-edge);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

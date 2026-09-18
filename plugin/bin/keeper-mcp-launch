@@ -1,0 +1,42 @@
+#!/bin/sh
+# Starts keeper's MCP server, or explains why it cannot.
+#
+# The plugin does not ship the binary. keeper holds database credentials and
+# audits privileges, and an executable that arrives as a side effect of
+# installing a plugin is not one anybody chose to trust — plugin distribution has
+# no checksum story, and this one's whole subject is what is safe to hand over.
+# So it is installed separately and verified against the release's SHA256SUMS.
+#
+# What this wrapper buys is the message below. Without it the failure is a bare
+# ENOENT, which says nothing about what to do next.
+set -eu
+
+if command -v keeper >/dev/null 2>&1; then
+    exec keeper mcp "$@"
+fi
+
+cat >&2 <<'EOF'
+keeper is not on PATH, so this plugin has nothing to talk to.
+
+Ask your agent to install it — the plugin ships a `keeper-install` skill that
+checks what is already present, installs what is missing, and tells you the
+parts it cannot do itself.
+
+Or do it by hand:
+
+  # from a release, verified
+  https://github.com/mtch3n/keeper/releases
+  sha256sum -c SHA256SUMS --ignore-missing
+  tar xzf keeper_<version>_<os>_<arch>.tar.gz
+  install -m755 keeper_<version>_<os>_<arch>/keeper ~/.local/bin/
+
+  # or from source, with Go 1.27 and pnpm
+  git clone https://github.com/mtch3n/keeper && cd keeper
+  make build && install -m755 bin/keeper ~/.local/bin/
+
+One binary, three entry points: `keeper` is the CLI, `keeper daemon` runs the
+daemon, `keeper mcp` is this server. Check it with `keeper version`, which
+prints both the client's version and the daemon's — they refuse each other on a
+mismatch, so one number would be the wrong answer.
+EOF
+exit 1

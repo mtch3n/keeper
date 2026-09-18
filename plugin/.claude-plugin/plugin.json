@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "keeper",
+  "version": "0.0.1",
+  "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, span-level redaction of free text, an approval queue shared across every agent session, and a local form for values that must never be typed into chat.",
+  "author": {
+    "name": "mtch3n"
+  },
+  "homepage": "https://github.com/mtch3n/keeper",
+  "repository": "https://github.com/mtch3n/keeper",
+  "license": "MIT",
+  "keywords": [
+    "database",
+    "postgresql",
+    "privacy",
+    "pii",
+    "redaction",
+    "mcp",
+    "masking"
+  ],
+  "skills": "./skills/"
+}

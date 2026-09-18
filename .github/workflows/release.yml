@@ -1,0 +1,91 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git-cliff needs the tags and the history to generate from.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # The UI is embedded in keeperd, so it is built before anything else and
+      # every archive carries the same bundle.
+      - name: build the UI
+        run: make ui
+
+      - name: build every binary
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          mkdir -p artifacts
+          # Strip the leading v: the tag is v0.0.1, the version keeper reports is
+          # 0.0.1, and a daemon and a CLI that disagree refuse each other (§3.4).
+          version="${VERSION#v}"
+          ldflags="-s -w -X github.com/mtchen/keeper/internal/build.Version=${version}"
+
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            ext=""; [ "$goos" = windows ] && ext=".exe"
+            dir="artifacts/keeper_${version}_${goos}_${goarch}"
+            mkdir -p "$dir"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags "$ldflags" -o "$dir/keeper${ext}" ./cmd/keeper
+            cp README.md LICENSE "$dir/"
+            (cd artifacts && tar czf "$(basename "$dir").tar.gz" "$(basename "$dir")")
+          done
+
+          (cd artifacts && sha256sum ./*.tar.gz > SHA256SUMS)
+
+      # The notes are this version's section of the changelog. One source, so a
+      # reader of the release and a reader of the repository are reading the same
+      # words — and a tag with no section fails here rather than publishing a
+      # release nobody can read.
+      - name: notes
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="${VERSION#v}"
+          awk -v v="## $version" '
+            $0 ~ "^"v" " || $0 == v { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > NOTES.md
+          if [ "$(tr -d '[:space:]' < NOTES.md | wc -c)" -lt 40 ]; then
+            echo "CHANGELOG.md has no section for $version. Run 'make changelog TAG=$VERSION' and tag again."
+            exit 1
+          fi
+          cat NOTES.md
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file NOTES.md \
+            artifacts/*.tar.gz artifacts/SHA256SUMS

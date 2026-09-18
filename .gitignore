@@ -1,0 +1,35 @@
+# Binaries
+/bin/
+/keeperd
+/keeper
+/keeper-mcp
+
+# Frontend build and dependencies
+web/node_modules/
+web/dist/
+
+# The embedded UI is build output. internal/api/dist/index.html is committed as a
+# placeholder so //go:embed has something to find and `go build ./...` works on a
+# fresh clone; `make ui` replaces it with the real bundle.
+internal/api/dist/*
+!internal/api/dist/index.html
+
+# Local state
+.keeper/catalog.local.yaml
+*.age
+
+# Local harness configuration. Nothing that configures an agent belongs in a
+# repository whose whole subject is what an agent is allowed to see.
+/.claude/
+CLAUDE.md
+AGENTS.md
+
+# Design documents. They are the working record — the specification, the decision
+# log, the review triage, the interface spec and the build contract — and they
+# stay local. The code's comments cite them by section; the reasoning a comment
+# needs is in the comment.
+/SPEC.md
+/DECISIONS.md
+/REVIEW.md
+/UI.md
+/CONTRACT.md

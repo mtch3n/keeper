@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "keeper": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/keeper-mcp-launch",
+      "args": []
+    }
+  }
+}

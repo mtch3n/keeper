@@ -1,0 +1,98 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The gates here are the ones CONTRACT.md §2 says must pass before work is called
+# done. They are not advisory: a red build means the claim the code makes about
+# itself is not currently true.
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l . | grep -v '^web/' || true)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+
+      - name: vet
+        run: go vet ./...
+
+      # Pinned, and pinned recent: staticcheck reads the compiler's export data,
+      # so a version older than the toolchain fails with "export data version 4
+      # is greater than maximum supported version 2" rather than a finding.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+      # SPEC R7.4b. Go cannot make a string literal fail to compile, so the
+      # prohibition on EXPLAIN ANALYZE is enforced here or nowhere: it executes
+      # the statement it claims to be planning.
+      - name: no EXPLAIN ANALYZE
+        run: sh scripts/lint-explain-analyze.sh
+
+      - name: test
+        run: go test -race ./...
+
+      # No cgo, three platforms. §13 is honest that Windows is a target rather
+      # than a tested platform — this only proves it compiles.
+      - name: cross-compile
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build ./... \
+              || { echo "failed: $target"; exit 1; }
+          done
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: lint
+        run: pnpm lint
+
+      # UI.md §3 as a build step. Most of what it rejects is invisible in review
+      # and obvious in a diff, which is the right way round for a linter.
+      - name: ui audit
+        run: pnpm ui-audit
+
+      - run: pnpm build
+
+  # The measurements SPEC §12 says cannot be faked: real PostgreSQL, real MySQL,
+  # real SQLite. Kept separate because they need Docker and take longer than the
+  # rest of CI put together.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: integration
+        run: go test -tags integration -timeout 20m ./internal/integration/...

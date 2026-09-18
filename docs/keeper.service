@@ -1,0 +1,45 @@
+# A user-level systemd unit, for keeping the daemon up when no agent is running.
+#
+# It is not installed for you, and it is not needed: an MCP client starts the
+# daemon when the socket is absent, which is the same path a first run takes. Use
+# this if you want the dashboard and the approval queue reachable without a
+# terminal open.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp docs/keeper.service ~/.config/systemd/user/
+#   systemctl --user enable --now keeper
+#
+# User-level, never system-level. keeperd runs as you, uses your OS keychain and
+# your $XDG_RUNTIME_DIR; a root service would be wrong on every one of those.
+
+[Unit]
+Description=keeper — masks database results before they reach an agent
+Documentation=https://github.com/mtch3n/keeper
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/keeper daemon serve
+Restart=on-failure
+RestartSec=5
+
+# Under systemd the daemon should not stop itself: the unit is the thing keeping
+# it up, and exiting would just have systemd start it again. The vault still
+# locks on idle, which is the part worth keeping.
+Environment=KEEPER_IDLE_EXIT=-1s
+
+# It holds a decrypted credential in memory. None of this is a boundary against
+# someone who is already you — §11.6 is honest about that — but none of it costs
+# anything either.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/keeper
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=default.target

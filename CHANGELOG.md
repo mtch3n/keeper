@@ -1,0 +1,89 @@
+# Changelog
+
+Generated from the commit history by `make changelog`. Every commit appears
+somewhere: one that does not follow the convention lands under *Other* rather
+than vanishing, because a changelog that silently drops entries is worse than no
+changelog at all.
+
+The 0.0.1 entry below is written by hand, because a first release has no previous
+tag to generate a range from. Every entry after it is produced from the commits.
+
+## 0.0.1 — 2026-09-18
+
+First tagged build. PostgreSQL reads end to end.
+
+### Added
+
+- A daemon that owns all state — vault, catalog, connection pools, approval
+  queue, audit log, and the web UI it serves. Every other component is a thin
+  client, and a session is one connection to it, so tickets and tokens go when
+  the client does.
+- A privilege audit that **reports rather than refuses**. A master account works;
+  every finding is shown with the narrower grant that would remove it, accepted
+  by name, and displayed wherever the connection appears afterwards.
+- A name-keyed catalog resolved to column identity, covering tables, views and
+  matviews, with JSON key paths and a daemon-owned overlay so automatic changes
+  never appear as diff noise in a tracked file.
+- The G1–G9 pipeline: admission through PostgreSQL's own parser, plan analysis
+  that never uses `EXPLAIN ANALYZE`, output matched by `(tableOID, attnum)`,
+  type-family inheritance for computed columns, tier routing, and a read-only
+  transaction with `DISCARD ALL` before a connection returns to the pool.
+- Keyed, namespaced HMAC tokens that preserve joins, `GROUP BY` and
+  `COUNT DISTINCT`, with a per-session reverse map that re-tokenizes any resolved
+  value found on the way out.
+- Span-level redaction of free text, so one email in one row of `notes` does not
+  mask every note in the result.
+- A write path: a separate credential with an enumerated scope, a preview that
+  rolls back, and an approval that names what revocation cannot undo. DDL is
+  refused at every tier.
+- One approval queue across every agent session, each item attributed to the
+  client, workspace and stated intent that produced it, oldest first and never
+  reordered.
+- Per-path permissions with no inheritance, in two lifetimes, granted in the UI.
+- A local page for values that must not be typed into a conversation, and for
+  authorizing a path — one mechanism, two request kinds.
+- An append-only audit log with literals stripped and comments discarded.
+- A daemon that starts on demand and stops on its own: the vault locks after an
+  idle hour, and the process exits after four with nothing attached at all — no
+  sessions, no queued approvals, no open requests, no live event streams. An open
+  dashboard counts as attached, standing permissions are on disk, and either
+  timer can be disabled.
+- One binary with three entry points — `keeper` the CLI, `keeper daemon`, and
+  `keeper mcp` — so a client and a daemon from different builds cannot happen by
+  halves, and there is one artefact to verify.
+- A Claude Code plugin carrying the `keeper` skill, a `keeper-install` skill, the
+  `/keeper` command and the MCP registration, and a web UI the daemon embeds.
+
+### Measured
+
+Reproductions live in `internal/integration` and run in CI against a real
+PostgreSQL, MySQL and SQLite.
+
+- A view column reports the **view's** own identity, while the plan for the same
+  statement names only the base table. Views must be catalogued, and the identity
+  the protocol reports is one the plan never mentions.
+- Aliases, CTEs and subqueries preserve column identity; `UNION` reports `(0,0)`.
+- SQLite exposes column origin and resolves through a view to the base column —
+  the opposite of PostgreSQL, so view cataloguing is a PostgreSQL requirement
+  rather than a general one.
+- MySQL's driver reads `org_table` and `org_name` off the wire and discards them,
+  so `SELECT ssn AS x` is indistinguishable from a column named `x`. **MySQL does
+  not ship**; name matching is not an acceptable substitute.
+- A PostgreSQL conversion error carries the value it was converting, which is why
+  no server error field reaches an agent.
+- An advisory lock survives `COMMIT` and `DISCARD ALL` releases it.
+- A concurrent `ALTER TABLE` blocks on `AccessShareLock` rather than racing.
+- A network namespace alone does **not** isolate a sidecar: the resolver socket
+  survives it, and the resolver has network access. A mount namespace closes it,
+  and both are available unprivileged.
+
+### Known limits
+
+- Windows compiles and does not run: no named pipe, no single-daemon election.
+- Detection is patterns and a seed name dictionary. Addresses and contextual PII
+  in free text are undetected rather than absent, and the list of what is
+  validated is published in code.
+- keeper pseudonymises rather than anonymises; output remains personal data under
+  GDPR Article 4(11).
+- It does not detect an agent recovering a masked value through narrowing
+  predicates. That is stated rather than mitigated.

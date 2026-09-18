@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "keeper",
+  "owner": {
+    "name": "mtch3n",
+    "url": "https://github.com/mtch3n"
+  },
+  "description": "Install keeper as a Claude plugin: the skill, the /keeper command, and the MCP server registration.",
+  "plugins": [
+    {
+      "name": "keeper",
+      "source": "./plugin",
+      "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, span-level redaction of free text, an approval queue shared across every agent session, and a local form for values that must never be typed into chat.",
+      "license": "MIT",
+      "keywords": ["database", "postgresql", "privacy", "pii", "redaction", "mcp", "masking"]
+    }
+  ]
+}
