@@ -24,6 +24,21 @@ keeper version
 Two numbers come back — the client's and the daemon's — because they refuse each
 other on a mismatch and one number would be the wrong answer.
 
+**If keeper is already installed, it updates itself** — the manual download
+below is only for a first install, or for a version too old to have the command:
+
+```sh
+keeper update --check    # what is published, against what is running
+keeper update            # verify, replace, restart onto it
+```
+
+It stops without touching anything when the restart would cost something —
+sessions connected, an approval waiting — and names what it found, so `--force`
+is a decision rather than a surprise. **You may run `keeper update`**; the cost
+it guards is the same one that makes `daemon restart` yours to ask for, and the
+command asks on your behalf. It refuses outright when the binary belongs to a
+package manager, and says so.
+
 `command not found` means install it. **Prefer a release over building**: it is
 faster, and it comes with checksums you can actually verify.
 
