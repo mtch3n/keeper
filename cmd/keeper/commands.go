@@ -560,6 +560,11 @@ func runDoctor(args []string) error {
 	if err != nil {
 		return daemonlessDoctor(sock, err, *asJSON)
 	}
+	// The daemon does not report its own liveness in the body — reaching this
+	// line is the report. Without this the JSON form said `"daemon_running":
+	// false` beside a full report from a running daemon, which is the one
+	// field a script would branch on.
+	rep.DaemonRunning = true
 	if *asJSON {
 		return printJSON(rep)
 	}
