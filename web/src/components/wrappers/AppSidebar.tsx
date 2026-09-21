@@ -8,6 +8,7 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -15,6 +16,7 @@ import {
   SidebarMenuSubItem,
   SidebarSeparator,
 } from '@/components/ui/sidebar'
+import { Brand } from '@/components/wrappers/Brand'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { AcceptedFindingsMark } from '@/components/wrappers/AcceptedFindingsMark'
 import { getDoctor, listConnections } from '@/lib/api'
@@ -120,14 +122,53 @@ export function AppSidebar({ scope }: { scope: Scope }) {
 
   return (
     <Sidebar>
-      {/* The rail starts on the shell bar's own baseline. Without this the
-          first group label floats above the top bar's text and the two
-          columns read as two unrelated pages sharing a window. The offset is
-          `--spacing-shell`, the bar's height, so the two cannot drift. */}
-      <SidebarContent className="pt-shell">
-        <SidebarGroup className={dim('session')}>
+      {/* The rail starts on the shell bar's own baseline, and it does so with a
+          header of the bar's own height rather than the `pt-shell` this
+          replaces. That padding sat inside `SidebarContent`, the scrolling
+          element, where it belonged to the scrolled content: it slid away on
+          the first wheel gesture and took the top of the rail under the bar
+          with it. A header is outside the scroll box and stays put.
+
+          It is worth being exact about what this did and did not fix, because
+          the obvious reading is wrong. Padding inside a scroll container adds
+          to `scrollHeight` and is subtracted from nothing; a header takes the
+          same 54px off the box's `clientHeight` instead. Both arrive at the
+          same threshold — the rail begins to overflow at the same content
+          height either way. What changed is the behaviour once it does, and
+          the fix for the overflow itself is on `SidebarContent` below.
+
+          The header carries the brand, which used to be in the bar. The two
+          columns now begin on one baseline with one kind of thing each — a
+          name on the left, the sections on the right — instead of the rail
+          opening with a group label floating opposite the bar's text. No
+          bottom rule, matching the bar, which carries none either. */}
+      <SidebarHeader className="h-shell justify-center px-4 py-0">
+        <Brand />
+      </SidebarHeader>
+      {/* The rail itself never scrolls. Moving the offset out of this box was
+          necessary but not sufficient: padding inside a scroll container adds
+          to its scroll height and comes off its client height in equal
+          measure, so the old `pt-shell` changed what scrolling *did* — it
+          dragged the top of the rail up under the bar — without changing when
+          it happened. Both shapes start scrolling at the same content height.
+
+          So the scroller moves down a level. `overflow-hidden` here, and each
+          group's content scrolls on its own; flexbox's default shrink plus
+          `min-h-0` on the groups means nothing shrinks or scrolls while the
+          two lists fit, and when they do not, only the list that is too long
+          scrolls. That is better than a rail-wide scrollbar and not merely
+          smaller: `Agents`, `Databases` and the rule between them are the
+          structure of this surface — two questions, not one list — and a rail
+          that scrolls them off the top hides the second scope behind a gesture
+          you have to discover. Here the headings are always on screen and only
+          the rows move. */}
+      <SidebarContent className="overflow-hidden">
+        {/* `min-h-0` is what lets flexbox shrink this below its content; without
+            it a flex child refuses to go under its intrinsic height and the
+            overflow escapes to the rail again. */}
+        <SidebarGroup className={cn('min-h-0', dim('session'))}>
           <SidebarGroupLabel className="text-label text-muted-foreground">Agents</SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="min-h-0 overflow-y-auto">
             {folders.length === 0 ? (
               <p className="px-2 text-xs text-muted-foreground">No agent has connected yet.</p>
             ) : (
@@ -149,11 +190,11 @@ export function AppSidebar({ scope }: { scope: Scope }) {
         {/* Agents and databases are two different questions, not one list
             with two headings. The rule says so without spending colour on
             it. */}
-        <SidebarSeparator />
+        <SidebarSeparator className="shrink-0" />
 
-        <SidebarGroup className={cn(dim('connection'))}>
+        <SidebarGroup className={cn('min-h-0', dim('connection'))}>
           <SidebarGroupLabel className="text-label text-muted-foreground">Databases</SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="min-h-0 overflow-y-auto">
             {connections.length === 0 ? (
               <p className="px-2 text-xs text-muted-foreground">No connections registered.</p>
             ) : (
