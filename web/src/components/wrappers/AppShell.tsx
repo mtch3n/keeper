@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Lamp } from '@/components/wrappers/Lamp'
-import { KeeperMark } from '@/components/wrappers/KeeperMark'
+import { Brand } from '@/components/wrappers/Brand'
 import { ThemeToggle } from '@/components/wrappers/ThemeToggle'
 import { AppSidebar, type Scope } from '@/components/wrappers/AppSidebar'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
@@ -38,13 +38,15 @@ const SECTIONS: { section: Section; label: string; to: string }[] = [
 
 /**
  * The persistent chrome every screen sits inside: `AppSidebar` down the left
- * holding both scopes, and across the top the mark, the six sections, the
+ * holding both scopes and the brand, and across the top the six sections, the
  * theme toggle and settings as the right-most control (CONTRACT.md §5,
  * UI.md §2.3). The scope controls left the bar because four of the six
  * sections ignored the one that used to sit there, and a control that is
- * always present and only sometimes effective is unreadable. The daemon's
- * `Lamp` joins the bar only when the stream is degraded, never when it is
- * healthy. The
+ * always present and only sometimes effective is unreadable. The brand left it
+ * for the rail's header, so the two columns start on one baseline with one
+ * kind of thing each; the bar keeps it only below `md`, where there is no rail
+ * to hold it. The daemon's `Lamp` joins the bar only when the stream is
+ * degraded, never when it is healthy. The
  * current section is marked by a foreground rule that grows from the centre,
  * never by the amber accent — amber is spent entirely on `waiting` (UI.md
  * §1's governing rule: three colours carry meaning and nothing else does).
@@ -85,10 +87,12 @@ export function AppShell({ section, children }: { section?: Section; children: R
         <div className="flex items-center">
           <SidebarTrigger />
         </div>
-        <Link to="/connections" className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <KeeperMark />
-          keeper
-        </Link>
+        {/* The brand lives in the rail's header at `md` and above, where it
+            starts the left column on the same baseline this bar starts the
+            right one. Below `md` the rail is an off-canvas `Sheet` and its
+            header goes with it, so the bar carries the brand instead — the
+            same component, never both at once. */}
+        <Brand className="md:hidden" />
 
         <nav className="-ml-2 flex min-w-0 overflow-x-auto">
           {SECTIONS.map((item) => (
