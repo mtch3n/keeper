@@ -10,6 +10,114 @@ tag to generate a range from. Every entry after it is produced from the commits.
 
 
 
+
+## 0.0.6 — 2026-09-21
+
+The dashboard's chrome stops competing with the one colour that is supposed to
+mean something, and `keeperd` stops asking for a passphrase on installs that
+never needed one.
+
+### Added
+
+- **keeperd opens the vault at start when a key source needs no passphrase.**
+  Three of §4.3's four sources take nothing from the operator — the OS
+  keychain, `KEEPER_MASTER_KEY` and `key.age` all resolve inside the daemon,
+  and a first-ever start mints a fresh master key straight into the keychain.
+  Only an install with none of them needs source 4, and only keeperd can say
+  which kind of install it is. It never asked, so every start left the vault
+  shut and every install paid an unlock step that on nearly all of them opened
+  nothing a passphrase was ever needed for.
+
+  This grants no access that did not already exist. A source that opens with
+  no secret from the operator is reachable by anything already running as that
+  user, and the manual step it replaces ran the identical resolution chain
+  behind a socket any local process could reach. What is removed is a prompt
+  that cost a person an action and an attacker nothing.
+
+  §3.4's rule survives intact, and the distinction it rests on is the whole
+  design: the daemon may not *block* on a passphrase, because an auto-started
+  daemon has no TTY to read one from. That is an argument against prompting,
+  not against trying, and a source resolving without input is not the
+  interactive path. When none resolves the daemon stays locked exactly as
+  before, tools return `CodeVaultLocked`, and Settings and `keeper vault
+  unlock` offer source 4. A configured-but-broken source stays locked and logs
+  why rather than falling through to a prompt — collapse that branch into the
+  `ErrNoKeySource` one and a keychain holding a malformed key silently becomes
+  a passphrase install, which is R4.3's silent degradation arrived at by way of
+  a convenience.
+
+  `--vault-idle-lock` is untouched and still bounds how long decrypted DSNs sit
+  in the process's memory. It is deliberately not re-opened after it fires: an
+  idle lock that something in the same process re-opens on a timer protects
+  nothing at all.
+
+### Changed
+
+- **Every grey in both themes is chroma 0, and dark is the designed theme.**
+  UI.md §2.1 claims three colours carry meaning and nothing else does. The
+  palette made that claim false: light was warm (hue 85), dark was blue slate
+  (hue 265), and both spent chroma on chrome — precisely the budget amber needs
+  in order to read as the one thing asking for attention. The claim now holds
+  by construction rather than by discipline, and amber, red, green and an
+  unclassified cell's hatched edge are the only chroma a screen can contain.
+
+  The two themes were also unrelated palettes rather than one theme in two
+  modes (§5), because they did not share a hue, a ladder or a reason.
+  `index.html` has always shipped `class="dark"`, so dark was already the
+  default but had never been the designed artefact; it is authored first here
+  and light is the same lightness ladder inverted.
+
+- **`Card` loses the header and footer no screen used.** `CardHeader`,
+  `CardTitle`, `CardDescription`, `CardAction` and `CardFooter` were imported
+  by exactly zero application files, and each carried styling that fought this
+  theme: `CardFooter` drew `border-t bg-muted/50`, the same panel-inside-a-panel
+  the palette rewrite just removed from the rail, and `CardTitle` was
+  `text-base`, off the type scale outright and surviving `ui-audit` only
+  because registry files are exempt from the type-scale check.
+
+  They are deleted rather than left unused. An unused slot is a slot the next
+  screen reaches for, and it would have brought that treatment back with it —
+  which is how the `bg-muted/50` would have returned one screen at a time. What
+  replaces them is what the screens already do: a heading is `text-heading`, a
+  description is `text-sm text-muted-foreground`, a footer is a flex row of
+  buttons. The radius utilities went too, since `rounded-xl` resolves to 0
+  through `--radius` and described a corner that is square (UI.md §3.2).
+
+- The brand moves from the shell bar into the rail's header, so the two columns
+  open on one baseline with one kind of thing each. Below `md` the rail is an
+  off-canvas `Sheet` and takes its header with it, so the bar keeps the brand
+  there — hence `Brand`, since one thing shown in two layouts is one component
+  (UI.md §3.3) and the second copy is where they drift apart.
+
+### Fixed
+
+- **The rail stops being its own scroller.** `pt-shell` sat inside
+  `SidebarContent`, which is the `overflow-auto` element, so the shell bar's
+  54px offset belonged to the scrolled content: it slid away on the first wheel
+  gesture and dragged the top of the rail under the bar. Moving it into a
+  `SidebarHeader` fixes that and nothing else — padding inside a scroll box
+  adds to `scrollHeight` where a header takes the same 54px off `clientHeight`,
+  and both shapes begin to overflow at identical content height.
+
+  So the scroller moves down a level. `SidebarContent` is `overflow-hidden` and
+  each group's content scrolls on its own, with `min-h-0` on the groups so
+  flexbox may shrink them below their intrinsic height. Nothing shrinks or
+  scrolls while the two lists fit; when they do not, only the list that is too
+  long moves. Measured on a 577px viewport with 24 rows injected: document and
+  rail both overflow by 0, the two lists by 270 and 200 within themselves.
+
+  That is not merely a smaller scrollbar. `Agents`, `Databases` and the rule
+  between them are the structure of this surface — two questions, not one list
+  with two headings — and a rail that scrolls them off the top hides the second
+  scope behind a gesture you have to find. Restore the rail-wide scroller and
+  the `Databases` heading leaves the screen as soon as a few agents connect.
+
+  `no-scrollbar` came off `SidebarContent` with it. The registry writes that
+  class in two files and defines it in none, so every region wearing it drew
+  the document's 11px thumb anyway; it is defined in `index.css` now for
+  `Combobox`, which genuinely wants it, and gone from the rail, which does not.
+  A rail that cannot fit its own workspaces has to say so.
+
 ## 0.0.5 — 2026-09-21
 
 `keeper daemon restart` killed the daemon it was asked to replace and started
