@@ -114,7 +114,12 @@ export function RegisterDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button variant="outline" />}>Register a database</DialogTrigger>
-      <DialogContent>
+      {/* Wider than the registry's `sm:max-w-sm`. This form pairs host with
+          port and user with password on one row, and at the default width
+          each of those columns is narrower than the value it holds — a port
+          field you cannot read `5432` in is the shape of the typo this dialog
+          exists to prevent. */}
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Register a database</DialogTitle>
           <DialogDescription>
