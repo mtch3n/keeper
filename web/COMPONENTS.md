@@ -165,7 +165,21 @@ size, tracking or uppercase utility, and `font-mono` set by hand instead of `tex
 
 ## Colour
 
-Four states carry meaning and nothing else does (UI.md §2.1):
+Four states carry meaning and nothing else does (UI.md §2.1), and since the
+palette rewrite that is true by construction rather than by discipline: **every
+grey in both themes is chroma 0**. A hue in the greys makes §2.1's claim false —
+a blue-tinted panel is colour spent on chrome, and chrome is not what the budget
+is for. Dark is the designed theme (`index.html` ships `class="dark"`); light is
+the same lightness ladder inverted, which is what UI.md §5 means by one theme in
+two modes rather than a second design.
+
+The surfaces are also far enough apart to be read as decisions. The palette this
+replaced put the rail at `0.185` and its own selected row at `0.225` against a
+`0.155` canvas — three surfaces inside four hundredths of a lightness, so a
+selected connection was indistinguishable from an unselected one. The rail is now
+flush with the page (`--sidebar: var(--background)`), and the one filled thing in
+it is the row you have selected.
+
 
 | Token | Means |
 |---|---|

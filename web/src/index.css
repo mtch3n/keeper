@@ -7,97 +7,131 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * keeper is an instrument, not a landing page. Three colours carry meaning
- * and nothing else does: amber for waiting (needs you), red for blocked
- * (refused), green for live (connected). Everything else is achromatic, so a
- * quiet board reads as quiet — a day with no amber is a day nothing needed
- * you. `unclassified` cells are the one exception (§2.2): the visible exit
- * from fail-closed, and the only cell treatment carrying colour.
+ * DARK IS THE DESIGNED THEME.
+ *
+ * index.html ships `class="dark"` and only removes it when the reader has
+ * chosen light, so dark is what the application is by default and what every
+ * screen is drawn against. The ladder below is therefore authored for dark
+ * first; `:root` holds the light theme derived from it by inverting the same
+ * lightness steps at the same chroma, which is what makes light and dark one
+ * theme rather than a second design (UI.md §5).
+ *
+ * Chroma is exactly zero in every grey. That is not a preference: UI.md §2.1
+ * claims three colours carry meaning and nothing else does, and a grey with a
+ * hue in it makes that claim false — a blue-tinted panel is colour spent on
+ * chrome, which is the budget amber needs in order to read. With the greys at
+ * chroma 0 the claim is true by construction: amber for waiting, red for
+ * blocked, green for live, and the hatched amber edge of an unclassified cell
+ * (§2.2) are the only chroma a screen can contain.
+ *
+ * The ladder, dark. Each step is far enough from the last to be a decision
+ * rather than a rendering artefact — the defect this replaces put the rail at
+ * 0.185 and its own selected row at 0.225 against a 0.155 canvas, three
+ * surfaces inside four hundredths of a lightness, none of which could be told
+ * from the others:
+ *
+ *   0.145  canvas          the page, and the rail, which is flush with it
+ *   0.185  card, popover   the surfaces that genuinely sit above the page
+ *   0.235  secondary/muted a filled control
+ *   0.255  selected row    the rail's one filled thing
+ *   0.275  border          hairlines
+ *   0.360  rule-strong     a rule meant to be seen: scrollbars, lamp outline
+ *   0.640  muted text      group labels, captions, counts
+ *   0.800  rail text       a row you have not selected
+ *   0.940  foreground      reading text, and the selected row
  */
 :root {
   --font-geist: 'Geist Variable', sans-serif;
   --font-geist-mono: 'Geist Mono Variable', monospace;
 
-  --background: oklch(0.985 0.002 85);
-  --foreground: oklch(0.19 0.008 60);
-  --card: oklch(0.97 0.003 85);
-  --card-foreground: oklch(0.19 0.008 60);
-  --popover: oklch(0.99 0.002 85);
-  --popover-foreground: oklch(0.19 0.008 60);
-  --primary: oklch(0.19 0.008 60);
-  --primary-foreground: oklch(0.985 0.002 85);
-  --secondary: oklch(0.93 0.004 85);
-  --secondary-foreground: oklch(0.24 0.008 60);
-  --muted: oklch(0.93 0.004 85);
-  --muted-foreground: oklch(0.45 0.010 68);
-  --accent: oklch(0.93 0.004 85);
-  --accent-foreground: oklch(0.24 0.008 60);
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.190 0 0);
+  --card: oklch(0.965 0 0);
+  --card-foreground: oklch(0.190 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.190 0 0);
+  --primary: oklch(0.190 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.925 0 0);
+  --secondary-foreground: oklch(0.240 0 0);
+  --muted: oklch(0.925 0 0);
+  --muted-foreground: oklch(0.455 0 0);
+  --accent: oklch(0.900 0 0);
+  --accent-foreground: oklch(0.160 0 0);
   --destructive: oklch(0.545 0.212 27);
-  --border: oklch(0.87 0.006 82);
-  --input: oklch(0.87 0.006 82);
-  --ring: oklch(0.45 0.010 68);
+  --border: oklch(0.875 0 0);
+  --input: oklch(0.855 0 0);
+  --ring: oklch(0.550 0 0);
   --radius: 0rem;
 
   /* keeper semantics. A lamp is the whole state vocabulary; nothing else in
-     the application is permitted a semantic colour (UI.md §2.1). */
+     the application is permitted a semantic colour (UI.md §2.1). These four
+     are the only declarations on this page with a non-zero chroma. */
   --waiting: oklch(0.79 0.155 72);
   --blocked: oklch(0.545 0.212 27);
   --live: oklch(0.72 0.17 155);
   /* The one exception: an unclassified cell's hatched edge (UI.md §2.2). */
   --unclassified-edge: oklch(0.79 0.155 72);
-  --rule-strong: oklch(0.70 0.014 78);
+  --rule-strong: oklch(0.700 0 0);
 
   /* Shadow colours. Ink, thinned. */
   --shade: color-mix(in oklch, var(--foreground) 9%, transparent);
   --shade-strong: color-mix(in oklch, var(--foreground) 16%, transparent);
   --shade-deep: color-mix(in oklch, var(--foreground) 28%, transparent);
 
-  --sidebar: var(--card);
-  --sidebar-foreground: var(--foreground);
+  /* The rail is flush with the page: same surface, divided by one hairline
+     and nothing else. It used to be `--card`, a panel four hundredths of a
+     lightness away from the canvas, which reads as a rendering artefact
+     rather than a decision. Flush, the only filled thing in the rail is the
+     row you have selected — which is the one thing in it worth drawing.
+     A left accent bar is not available for that job and should not be: §3.1
+     bans coloured left padding bars outright, foreground ones included. */
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.320 0 0);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-accent: oklch(0.895 0 0);
+  --sidebar-accent-foreground: var(--foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
 }
 
 .dark {
-  --background: oklch(0.155 0.006 265);
-  --foreground: oklch(0.925 0.004 265);
-  --card: oklch(0.185 0.007 265);
-  --card-foreground: oklch(0.925 0.004 265);
-  --popover: oklch(0.135 0.006 265);
-  --popover-foreground: oklch(0.925 0.004 265);
-  --primary: oklch(0.925 0.004 265);
-  --primary-foreground: oklch(0.155 0.006 265);
-  --secondary: oklch(0.225 0.008 265);
-  --secondary-foreground: oklch(0.925 0.004 265);
-  --muted: oklch(0.225 0.008 265);
-  --muted-foreground: oklch(0.615 0.012 265);
-  --accent: oklch(0.225 0.008 265);
-  --accent-foreground: oklch(0.925 0.004 265);
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.940 0 0);
+  --card: oklch(0.185 0 0);
+  --card-foreground: oklch(0.940 0 0);
+  --popover: oklch(0.185 0 0);
+  --popover-foreground: oklch(0.940 0 0);
+  --primary: oklch(0.940 0 0);
+  --primary-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.235 0 0);
+  --secondary-foreground: oklch(0.940 0 0);
+  --muted: oklch(0.235 0 0);
+  --muted-foreground: oklch(0.640 0 0);
+  --accent: oklch(0.265 0 0);
+  --accent-foreground: oklch(0.970 0 0);
   --destructive: oklch(0.638 0.223 27);
-  --border: oklch(0.255 0.009 265);
-  --input: oklch(0.300 0.010 265);
-  --ring: oklch(0.615 0.012 265);
+  --border: oklch(0.275 0 0);
+  --input: oklch(0.320 0 0);
+  --ring: oklch(0.620 0 0);
 
   --waiting: oklch(0.812 0.152 76);
   --blocked: oklch(0.638 0.223 27);
   --live: oklch(0.795 0.175 157);
   --unclassified-edge: oklch(0.812 0.152 76);
-  --rule-strong: oklch(0.335 0.011 265);
+  --rule-strong: oklch(0.360 0 0);
 
   --shade: oklch(0 0 0 / 30%);
   --shade-strong: oklch(0 0 0 / 45%);
   --shade-deep: oklch(0 0 0 / 60%);
 
-  --sidebar: var(--card);
-  --sidebar-foreground: var(--foreground);
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.800 0 0);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-accent: oklch(0.255 0 0);
+  --sidebar-accent-foreground: var(--foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
 }
@@ -200,6 +234,21 @@
      it still stops short of stretching to the edge of an ultra-wide
      monitor, the same reasoning as trellis's own --container-overview. */
   --container-page: 96rem;
+}
+
+/* The registry writes `no-scrollbar` on regions whose overflow is a layout
+   detail rather than something to act on, but never defines it — so every one
+   of them drew the 11px square thumb `@layer base` gives the document. It is
+   defined here rather than deleted from the registry because `Combobox`'s
+   listbox genuinely wants it: a popover sized to its own content scrolls by a
+   few pixels and a bar on that is noise. `SidebarContent` is the opposite case
+   and had the class removed instead — a rail that cannot fit its own workspaces
+   must say so. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @utility text-meta {
