@@ -371,7 +371,13 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
-        "no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
+        // `no-scrollbar` removed from the registry default. The rail is
+        // navigation, and a rail that cannot fit its own workspaces has to say
+        // so rather than hide the fact; index.css defines the utility for the
+        // regions that do want it. The offset that used to put this box's top
+        // below the shell bar is a SidebarHeader now, so this scrolls only
+        // when the content genuinely does not fit.
+        "flex min-h-0 flex-1 flex-col gap-0 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
         className
       )}
       {...props}

@@ -77,9 +77,19 @@ export function SettingsPage() {
         <h2 className="text-heading">Vault</h2>
         {report.vault_locked ? (
           <>
+            {/* The daemon now tries the three non-interactive key sources at
+                start (§4.3: keychain, KEEPER_MASTER_KEY, key.age), so reaching
+                this state means none of them resolved on this machine — not
+                that unlocking is a step every start pays. Saying which it is
+                matters: the old copy described a locked vault as the normal
+                condition, which is what made the passphrase look mandatory. */}
             <div className="flex items-center gap-2 text-sm">
               <Lamp state="blocked" label="vault locked" />
-              <span>Locked. Tools return blocked until it is opened.</span>
+              <span>
+                Locked. No keychain item, <code className="text-meta">KEEPER_MASTER_KEY</code> or{' '}
+                <code className="text-meta">key.age</code> resolved on this machine, so it needs a
+                passphrase. Tools return blocked until it is opened.
+              </span>
             </div>
             <div className="flex items-end gap-3">
               <label className="flex flex-col gap-1">
