@@ -26,6 +26,7 @@ import (
 
 	"github.com/mtchen/keeper/internal/api"
 	"github.com/mtchen/keeper/internal/daemon"
+	"github.com/mtchen/keeper/internal/vault"
 )
 
 // version is set with -ldflags "-X main.version=...". The handshake compares it
@@ -195,7 +196,55 @@ func Run(args []string) int {
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 
-	logger.Info("keeperd listening", "version", version, "socket", sock, "ui", base, "vault", "locked")
+	// Open the vault before announcing the listener, with no passphrase.
+	//
+	// Three of §4.3's four key sources need nothing from a person: the OS
+	// keychain, KEEPER_MASTER_KEY and key.age all resolve inside this process,
+	// and a first-ever start mints a fresh master key straight into the
+	// keychain. Only an install that has none of them needs source 4, and only
+	// this process can find out which kind of install it is. `keeper vault
+	// unlock` has asked exactly this question since its passphrase prompt was
+	// made conditional — it calls UnlockVault with "" and prompts on the answer
+	// — but the daemon never asked it of itself. So every start left the vault
+	// shut, and every install paid an unlock step that on nearly all of them
+	// opened nothing a passphrase was ever needed for.
+	//
+	// This grants no access that did not already exist. The key sources tried
+	// here resolve with no secret from the operator, which means any process
+	// running as this user could already obtain the master key; the manual step
+	// it replaces ran the identical resolution and was reachable by anything
+	// that could reach the socket. What is removed is a prompt that cost a
+	// person an action and an attacker nothing.
+	//
+	// §3.4's rule survives intact: the daemon may not *block* on a passphrase,
+	// because an auto-started daemon has no TTY to read one from. That is an
+	// argument against prompting, not against trying, and a source that
+	// resolves without input is not the interactive path. When none resolves,
+	// the daemon stays locked exactly as it did before, tools return
+	// CodeVaultLocked, and Settings and `keeper vault unlock` offer source 4.
+	//
+	// --vault-idle-lock is untouched and still bounds how long decrypted DSNs
+	// sit in this process's memory. It is deliberately not re-opened here after
+	// it fires: an idle lock that something in the same process re-opens on a
+	// timer protects nothing at all.
+	vaultState := "locked"
+	switch err := d.Unlock(ctx, ""); {
+	case err == nil:
+		vaultState = "unlocked"
+	case errors.Is(err, vault.ErrNoKeySource):
+		logger.Info("vault stays locked: no key source resolves without a passphrase")
+	default:
+		// R4.3: a source that is configured but broken is never quietly
+		// downgraded into "ask for a passphrase instead". Staying locked is
+		// correct; staying silent about why is not.
+		logger.Error("vault unlock", "err", err)
+	}
+
+	// R4.3 again: the source in use is a reported fact, and now that the unlock
+	// happens where nobody is watching, this line is the only place it is
+	// stated at the moment it is chosen.
+	logger.Info("keeperd listening", "version", version, "socket", sock, "ui", base,
+		"vault", vaultState, "key source", deps.Vault.KeySource())
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)

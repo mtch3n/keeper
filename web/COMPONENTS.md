@@ -37,7 +37,7 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Badge | `@/components/ui/badge` | Status chips that are not one of the four `Lamp` states |
 | Breadcrumb | `@/components/ui/breadcrumb` | Where a full page sits, e.g. Catalog → a table's columns |
 | Button | `@/components/ui/button` | Primary interactive element |
-| Card | `@/components/ui/card` | Container (CardHeader, CardTitle, CardDescription, CardContent, CardFooter) — never for row data (UI.md §3.3) |
+| Card | `@/components/ui/card` | A surface and its padding (`Card`, `CardContent`) — never for row data (UI.md §3.3). The registry's `CardHeader`, `CardTitle`, `CardDescription`, `CardAction` and `CardFooter` were deleted: no screen used one, `CardTitle`'s `text-base` is off the type scale, and `CardFooter` drew `border-t bg-muted/50` — a tinted panel inside a panel, the exact figure the palette was rewritten to remove. A heading is `text-heading`, a footer is a flex row of buttons; neither needed a slot, and the slots made the card's own box carry `has-data-[slot=card-footer]:pb-0` to undo padding on their behalf |
 | Checkbox | `@/components/ui/checkbox` | One finding's acceptance checkbox on `Connections` (UI.md §2.7); never a single collapsed "I understand" confirmation |
 | Collapsible | `@/components/ui/collapsible` | An open/closed panel, e.g. one approval's expanded facts |
 | Combobox | `@/components/ui/combobox` | Choosing one item from many by typing |
@@ -55,7 +55,7 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Select | `@/components/ui/select` | A pick from a fixed set |
 | Separator | `@/components/ui/separator` | Dividers, replacing `border-t` spacer divs |
 | Sheet | `@/components/ui/sheet` | The off-canvas panel `Sidebar` becomes below the mobile breakpoint. Not used directly by application code |
-| Sidebar | `@/components/ui/sidebar` | The left rail holding both scopes, through `AppSidebar`. Added with `--overwrite`, after which the five registry files it would have reset (`button`, `input`, `separator`, `skeleton`, `tooltip`) were restored from git: they carry this project's square-radius and type-scale edits and the registry copies do not. Its `cn` import was repointed at `@/lib/utils` per the note below |
+| Sidebar | `@/components/ui/sidebar` | The left rail holding both scopes, through `AppSidebar`. Added with `--overwrite`, after which the five registry files it would have reset (`button`, `input`, `separator`, `skeleton`, `tooltip`) were restored from git: they carry this project's square-radius and type-scale edits and the registry copies do not. Its `cn` import was repointed at `@/lib/utils` per the note below. `SidebarContent` also lost the registry's `no-scrollbar`: the rail is navigation, and one that cannot fit its own workspaces has to say so. The utility itself is defined in `index.css` for the regions that do want it — the registry referenced it in two files and defined it nowhere, so every one of them drew the document's 11px thumb |
 | Skeleton | `@/components/ui/skeleton` | Loading placeholders |
 | Spinner | `@/components/ui/spinner` | Inline pending indicator |
 | Switch | `@/components/ui/switch` | A true-or-false setting. Square, like everything else: registry's `rounded-full` replaced with `rounded-sm` on both the root and the thumb |
@@ -70,13 +70,14 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 
 | Component | Composes | Purpose |
 |-----------|----------|---------|
-| AppShell | `ConnectionSwitcher`, `Lamp`, `ThemeToggle`, `KeeperMark`, `Tooltip`, `Button` | The persistent chrome: the mark, the connection scope control, the six sections (Connections, Approvals, Permissions, Activity, Catalog, Policy), the theme toggle, and settings as the right-most control. The daemon's `Lamp` appears only while the stream is degraded (`waiting`, `blocked`); a healthy daemon and an unopened stream both report nothing, because a permanent "Live" lamp is the one reading that never needs acting on. The bar carries no bottom rule. The current section is a foreground rule that grows from centre, never the amber accent (UI.md §1's governing rule) |
+| AppShell | `AppSidebar`, `Brand`, `Lamp`, `ThemeToggle`, `Tooltip`, `Button` | The persistent chrome: the connection scope control, the six sections (Connections, Approvals, Permissions, Activity, Catalog, Policy), the theme toggle, and settings as the right-most control. The brand moved to `AppSidebar`'s header, so the two columns open on one baseline with one kind of thing each; the bar keeps it only below `md`, where the rail is a `Sheet` and its header is off-canvas. The daemon's `Lamp` appears only while the stream is degraded (`waiting`, `blocked`); a healthy daemon and an unopened stream both report nothing, because a permanent "Live" lamp is the one reading that never needs acting on. The bar carries no bottom rule. The current section is a foreground rule that grows from centre, never the amber accent (UI.md §1's governing rule) |
 | ConnectionSwitcher | `DropdownMenu`, `Button` | The connection scope control. Lists every registered connection via `listConnections()`; a degraded connection (accepted G0 findings, SPEC R4.1) carries `AcceptedFindingsMark` here, the same component and the same meaning it carries on `Approvals` (UI.md §2.5) |
 | ConnectionScopeProvider | React context (`@/lib/connection-scope`) | Remembers the working connection per browser and exposes `useConnectionScope()`, so `Catalog` and `Policy` (both per-connection, UI.md §2.3) read one source of truth without prop-drilling through the router |
 | LiveStatusProvider | React context (`@/lib/live-status`), `subscribeToEvents` | Opens the one `GET /v1/events` subscription for the whole app and carries its state down through context, so `AppShell`'s daemon `Lamp` is reported once rather than every screen opening its own `EventSource` |
 | ThemeToggle | `IconButton` | Flips the `dark` class on `<html>` and persists the choice. `index.html` sets the class before first paint, so there is no flash. Light and dark are one theme, not a second design (UI.md §5) |
 | IconButton | `Button`, `Tooltip` | An icon-only button whose label is both its accessible name and its tooltip |
-| AppSidebar | `Sidebar`, `Collapsible`, `Separator`, `Lamp`, `AcceptedFindingsMark` | The one switching surface: `Agents`, grouped into workspace folders, and `Databases`. Both scopes live here because they are the same act; the group the current screen does not obey is dimmed, since a control that is always present and only sometimes effective is what made the old top-bar switcher hard to read. Sessions come from `GET /v1/doctor` and refresh off the `session` event. It replaces `ConnectionSwitcher`, now deleted. The rail's content is offset by `--spacing-shell` so it begins on the top bar's own baseline — unaligned, the two columns read as two unrelated pages — and a `SidebarSeparator` divides the two scopes, which are two questions rather than one list with two headings |
+| AppSidebar | `Sidebar`, `Collapsible`, `Separator`, `Lamp`, `AcceptedFindingsMark` | The one switching surface: `Agents`, grouped into workspace folders, and `Databases`. Both scopes live here because they are the same act; the group the current screen does not obey is dimmed, since a control that is always present and only sometimes effective is what made the old top-bar switcher hard to read. Sessions come from `GET /v1/doctor` and refresh off the `session` event. It replaces `ConnectionSwitcher`, now deleted. A `SidebarHeader` of `h-shell` carrying `Brand` begins the rail on the top bar's own baseline — unaligned, the two columns read as two unrelated pages. The rail itself never scrolls: `SidebarContent` is `overflow-hidden` and each group scrolls its own content, so the two group headings and the rule between them stay on screen and only an over-long list moves. It is not the `pt-shell` it replaces, which sat inside the scroll box and slid away on the first wheel gesture. A `SidebarSeparator` divides the two scopes, which are two questions rather than one list with two headings |
+| Brand | `KeeperMark`, `Link` | The mark and the name, linking home. A component rather than markup because it appears in two layouts that are never both on screen — `AppSidebar`'s header at `md` and above, `AppShell`'s bar below it, where the rail has become a `Sheet` and taken its header along. One thing in two places is one component (UI.md §3.3); written twice it is two, and the copy is where they drift |
 | WorkspaceFolder | `Collapsible`, `SidebarMenuSub`, `Lamp` | One workspace and the sessions in it. A folder persists for as long as the page is open even after its last session drops, because one socket connection is one session and a reconnect mints a new one (SPEC R3.4e) — rows that vanish on reconnect would be worse than no grouping at all |
 | SessionScopeProvider | React context (`@/lib/session-scope`) | Holds the selected agent session for `Approvals`, `Permissions` and `Activity`. In memory only, unlike the connection scope: a persisted session id names something that stopped existing the moment its agent reconnected |
 | AcceptedFindingsMark | none | The `(!)` beside a connection running with accepted G0 findings (SPEC R4.1). Shared by `Approvals` and `ConnectionSwitcher`, which both mark the same fact: policy 6 is that one meaning has one rendering. The switcher previously drew a bare warning glyph of its own |
@@ -164,7 +165,21 @@ size, tracking or uppercase utility, and `font-mono` set by hand instead of `tex
 
 ## Colour
 
-Four states carry meaning and nothing else does (UI.md §2.1):
+Four states carry meaning and nothing else does (UI.md §2.1), and since the
+palette rewrite that is true by construction rather than by discipline: **every
+grey in both themes is chroma 0**. A hue in the greys makes §2.1's claim false —
+a blue-tinted panel is colour spent on chrome, and chrome is not what the budget
+is for. Dark is the designed theme (`index.html` ships `class="dark"`); light is
+the same lightness ladder inverted, which is what UI.md §5 means by one theme in
+two modes rather than a second design.
+
+The surfaces are also far enough apart to be read as decisions. The palette this
+replaced put the rail at `0.185` and its own selected row at `0.225` against a
+`0.155` canvas — three surfaces inside four hundredths of a lightness, so a
+selected connection was indistinguishable from an unselected one. The rail is now
+flush with the page (`--sidebar: var(--background)`), and the one filled thing in
+it is the row you have selected.
+
 
 | Token | Means |
 |---|---|
