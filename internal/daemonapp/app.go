@@ -43,6 +43,13 @@ const (
 	reauditInterval   = 24 * time.Hour
 	freshnessInterval = 5 * time.Minute
 	shutdownGrace     = 10 * time.Second
+
+	// A departing daemon holds the lock until its last connection has drained,
+	// so a replacement must outwait shutdownGrace before it may conclude that
+	// the holder is wedged rather than simply leaving.
+	lockHandover = shutdownGrace + 5*time.Second
+	lockRetry    = 100 * time.Millisecond
+	dialProbe    = 250 * time.Millisecond
 )
 
 // Run is the daemon. It returns the process exit code.
@@ -97,9 +104,9 @@ func Run(args []string) int {
 	// winner. R3.4c: the socket is unlinked only under this lock, because a unix
 	// socket returns ECONNREFUSED between bind() and listen() and a client that
 	// treats refusal as "stale" would delete a live one.
-	lock, err := daemon.AcquireLock(daemon.LockPathFor(sock))
-	if errors.Is(err, daemon.ErrDaemonRunning) {
-		logger.Info("another keeperd already holds the lock; nothing to start")
+	lock, err := electDaemon(daemon.LockPathFor(sock), sock)
+	if errors.Is(err, errIncumbentServing) {
+		logger.Info("another keeperd is serving this socket; nothing to start")
 		return 0
 	}
 	if err != nil {
@@ -223,6 +230,62 @@ func Run(args []string) int {
 	_ = uiSrv.Shutdown(shutCtx)
 	wg.Wait()
 	return code
+}
+
+// errIncumbentServing reports a start race lost to a daemon that is actually
+// serving the socket. It is the expected outcome for the loser, not a failure.
+var errIncumbentServing = errors.New("keeper: another daemon is serving the socket")
+
+// electDaemon runs §3.4's start race, with the one thing that the rule "the
+// loser connects to the winner" assumes and never states: that the holder of
+// the lock is a winner at all.
+//
+// A departing daemon holds the lock after it has stopped serving. Shutdown
+// closes the listeners first and drains open connections second, and the lock
+// outlives both, released only when Run returns. Between the first moment and
+// the last, the socket refuses while the lock is still held — for the whole of
+// shutdownGrace whenever some client is holding a connection open, which an
+// attached MCP session or the dashboard's event stream always is.
+//
+// `keeper daemon restart` lands in that window every time. It waits for the
+// socket to stop answering, which takes about a millisecond, and then spawns
+// the replacement, which asks for a lock the outgoing process will not let go
+// of for another ten seconds. Reading a held lock as proof of a live daemon
+// left no daemon running at all: the restart killed the one it was asked to
+// replace and then reported that keeperd never became ready.
+//
+// So a held lock settles the race only while someone is serving behind it.
+// When nobody is, the holder is on its way out and the replacement waits for
+// it. The wait is bounded — a holder that neither serves nor exits is a bug
+// that deserves a message, not a hang.
+func electDaemon(lockPath, socketPath string) (*daemon.Lock, error) {
+	deadline := time.Now().Add(lockHandover)
+	for {
+		lock, err := daemon.AcquireLock(lockPath)
+		if !errors.Is(err, daemon.ErrDaemonRunning) {
+			return lock, err // won the race, or lost to something retrying cannot fix
+		}
+		if serving(socketPath) {
+			return nil, errIncumbentServing
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("keeper: %s is held by a daemon that has not served %s in %s",
+				lockPath, socketPath, lockHandover)
+		}
+		time.Sleep(lockRetry)
+	}
+}
+
+// serving reports whether anything answers on the socket. It only ever dials:
+// R3.4c forbids treating a refusal as evidence that a socket is stale, because
+// a winner between bind() and listen() refuses exactly as a corpse does.
+func serving(socketPath string) bool {
+	conn, err := net.DialTimeout("unix", socketPath, dialProbe)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func env(key, fallback string) string {

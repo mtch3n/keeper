@@ -5,7 +5,7 @@ import path from 'path'
 // The dev server serves only the bundle, so every /v1 and /v1/events call has to
 // reach the running daemon or `pnpm dev` renders an app with no data. Point
 // KEEPER_DAEMON at a different address when keeperd is not on its default port.
-const daemon = process.env.KEEPER_DAEMON ?? 'http://127.0.0.1:7799'
+const daemon = process.env.KEEPER_DAEMON ?? 'http://127.0.0.1:7773'
 
 // keeperd refuses any write whose Origin is not its own, which a browser on the
 // dev server's port never is. changeOrigin only rewrites Host, so the proxy

@@ -9,6 +9,52 @@ The 0.0.1 entry below is written by hand, because a first release has no previou
 tag to generate a range from. Every entry after it is produced from the commits.
 
 
+
+## 0.0.5 — 2026-09-21
+
+`keeper daemon restart` killed the daemon it was asked to replace and started
+nothing in its place. That is the restart `keeper update` performs, so the
+upgrade path 0.0.4 shipped ended with no daemon running.
+
+### Fixed
+
+- **A restart no longer bows out to the daemon it just stopped.** Shutdown
+  closes the listeners first and drains open connections second, and the flock
+  that elects a single daemon outlives both. The socket stops answering within
+  about a millisecond, while the lock stays held for the whole shutdown grace
+  whenever a client is holding a connection open — which an attached MCP
+  session or the dashboard's event stream always is. Measured against a live
+  daemon: socket dead at t=0.01s, lock free at t=10.12s.
+
+  `keeper daemon restart` waits for the socket to stop answering and then
+  spawns the replacement, so it landed inside that window every time. The
+  replacement asked for the lock, was refused by a process on its way out, and
+  exited reporting success into a log nobody reads. Nothing spawned again, and
+  the client timed out on a socket that was never going to appear.
+
+  §3.4's rule is that the loser of the start race connects to the winner, and
+  it assumed the holder of the lock was a winner at all. A held lock now
+  settles the race only while something is serving behind it. When nothing is,
+  the holder is on its way out and the replacement waits for it — bounded, so
+  that a holder which neither serves nor exits is a message rather than a hang.
+
+- **The register dialog** took the registry's 384px default while pairing host
+  with port and user with password on one row, which left each column narrower
+  than the values it holds. A port field you cannot read `5432` in is the shape
+  of the typo that splitting the DSN into separate fields exists to prevent.
+
+- **The sidebar** began above the top bar's own baseline and its first row
+  straddled the bar's bottom edge, so the two columns read as two unrelated
+  pages sharing a window. Its content is offset by the bar's height now, and a
+  rule divides the two scopes: agents and databases are two questions, not one
+  list under two headings.
+
+### Build and CI
+
+- The dev proxy defaulted to port 7799, which is not keeperd's. `pnpm dev`
+  proxied the whole API into whatever else was listening there and rendered an
+  app with no data rather than failing in a way anyone could read.
+
 ## 0.0.4 — 2026-09-18
 
 `keeper update`. The manual upgrade was five commands, and the README's
