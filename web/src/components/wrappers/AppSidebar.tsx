@@ -13,6 +13,7 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubItem,
+  SidebarSeparator,
 } from '@/components/ui/sidebar'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { AcceptedFindingsMark } from '@/components/wrappers/AcceptedFindingsMark'
@@ -119,9 +120,13 @@ export function AppSidebar({ scope }: { scope: Scope }) {
 
   return (
     <Sidebar>
-      <SidebarContent>
+      {/* The rail starts on the shell bar's own baseline. Without this the
+          first group label floats above the top bar's text and the two
+          columns read as two unrelated pages sharing a window. The offset is
+          `--spacing-shell`, the bar's height, so the two cannot drift. */}
+      <SidebarContent className="pt-shell">
         <SidebarGroup className={dim('session')}>
-          <SidebarGroupLabel>Agents</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-label text-muted-foreground">Agents</SidebarGroupLabel>
           <SidebarGroupContent>
             {folders.length === 0 ? (
               <p className="px-2 text-xs text-muted-foreground">No agent has connected yet.</p>
@@ -141,8 +146,13 @@ export function AppSidebar({ scope }: { scope: Scope }) {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* Agents and databases are two different questions, not one list
+            with two headings. The rule says so without spending colour on
+            it. */}
+        <SidebarSeparator />
+
         <SidebarGroup className={cn(dim('connection'))}>
-          <SidebarGroupLabel>Databases</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-label text-muted-foreground">Databases</SidebarGroupLabel>
           <SidebarGroupContent>
             {connections.length === 0 ? (
               <p className="px-2 text-xs text-muted-foreground">No connections registered.</p>
