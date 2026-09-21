@@ -37,7 +37,7 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Badge | `@/components/ui/badge` | Status chips that are not one of the four `Lamp` states |
 | Breadcrumb | `@/components/ui/breadcrumb` | Where a full page sits, e.g. Catalog → a table's columns |
 | Button | `@/components/ui/button` | Primary interactive element |
-| Card | `@/components/ui/card` | Container (CardHeader, CardTitle, CardDescription, CardContent, CardFooter) — never for row data (UI.md §3.3) |
+| Card | `@/components/ui/card` | A surface and its padding (`Card`, `CardContent`) — never for row data (UI.md §3.3). The registry's `CardHeader`, `CardTitle`, `CardDescription`, `CardAction` and `CardFooter` were deleted: no screen used one, `CardTitle`'s `text-base` is off the type scale, and `CardFooter` drew `border-t bg-muted/50` — a tinted panel inside a panel, the exact figure the palette was rewritten to remove. A heading is `text-heading`, a footer is a flex row of buttons; neither needed a slot, and the slots made the card's own box carry `has-data-[slot=card-footer]:pb-0` to undo padding on their behalf |
 | Checkbox | `@/components/ui/checkbox` | One finding's acceptance checkbox on `Connections` (UI.md §2.7); never a single collapsed "I understand" confirmation |
 | Collapsible | `@/components/ui/collapsible` | An open/closed panel, e.g. one approval's expanded facts |
 | Combobox | `@/components/ui/combobox` | Choosing one item from many by typing |
