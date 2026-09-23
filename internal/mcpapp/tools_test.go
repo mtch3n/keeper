@@ -80,3 +80,39 @@ func TestToolListIsExactly(t *testing.T) {
 		}
 	}
 }
+
+// MCP structured content must be a JSON object. The SDK accepts any output
+// type and advertises its schema, so a tool returning a slice registers
+// cleanly and then fails on every call, when the client validates the result.
+func TestEveryOutputSchemaIsAnObject(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "keeper-mcp-test"}, nil)
+	registerTools(server, &daemonHolder{})
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(t.Context(), serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	defer ss.Close()
+
+	cli := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	cs, err := cli.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	defer cs.Close()
+
+	res, err := cs.ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.OutputSchema == nil {
+			continue
+		}
+		schema, ok := tool.OutputSchema.(map[string]any)
+		if !ok || schema["type"] != "object" {
+			t.Errorf("%s: output schema type = %v, want object", tool.Name, schema["type"])
+		}
+	}
+}
