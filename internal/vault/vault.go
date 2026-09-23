@@ -1,6 +1,6 @@
 // Package vault implements ports.Vault: the age-encrypted store of connection
 // records, credentials and per-connection HMAC token keys, and the key-source
-// chain that unlocks it. It is the only package that touches the master key,
+// chain that opens it. It is the only package that touches the master key,
 // the age file or the OS keychain, and the only place a DSN exists at rest.
 package vault
 
@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -35,7 +34,7 @@ type Vault struct {
 	dir string
 
 	mu     sync.Mutex
-	locked bool
+	open   bool
 	key    []byte
 	source string
 	doc    *document
@@ -43,10 +42,10 @@ type Vault struct {
 
 var _ ports.Vault = (*Vault)(nil)
 
-// New returns a Vault rooted at dir. It performs no I/O and starts locked:
-// SPEC §3.4. Callers normally pass DefaultDir(), overridden in tests.
+// New returns a Vault rooted at dir. It performs no I/O; Open does all of it.
+// Callers normally pass DefaultDir(), overridden in tests.
 func New(dir string) *Vault {
-	return &Vault{dir: dir, locked: true}
+	return &Vault{dir: dir}
 }
 
 // DefaultDir returns ~/.config/keeper, honouring XDG_CONFIG_HOME.
@@ -63,12 +62,20 @@ func DefaultDir() (string, error) {
 
 func (v *Vault) vaultPath() string { return filepath.Join(v.dir, vaultFileName) }
 
-// Unlock resolves the master key through the source chain and decrypts
-// vault.age, or creates an empty one on a first-ever run. SPEC §4.3.
-func (v *Vault) Unlock(ctx context.Context, passphrase string) error {
+// Open resolves the master key through the source chain and decrypts vault.age,
+// or creates an empty one on a first-ever run. SPEC §4.3.
+//
+// There is no locked state for an operator to resolve, and so no unlock step.
+// Every source resolves inside this process — the OS keychain,
+// KEEPER_MASTER_KEY, key.age — and a first-ever run mints a key into whichever
+// of them is available. Either this returns an open vault or the install is
+// broken in a way no prompt would have fixed: the key that encrypted vault.age
+// is gone. keeperd calls it before it announces its listener and exits if it
+// fails, so nothing downstream ever sees a vault that is not open.
+func (v *Vault) Open(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if !v.locked {
+	if v.open {
 		return nil
 	}
 
@@ -82,20 +89,23 @@ func (v *Vault) Unlock(ctx context.Context, passphrase string) error {
 		return fmt.Errorf("vault: stat %s: %w", v.vaultPath(), statErr)
 	}
 
-	key, source, err := resolveMasterKey(v.dir, passphrase)
+	key, source, err := resolveMasterKey(v.dir)
 	switch {
 	case err == nil:
 		// resolved; fall through
-	case errors.Is(err, ErrNoKeySource) && !exists:
-		key, source, err = bootstrap(v.dir, passphrase)
+	case errors.Is(err, errNoKeySource) && !exists:
+		// Nothing has ever been configured, so there is nothing to lose: mint a
+		// key and write the empty vault it will encrypt.
+		key, source, err = bootstrap(v.dir)
 		if err != nil {
 			return err
 		}
-	case errors.Is(err, ErrNoKeySource):
-		// Wrapped, not restated: the API boundary maps this sentinel to
-		// CodeVaultLocked so `keeper vault unlock` can tell "this install needs a
-		// passphrase" from "something broke", and only then prompts for one.
-		return fmt.Errorf("%w; set KEEPER_MASTER_KEY, provide key.age, or supply a passphrase", ErrNoKeySource)
+	case errors.Is(err, errNoKeySource):
+		// A vault exists and its key does not. This is the one unrecoverable
+		// state, and it is a loss rather than a lock: no passphrase, no prompt
+		// and no retry produces the key that encrypted this file.
+		return fmt.Errorf("vault: %s exists but its master key is gone from the keychain, "+
+			"KEEPER_MASTER_KEY and key.age; restore one of them or restore the vault from an export", vaultFileName)
 	default:
 		return err
 	}
@@ -120,39 +130,8 @@ func (v *Vault) Unlock(ctx context.Context, passphrase string) error {
 	v.key = key
 	v.source = source
 	v.doc = doc
-	v.locked = false
+	v.open = true
 	return nil
-}
-
-// Lock forgets the master key and the decrypted document.
-//
-// It is the counterpart to Unlock and not a shutdown: the daemon keeps running,
-// the UI keeps serving, the approval queue survives, and the next thing that
-// needs a credential returns CodeVaultLocked with something to do about it. What
-// goes is the only part worth bounding — the decrypted DSNs and token keys
-// sitting in this process's memory.
-func (v *Vault) Lock() {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if v.locked {
-		return
-	}
-	// Overwrite rather than drop the reference: a freed []byte is still the key
-	// until the allocator reuses the page.
-	for i := range v.key {
-		v.key[i] = 0
-	}
-	v.key = nil
-	v.doc = nil
-	v.source = ""
-	v.locked = true
-}
-
-// Locked reports whether the vault still needs Unlock. SPEC §3.4.
-func (v *Vault) Locked() bool {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return v.locked
 }
 
 // KeySource names the key source in use, for doctor. SPEC R4.3.
@@ -178,20 +157,21 @@ func (v *Vault) persist() error {
 	return writeDocument(v.vaultPath(), v.key, v.doc)
 }
 
-func lockedError() *types.Error {
-	return &types.Error{
-		Code:    types.CodeVaultLocked,
-		Summary: "the vault is locked",
-		Action:  "unlock the vault",
-	}
+// errNotOpen guards every read of the decrypted document. It is a programmer
+// error and not a state an operator can be in: keeperd opens the vault before
+// it serves and exits if it cannot, so reaching this means a caller used a
+// Vault it never opened. Nothing maps it to a code a client could act on,
+// because there is no action.
+func errNotOpen() error {
+	return errors.New("vault: used before Open")
 }
 
 // Connections lists every registered connection. SPEC §4.3.
 func (v *Vault) Connections(ctx context.Context) ([]*types.Connection, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return nil, lockedError()
+	if !v.open {
+		return nil, errNotOpen()
 	}
 	out := make([]*types.Connection, 0, len(v.doc.Connections))
 	for _, rec := range v.doc.Connections {
@@ -205,8 +185,8 @@ func (v *Vault) Connections(ctx context.Context) ([]*types.Connection, error) {
 func (v *Vault) Connection(ctx context.Context, id string) (*types.Connection, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return nil, lockedError()
+	if !v.open {
+		return nil, errNotOpen()
 	}
 	rec, ok := v.doc.find(id)
 	if !ok {
@@ -216,15 +196,15 @@ func (v *Vault) Connection(ctx context.Context, id string) (*types.Connection, e
 	return &c, nil
 }
 
-// Register stores a connection and its credentials. The connection is forced
-// disabled with no acceptances regardless of what the caller passed: only
-// Accept can change that. A fresh per-connection HMAC token key (version 1)
-// is minted here. SPEC R4.1, R8.3a.
+// Register stores a connection and its credentials, minting a fresh
+// per-connection HMAC token key (version 1). Whatever the audit found about the
+// role travels with the connection as a report and enables or disables nothing:
+// SPEC R4.1, R8.3a.
 func (v *Vault) Register(ctx context.Context, c *types.Connection, readDSN, writeDSN string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return lockedError()
+	if !v.open {
+		return errNotOpen()
 	}
 	if c.ID == "" {
 		c.ID = uuid.NewV7().String()
@@ -233,8 +213,6 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, readDSN, writ
 		return &ConflictError{Subject: c.ID, Reason: "a connection with this id is already registered"}
 	}
 
-	c.Enabled = false
-	c.Acceptances = nil
 	c.HasWriteCredential = writeDSN != ""
 
 	key := make([]byte, tokenKeySize)
@@ -257,23 +235,21 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, readDSN, writ
 }
 
 // Update replaces the stored connection's editable state: mode, limits,
-// denylist, write scope, findings and acceptances. Enabled is always
-// recomputed from Findings and Acceptances, never trusted from the caller, so
-// a re-audit that adds an unaccepted finding disables the connection whether
-// or not the caller remembered to set Enabled: SPEC R4.1e.
+// denylist, write scope and findings. Findings are stored as the last audit
+// reported them and gate nothing; a re-audit that turns up a new privilege
+// changes what the audit report says and leaves the connection usable, which
+// is what makes the audit separable from the connection at all: SPEC R4.1.
 func (v *Vault) Update(ctx context.Context, c *types.Connection) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return lockedError()
+	if !v.open {
+		return errNotOpen()
 	}
 	rec, ok := v.doc.find(c.ID)
 	if !ok {
 		return &NotFoundError{ID: c.ID}
 	}
-	updated := *c
-	updated.Enabled = len(updated.Unaccepted()) == 0
-	rec.Conn = updated
+	rec.Conn = *c
 	return v.persist()
 }
 
@@ -282,8 +258,8 @@ func (v *Vault) Update(ctx context.Context, c *types.Connection) error {
 func (v *Vault) Remove(ctx context.Context, id string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return lockedError()
+	if !v.open {
+		return errNotOpen()
 	}
 	if !v.doc.remove(id) {
 		return &NotFoundError{ID: id}
@@ -297,8 +273,8 @@ func (v *Vault) Remove(ctx context.Context, id string) error {
 func (v *Vault) DSN(ctx context.Context, id string, role ports.Role) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return "", lockedError()
+	if !v.open {
+		return "", errNotOpen()
 	}
 	rec, ok := v.doc.find(id)
 	if !ok {
@@ -323,85 +299,14 @@ func (v *Vault) DSN(ctx context.Context, id string, role ports.Role) (string, er
 	}
 }
 
-// Accept records a human agreeing to named findings: SPEC R4.1. Each entry of
-// findingIDs is either a bare finding id, or "<id>@<hash>" to bind the
-// acceptance to the exact hash the operator was shown. A bare id always
-// succeeds against whatever the connection currently reports for that id
-// (the remediation path for a stale acceptance: "disabled until
-// re-accepted", SPEC R4.1g); a qualified id fails with a ConflictError if the
-// finding's current Hash has moved on since the operator looked at it. An
-// unknown id always fails with a ConflictError. via must be "cli" or "ui" and
-// is never trusted to be "mcp": SPEC R4.1f, §6.3. The whole batch is
-// validated before anything is written, so a partial failure changes
-// nothing.
-func (v *Vault) Accept(ctx context.Context, id string, findingIDs []string, actor, via string) (*types.Connection, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if v.locked {
-		return nil, lockedError()
-	}
-	if via != "cli" && via != "ui" {
-		return nil, fmt.Errorf("vault: accept via must be \"cli\" or \"ui\", got %q", via)
-	}
-	rec, ok := v.doc.find(id)
-	if !ok {
-		return nil, &NotFoundError{ID: id}
-	}
-
-	type resolved struct {
-		finding types.Finding
-	}
-	batch := make([]resolved, 0, len(findingIDs))
-	for _, raw := range findingIDs {
-		fid, wantHash, hasHash := cutFindingID(raw)
-		f, ok := findFinding(rec.Conn.Findings, fid)
-		if !ok {
-			return nil, &ConflictError{Subject: fid, Reason: "unknown to this connection"}
-		}
-		if hasHash && wantHash != f.Hash {
-			return nil, &ConflictError{Subject: fid, Reason: "hash differs from what was audited"}
-		}
-		batch = append(batch, resolved{finding: f})
-	}
-
-	now := time.Now().UTC()
-	for _, r := range batch {
-		rec.Conn.Acceptances = upsertAcceptance(rec.Conn.Acceptances, types.Acceptance{
-			FindingID: r.finding.ID,
-			Hash:      r.finding.Hash,
-			Actor:     actor,
-			At:        now,
-			Via:       via,
-		})
-	}
-	rec.Conn.Enabled = len(rec.Conn.Unaccepted()) == 0
-
-	if err := v.persist(); err != nil {
-		return nil, err
-	}
-	out := rec.Conn
-	return &out, nil
-}
-
-// cutFindingID splits "<id>@<hash>" into id and hash. A plain id (no "@")
-// reports hasHash=false.
-func cutFindingID(raw string) (id, hash string, hasHash bool) {
-	for i := 0; i < len(raw); i++ {
-		if raw[i] == '@' {
-			return raw[:i], raw[i+1:], true
-		}
-	}
-	return raw, "", false
-}
-
 // TokenKey returns the per-connection HMAC key for a version, and the current
 // version number. Version 0 or negative means "current". Old keys are kept so
 // historical tokens stay interpretable. SPEC R8.3a.
 func (v *Vault) TokenKey(ctx context.Context, id string, version int) ([]byte, int, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return nil, 0, lockedError()
+	if !v.open {
+		return nil, 0, errNotOpen()
 	}
 	rec, ok := v.doc.find(id)
 	if !ok {
@@ -432,8 +337,8 @@ func (v *Vault) TokenKey(ctx context.Context, id string, version int) ([]byte, i
 func (v *Vault) RotateTokenKey(ctx context.Context, id string) (int, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return 0, lockedError()
+	if !v.open {
+		return 0, errNotOpen()
 	}
 	rec, ok := v.doc.find(id)
 	if !ok {
@@ -460,8 +365,8 @@ func (v *Vault) RotateTokenKey(ctx context.Context, id string) (int, error) {
 func (v *Vault) Export(ctx context.Context) ([]byte, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return nil, lockedError()
+	if !v.open {
+		return nil, errNotOpen()
 	}
 	opts := append(append([]json.Options{}, jsonOptions...), jsontext.WithIndent("  "))
 	return json.Marshal(v.doc, opts...)
@@ -470,21 +375,17 @@ func (v *Vault) Export(ctx context.Context) ([]byte, error) {
 // RotateMaster generates a new master key, re-encrypts the vault under it,
 // and persists the new key to the same source currently in use. It supports
 // the keychain and key.age sources, which it can rewrite itself. It refuses
-// for the env and passphrase sources: KEEPER_MASTER_KEY is owned by whatever
-// set the process environment, and a passphrase-derived key cannot be
-// re-derived under a new salt without the passphrase, which the vault does
-// not retain after Unlock. SPEC §4.3.
+// for the env source: KEEPER_MASTER_KEY is owned by whatever set the process
+// environment, and a rotation keeper cannot persist is a vault nothing can
+// open afterwards. SPEC §4.3.
 func (v *Vault) RotateMaster(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.locked {
-		return lockedError()
+	if !v.open {
+		return errNotOpen()
 	}
-	switch v.source {
-	case sourceEnv:
+	if v.source == sourceEnv {
 		return errors.New("vault: cannot rotate the master key while the key source is KEEPER_MASTER_KEY; set a new value out of band")
-	case sourcePassphrase:
-		return errors.New("vault: cannot rotate a passphrase-derived master key without the passphrase, which the vault does not retain")
 	}
 
 	newKey := make([]byte, masterKeyLen)

@@ -10,15 +10,20 @@ import (
 	"strings"
 
 	"github.com/zalando/go-keyring"
-	"golang.org/x/crypto/argon2"
 )
 
 // Key sources, in resolution order: SPEC §4.3, R4.3.
+//
+// All three resolve inside this process with nothing from a person. That is the
+// property the whole design rests on: keeperd starts, opens the vault and
+// serves, and an operator never learns that a vault is a thing that opens. An
+// interactive passphrase source existed here and was removed — it could not
+// work for the auto-started daemon that is keeper's normal shape, so it bought
+// an unlock step on every install in exchange for protecting none of them.
 const (
-	sourceKeychain   = "keychain"
-	sourceEnv        = "env"
-	sourceKeyFile    = "key.age"
-	sourcePassphrase = "passphrase"
+	sourceKeychain = "keychain"
+	sourceEnv      = "env"
+	sourceKeyFile  = "key.age"
 )
 
 const (
@@ -26,24 +31,14 @@ const (
 	keyringUser    = "master"
 	envMasterKey   = "KEEPER_MASTER_KEY"
 	keyFileName    = "key.age"
-	saltFileName   = "passphrase.salt"
 
 	masterKeyLen = 32
-
-	// Argon2id parameters for the interactive passphrase path. These follow the
-	// OWASP baseline recommendation (m=64MiB, t=3, p=4) for an install where the
-	// derived key protects everything else at rest.
-	argonTime    = 3
-	argonMemory  = 64 * 1024
-	argonThreads = 4
-	argonSaltLen = 16
 )
 
-// ErrNoKeySource means none of the four sources resolved and no passphrase
-// was supplied. It is distinguished from every other resolution error so
-// Unlock can tell "nothing configured yet" (bootstrap candidate) from "a
-// configured source is broken" (hard failure, never silently degraded).
-var ErrNoKeySource = errors.New("vault: no key source available")
+// errNoKeySource means no source resolved. Open distinguishes it from every
+// other resolution error so it can tell "nothing configured yet" (mint a key)
+// from "a configured source is broken" (fail, never silently degrade).
+var errNoKeySource = errors.New("vault: no key source available")
 
 // keychainGet and keychainSet seam the OS keychain for tests: a test process
 // must never touch the real system keyring. Production code never reassigns
@@ -54,10 +49,10 @@ var (
 )
 
 // resolveMasterKey tries the key source chain in order and returns the first
-// one that resolves, or ErrNoKeySource if none does and no passphrase was
-// given. A source that is present but malformed is a hard error: falling
-// through in that case would be exactly the silent degradation R4.3 forbids.
-func resolveMasterKey(dir, passphrase string) (key []byte, source string, err error) {
+// one that resolves, or errNoKeySource if none does. A source that is present
+// but malformed is a hard error: falling through in that case would be exactly
+// the silent degradation R4.3 forbids.
+func resolveMasterKey(dir string) (key []byte, source string, err error) {
 	key, ok, err := keyFromKeychain()
 	if err != nil {
 		return nil, "", err
@@ -82,22 +77,7 @@ func resolveMasterKey(dir, passphrase string) (key []byte, source string, err er
 		return key, sourceKeyFile, nil
 	}
 
-	if passphrase != "" {
-		key, ok, err := keyFromPassphrase(dir, passphrase)
-		if err != nil {
-			return nil, "", err
-		}
-		if ok {
-			return key, sourcePassphrase, nil
-		}
-		// Passphrase mode has never been set up on this install (no salt file
-		// yet). That is "no source resolved", the same as every other absent
-		// source, not a hard error: on a fresh install Unlock's bootstrap path
-		// will set it up; against an existing vault.age it surfaces as the
-		// same "no key source available" error every other absence would.
-	}
-
-	return nil, "", ErrNoKeySource
+	return nil, "", errNoKeySource
 }
 
 // keyFromKeychain reads the master key from the OS keychain. Any retrieval
@@ -142,26 +122,6 @@ func keyFromFile(dir string) (key []byte, ok bool, err error) {
 	return raw, true, nil
 }
 
-// keyFromPassphrase derives the master key from an interactive passphrase and
-// this install's persisted salt. The salt is not secret; it only needs to be
-// stable so the same passphrase always derives the same key. ok is false when
-// passphrase mode has never been set up on this install (no salt file yet),
-// which is absence, not a hard error: see resolveMasterKey.
-func keyFromPassphrase(dir, passphrase string) (key []byte, ok bool, err error) {
-	salt, err := os.ReadFile(saltPath(dir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("vault: read %s: %w", saltFileName, err)
-	}
-	return deriveArgon2(passphrase, salt), true, nil
-}
-
-func deriveArgon2(passphrase string, salt []byte) []byte {
-	return argon2.IDKey([]byte(passphrase), salt, argonTime, argonMemory, argonThreads, masterKeyLen)
-}
-
 func decodeMasterKeyB64(s string) ([]byte, error) {
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
 	if err != nil {
@@ -173,30 +133,17 @@ func decodeMasterKeyB64(s string) ([]byte, error) {
 	return key, nil
 }
 
-func saltPath(dir string) string    { return filepath.Join(dir, saltFileName) }
 func keyFilePath(dir string) string { return filepath.Join(dir, keyFileName) }
 
-// bootstrap runs exactly once, the first time a vault is unlocked and no
+// bootstrap runs exactly once, the first time a vault is opened and no
 // vault.age yet exists: nothing has resolved because nothing has ever been
 // configured. It never runs against an existing vault.age, so it can never
 // silently replace the key that file was encrypted with.
 //
-// A supplied passphrase is honoured directly (the operator asked for
-// interactive headless mode). Otherwise the new key is stored in the
-// keychain when available, falling back to key.age: the file key.age exists
-// precisely to be that headless fallback.
-func bootstrap(dir, passphrase string) (key []byte, source string, err error) {
-	if passphrase != "" {
-		salt := make([]byte, argonSaltLen)
-		if _, err := rand.Read(salt); err != nil {
-			return nil, "", fmt.Errorf("vault: generate salt: %w", err)
-		}
-		if err := atomicWrite(saltPath(dir), salt, 0o600); err != nil {
-			return nil, "", fmt.Errorf("vault: write %s: %w", saltFileName, err)
-		}
-		return deriveArgon2(passphrase, salt), sourcePassphrase, nil
-	}
-
+// The new key is stored in the keychain when available, falling back to
+// key.age: the file key.age exists precisely to be that headless fallback. One
+// of the two always works, which is what makes a first run need no setup step.
+func bootstrap(dir string) (key []byte, source string, err error) {
 	newKey := make([]byte, masterKeyLen)
 	if _, err := rand.Read(newKey); err != nil {
 		return nil, "", fmt.Errorf("vault: generate master key: %w", err)

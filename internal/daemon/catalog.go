@@ -21,9 +21,6 @@ type CatalogView struct {
 
 // Catalog reads the merged catalog.
 func (d *Daemon) Catalog(ctx context.Context, connID string) (*CatalogView, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	entries, err := d.deps.CatalogStore.Entries(ctx, connID)
 	if err != nil {
 		return nil, err
@@ -47,9 +44,6 @@ func (d *Daemon) Catalog(ctx context.Context, connID string) (*CatalogView, erro
 // before it is written: R5.2b's missing namespace and R5.2d's missing form are
 // validation errors, never defaults.
 func (d *Daemon) PutColumns(ctx context.Context, connID string, entries map[string]types.ColumnPolicy) error {
-	if d.deps.Vault.Locked() {
-		return errVaultLocked
-	}
 	if len(entries) == 0 {
 		return errValidation("entries", "must name at least one column")
 	}
@@ -68,9 +62,6 @@ func (d *Daemon) PutColumns(ctx context.Context, connID string, entries map[stri
 // InitCatalog is catalog init: a proposal for every column, grouped by how safe
 // the proposal is to accept without reading it (R5.3).
 func (d *Daemon) InitCatalog(ctx context.Context, connID string, sample int) (*ports.InitProposal, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	if sample < 0 {
 		return nil, errValidation("sample", "must not be negative")
 	}
@@ -85,9 +76,6 @@ func (d *Daemon) InitCatalog(ctx context.Context, connID string, sample int) (*p
 // SuggestGrants is §5.5's GRANT SELECT (...) per table. §2.4: use column grants
 // first, where you can.
 func (d *Daemon) SuggestGrants(ctx context.Context, connID string) ([]string, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	return d.deps.CatalogStore.SuggestGrants(ctx, connID)
 }
 

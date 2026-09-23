@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
-import { getDoctor, unlockVault, type DoctorReport } from '@/lib/api'
+import { getDoctor, type DoctorReport } from '@/lib/api'
 import { age } from '@/lib/render'
 
 /**
@@ -21,8 +20,6 @@ import { age } from '@/lib/render'
 export function SettingsPage() {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [passphrase, setPassphrase] = useState('')
-  const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -36,19 +33,6 @@ export function SettingsPage() {
   useEffect(() => {
     void refresh()
   }, [refresh])
-
-  const unlock = async () => {
-    setBusy(true)
-    try {
-      await unlockVault(passphrase)
-      setPassphrase('')
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   if (report === null) return <Skeleton className="h-64 w-full" />
 
@@ -75,49 +59,20 @@ export function SettingsPage() {
 
       <section className="flex flex-col gap-3">
         <h2 className="text-heading">Vault</h2>
-        {report.vault_locked ? (
-          <>
-            {/* The daemon now tries the three non-interactive key sources at
-                start (§4.3: keychain, KEEPER_MASTER_KEY, key.age), so reaching
-                this state means none of them resolved on this machine — not
-                that unlocking is a step every start pays. Saying which it is
-                matters: the old copy described a locked vault as the normal
-                condition, which is what made the passphrase look mandatory. */}
-            <div className="flex items-center gap-2 text-sm">
-              <Lamp state="blocked" label="vault locked" />
-              <span>
-                Locked. No keychain item, <code className="text-meta">KEEPER_MASTER_KEY</code> or{' '}
-                <code className="text-meta">key.age</code> resolved on this machine, so it needs a
-                passphrase. Tools return blocked until it is opened.
-              </span>
-            </div>
-            <div className="flex items-end gap-3">
-              <label className="flex flex-col gap-1">
-                <span className="text-label text-muted-foreground">passphrase</span>
-                <Input
-                  type="password"
-                  value={passphrase}
-                  onChange={(e) => setPassphrase(e.target.value)}
-                  className="w-72"
-                />
-              </label>
-              <Button disabled={busy || passphrase === ''} onClick={() => void unlock()}>
-                Unlock
-              </Button>
-            </div>
-          </>
-        ) : (
-          <Facts>
-            <Fact label="state">
-              <span className="flex items-center gap-2">
-                <Lamp state="live" label="vault unlocked" /> unlocked
-              </span>
-            </Fact>
-            {/* Silent degradation to a weaker key source is a defect (R4.3), so
-                the source in use is always named rather than assumed. */}
-            <Fact label="key source">{report.key_source}</Fact>
-          </Facts>
-        )}
+        {/* There is no locked state and no unlock control. keeperd opens the
+            vault from the keychain, KEEPER_MASTER_KEY or key.age before it
+            serves and exits if it cannot (§4.3), so a daemon this screen can
+            reach has an open vault. What is left to report is which source
+            answered: silent degradation to a weaker one is a defect (R4.3), so
+            it is named rather than assumed. */}
+        <Facts>
+          <Fact label="state">
+            <span className="flex items-center gap-2">
+              <Lamp state="live" label="vault open" /> open
+            </span>
+          </Fact>
+          <Fact label="key source">{report.key_source}</Fact>
+        </Facts>
       </section>
 
       <Separator />
@@ -164,7 +119,7 @@ export function SettingsPage() {
                 <TableHead className="w-8" />
                 <TableHead>Name</TableHead>
                 <TableHead>Mode</TableHead>
-                <TableHead>State</TableHead>
+                <TableHead className="text-right">Findings</TableHead>
                 <TableHead className="text-right">Unclassified</TableHead>
                 <TableHead>Catalog</TableHead>
               </TableRow>
@@ -173,16 +128,15 @@ export function SettingsPage() {
               {report.connections.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Lamp state={!c.enabled ? 'blocked' : c.degraded ? 'waiting' : 'live'} />
+                    <Lamp state="live" />
                   </TableCell>
                   <TableCell className="text-meta">{c.name}</TableCell>
                   <TableCell className="text-meta">{c.mode}</TableCell>
-                  <TableCell className="text-sm">
-                    {!c.enabled
-                      ? `disabled — ${c.unaccepted_findings} finding(s) await acceptance`
-                      : c.degraded
-                        ? 'running with accepted privilege findings'
-                        : 'ok'}
+                  {/* A count and a link, never a state: a finding does not stop
+                      this connection, and doctor calling it a fault would be the
+                      acceptance gate under another name (SPEC R4.1). */}
+                  <TableCell className="text-right text-meta">
+                    {c.findings > 0 ? <Link to="/audit" className="underline underline-offset-4">{c.findings}</Link> : '—'}
                   </TableCell>
                   <TableCell className="text-right text-meta">{c.unclassified_columns}</TableCell>
                   <TableCell className="text-meta">
