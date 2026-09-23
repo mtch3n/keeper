@@ -149,6 +149,7 @@ type rig struct {
 	red   *fakeRedactor
 	alog  *fakeAuditLog
 	pipe  *fakePipeline
+	aud   *fakeAuditor
 
 	sockLn  *pipeListener
 	sockSrv *http.Server
@@ -162,7 +163,7 @@ func newRig(t *testing.T) *rig {
 
 	conn := &types.Connection{
 		ID: "c1", Name: "prod", Engine: "postgres", Database: "app", Role: "app_ro",
-		Mode: types.ModeAssisted, Limits: types.DefaultLimits(), Enabled: true,
+		Mode: types.ModeAssisted, Limits: types.DefaultLimits(),
 	}
 	r := &rig{
 		t:     t,
@@ -172,12 +173,13 @@ func newRig(t *testing.T) *rig {
 		red:   newRedactor(),
 		alog:  &fakeAuditLog{},
 		pipe:  &fakePipeline{},
+		aud:   &fakeAuditor{},
 		conn:  conn,
 	}
 
 	d, err := daemon.New(daemon.Config{Version: "test"}, daemon.Deps{
 		Vault:        r.vault,
-		Auditor:      &fakeAuditor{},
+		Auditor:      r.aud,
 		Catalogs:     func(string) (ports.Catalog, error) { return r.cat, nil },
 		CatalogStore: r.cat,
 		Executor:     r.exec,

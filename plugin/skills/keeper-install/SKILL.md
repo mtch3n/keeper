@@ -1,6 +1,6 @@
 ---
 name: keeper-install
-description: Install keeper, or work out why it is not working. Use when keeper's MCP server fails to start, when a keeper tool reports the vault is locked or the daemon is unreachable, when a connection has unaccepted privilege findings, or when the user asks to install, update, or set up keeper. Do every part the environment allows, then hand over a precise list of what only a person can do.
+description: Install keeper, or work out why it is not working. Use when keeper's MCP server fails to start, when a keeper tool reports the vault is locked or the daemon is unreachable, when a connection is registered but unusable, or when the user asks to install, update, or set up keeper. Do every part the environment allows, then hand over a precise list of what only a person can do.
 version: 1.0.0
 ---
 
@@ -8,9 +8,9 @@ version: 1.0.0
 
 Installing is not the hard part; **install has state in it**, and that is why this
 is a skill rather than a paragraph in a README. Is the binary there, is it the
-right version, is the daemon running, is the vault unlocked, is a connection
-registered, are its privilege findings accepted, is the catalog classified. Any
-of those can be the reason nothing works, and they have different fixes.
+right version, is the daemon running, is a connection registered, is the catalog
+classified. Any of those can be the reason nothing
+works, and they have different fixes.
 
 Work down the list. Stop at the first thing that is wrong, fix it, then carry on
 from there rather than starting again.
@@ -95,21 +95,17 @@ invalidates every token any agent session is holding, because the reverse map is
 memory and the tokens cannot be resolved again. Never restart it on your own
 initiative.
 
-## 3. Is the vault unlocked
+## 3. Is there a connection
 
-The daemon starts locked and every tool returns `vault_locked` until it is
-opened.
+There is no unlock step and no passphrase. keeperd opens the vault itself before
+it serves — from the OS keychain, `KEEPER_MASTER_KEY` or `key.age`, minting a key
+on a first run — and exits if it cannot, so a daemon that answers `keeper doctor`
+has an open vault. What doctor reports is the key *source* in use, which is worth
+reading: a silent fall back to a weaker one would be a defect, so it is named.
 
-```sh
-keeper vault unlock
-```
-
-**This is the user's to run, not yours.** It reads a passphrase from a terminal
-and refuses a pipe. On a desktop the OS keychain usually resolves without one;
-`keeper doctor` names the key source actually in use, which is worth reading — a
-silent fall back to a weaker source would be a defect, so it is always reported.
-
-## 4. Is there a connection
+Its one consequence: the master key lives in the keychain and nowhere else. If
+the user reinstalls the OS or resets their login keyring, every registered
+connection is unrecoverable without `keeper vault export`. Say so once, early.
 
 ```sh
 keeper connection ls
@@ -119,35 +115,41 @@ Registering one needs a database connection string, which means it needs the
 user. Offer them both paths and let them pick:
 
 - `keeper ui` prints a local URL; registering there is the flow that was designed
-  for it, and it walks the findings one at a time.
+  for it.
 - `keeper connection add --name <name> --dsn '<connection string>'` if they would
   rather stay in the terminal.
 
 **Never ask them to paste a connection string into the conversation**, and if
 they do it anyway, do not repeat it back and do not put it in a command you echo.
 
-## 5. Are the findings accepted
+## 4. What did the privilege audit find
 
-A new connection is stored **disabled**. keeper audits the credential's
-privileges and reports what it found — it never refuses one, and a master account
-works — but each finding has to be accepted by name before anything runs.
+A new connection works straight away. keeper audits the credential and reports
+what it found; nothing there blocks anything, and a connection whose audit could
+not run at all — a managed server that hides `pg_authid`, a role without the
+introspection grants — is registered and usable with no report yet.
 
 ```sh
-keeper connection show <name>          # what is outstanding
-keeper connection accept <name> --finding <id>
+keeper audit              # every connection
+keeper audit <name>       # one of them
 ```
 
-Read the findings out to the user and let them decide. Each one comes with the
-narrower grant that would remove it, and the narrower grant is usually the better
-answer: a privilege the role does not hold is one keeper cannot get wrong.
+This step is worth doing even though nothing is broken. Read the findings out to
+the user. Each one comes with the statement that would narrow the grant, and
+running it is usually the better answer: a privilege the role does not hold is
+one keeper cannot get wrong.
 
-Accepting `rolsuper` is a real decision, not a formality. It means keeper's
-database-level protection does not apply to that connection, and after it keeper
-is doing one job — reducing what reaches your context — with nothing underneath
-it. Say that plainly. Do not accept findings on the user's behalf unless they
-have said which ones.
+Say plainly what the broad ones cost. On a `rolsuper` role, keeper's
+database-level protection does not apply, and keeper is doing one job —
+reducing what reaches your context — with nothing underneath it. That is a
+real trade, not a formality.
 
-## 6. Is the catalog classified
+**Do not run the narrowing statements yourself.** They are `GRANT`/`REVOKE`
+against the user's database, they are not on keeper's MCP surface, and an agent
+that could edit the privileges of the credential supervising it would be
+removing its own supervision. Hand them over for the user to run.
+
+## 5. Is the catalog classified
 
 ```sh
 keeper catalog init <name> --sample 200
@@ -163,7 +165,7 @@ them.
 `keeper ui` is the better place to work through that, because it is a table of
 hundreds of rows and the terminal is not.
 
-## 7. Connect the harness
+## 6. Connect the harness
 
 The Claude Code plugin registers the MCP server itself. Elsewhere, point the
 client at `keeper mcp` over stdio:
@@ -177,8 +179,7 @@ Then reconnect the server and check that keeper's tools are listed.
 ## What to hand back rather than do
 
 - `sudo` anything.
-- `keeper vault unlock` — it wants a terminal and a human.
-- Choosing which privilege findings to accept.
+- Running any `GRANT` or `REVOKE` the audit suggests.
 - Supplying a connection string.
 
 Finish by telling them plainly what is done, what is left, and the exact command

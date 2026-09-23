@@ -142,8 +142,6 @@ and one ungranted one still stops.
 | `denylisted` | that relation is off-limits on this connection. No approval overrides it; ask the user to change the list if they meant to allow it |
 | `permission_denied` | the database refused. The message names the columns you *may* read — use them |
 | `ddl_refused` | keeper does not run DDL, at any tier. Schema changes belong to the project's migration tooling |
-| `vault_locked` | nobody has unlocked keeper yet. Ask the user to run `keeper vault unlock` |
-| `connection_disabled` | the credential has privilege findings nobody has accepted. Ask them to open keeper and accept them |
 
 Errors never carry the database's own message. keeper composes them, because
 PostgreSQL puts the offending value into its error text and that is an egress
@@ -157,7 +155,7 @@ usually tell you more than a retry will.
 - Do not try to defeat the masking — no `substr`, `ascii`, `length` or
   narrowing-range probing of a masked column to recover what is under it. keeper
   cannot reliably detect that and the user is trusting you not to.
-- Do not register connections, accept privilege findings, approve, grant or edit
+- Do not register connections, re-run privilege audits, approve, grant or edit
   the catalog. Those are not exposed to you, deliberately: they are the human's.
 - Do not present a masked result as if it were complete, and do not present
   keeper's own summaries as the database's data.

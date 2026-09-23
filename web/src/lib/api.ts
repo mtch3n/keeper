@@ -15,13 +15,13 @@
  */
 
 import type {
-  Acceptance,
   ApprovalFacts,
   WriteScopeEntry,
   Finding,
   Degradation,
   ApprovalItem,
   AuditRecord,
+  AuditReport,
   ClientInfo,
   ColumnPolicy,
   Connection,
@@ -151,18 +151,15 @@ export interface ConnectionDetail {
   denylist?: RelationRef[]
   write_scope?: WriteScopeEntry[]
   has_write_credential: boolean
-  enabled: boolean
-  degraded: boolean
   degradations?: Degradation[]
 }
 
-/** The G0 half. `unaccepted` is what keeps a connection disabled: a finding
- * stays there until somebody accepts it by name (SPEC R4.1). */
+/** The G0 half of describe_connection: what the last privilege audit found,
+ * and when. Nothing in it gates the connection (SPEC R4.1) — the Audit page
+ * is where these are meant to be read. */
 export interface AuditedPrivileges {
   audited_at: string
   findings?: Finding[]
-  acceptances?: Acceptance[]
-  unaccepted?: Finding[]
 }
 
 export interface CatalogStatus {
@@ -299,8 +296,9 @@ export function auditConnection(id: string) {
   return post<Connection>(`/v1/connections/${id}/audit`)
 }
 
-export function acceptFindings(id: string, body: { finding_ids: string[]; actor: string; via: 'cli' | 'ui' }) {
-  return post<Connection>(`/v1/connections/${id}/accept`, body)
+/** The privilege audit for every connection. */
+export function listAudits() {
+  return get<AuditReport[]>('/v1/audit')
 }
 
 export function updateConnection(id: string, body: { mode?: Mode; limits?: Limits }) {
@@ -387,7 +385,6 @@ export function getActivityRecord(auditId: string) {
 export interface DoctorReport {
   version: string
   ui_base?: string
-  vault_locked: boolean
   key_source: string
   sessions?: Session[]
   pending_approvals: number
@@ -404,9 +401,9 @@ export interface DoctorReport {
 export interface ConnectionHealth {
   id: string
   name: string
-  enabled: boolean
-  degraded: boolean
-  unaccepted_findings: number
+  /** How many the last privilege audit reported. A pointer at `Audit`, not a
+   * state: none of them stop this connection (SPEC R4.1). */
+  findings: number
   unclassified_columns: number
   catalog_fresh: boolean
   catalog_freshness_known: boolean
@@ -416,10 +413,6 @@ export interface ConnectionHealth {
 
 export function getDoctor() {
   return get<DoctorReport>('/v1/doctor')
-}
-
-export function unlockVault(passphrase: string) {
-  return post<{ ok: boolean }>('/v1/vault/unlock', { passphrase })
 }
 
 // ── GET /v1/events (SSE) ─────────────────────────────────────────────────

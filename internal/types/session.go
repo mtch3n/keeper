@@ -137,10 +137,7 @@ type ApprovalItem struct {
 	TicketID   string  `json:"ticket_id"`
 	Session    Session `json:"session"`
 	Connection string  `json:"connection"`
-	// ConnectionDegraded carries the accepted-findings marker onto the approval
-	// screen, so a human approving against a superuser knows it. SPEC R4.1.
-	ConnectionDegraded bool `json:"connection_degraded"`
-	Tier               Tier `json:"tier"`
+	Tier       Tier    `json:"tier"`
 	// Facts is what a human decides on; SQL is evidence and renders below it.
 	Facts     ApprovalFacts `json:"facts"`
 	SQL       string        `json:"sql"`

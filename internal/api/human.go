@@ -20,8 +20,9 @@ type registerRequest struct {
 	CatalogPath string `json:"catalog_path,omitzero"`
 }
 
-// registerConnection audits the role and stores the connection disabled, with
-// its findings. Nothing here logs or echoes the DSN.
+// registerConnection stores the connection and reports what G0 found about its
+// role. The connection is usable either way, including when the audit could not
+// run at all (R4.1). Nothing here logs or echoes the DSN.
 func (s *Server) registerConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
 	var req registerRequest
 	if err := s.readJSON(w, r, &req); err != nil {
@@ -36,24 +37,15 @@ func (s *Server) auditConnection(ctx context.Context, _ *reqInfo, _ http.Respons
 	return s.d.Audit(ctx, r.PathValue("id"))
 }
 
-type acceptRequest struct {
-	FindingIDs []string `json:"finding_ids"`
-	Actor      string   `json:"actor"`
-	// Via is "cli" or "ui". It is never "mcp": R4.1f and §6.3.
-	Via string `json:"via"`
+// listAudits is the privilege-audit report for every connection. It is read
+// on the human surface as its own page, separately from the connection it
+// describes: SPEC R4.1.
+func (s *Server) listAudits(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
+	return s.d.Audits(ctx)
 }
 
-func (s *Server) acceptFindings(ctx context.Context, rq *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
-	var req acceptRequest
-	if err := s.readJSON(w, r, &req); err != nil {
-		return nil, err
-	}
-	if req.Via == "" {
-		req.Via = defaultVia(rq.surface)
-	}
-	return s.d.Accept(ctx, r.PathValue("id"), req.FindingIDs, req.Actor, req.Via)
-}
-
+// defaultVia names the surface a human action arrived on. It is never "mcp":
+// R4.1f and §6.3.
 func defaultVia(sf surface) string {
 	if sf == surfaceLoopback {
 		return "ui"
@@ -233,18 +225,27 @@ func (s *Server) doctor(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, 
 	return s.d.Doctor(ctx), nil
 }
 
-type unlockRequest struct {
-	Passphrase string `json:"passphrase"`
+// exportResponse carries the encrypted export blob. It is not a credential in
+// the clear and it is not safe either: it decrypts under this install's master
+// key, so where it is written is the operator's decision to make.
+type exportResponse struct {
+	Data []byte `json:"data"`
 }
 
-// unlockVault is §4.3's interactive headless path. The passphrase is read once,
-// passed straight to the vault and never logged.
-func (s *Server) unlockVault(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
-	var req unlockRequest
-	if err := s.readJSON(w, r, &req); err != nil {
+// exportVault is `keeper vault export`. Human surface only: an agent that could
+// export the vault could carry off every connection keeper holds, which is the
+// whole point of keeper holding them.
+func (s *Server) exportVault(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
+	blob, err := s.d.ExportVault(ctx)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.d.Unlock(ctx, req.Passphrase); err != nil {
+	return exportResponse{Data: blob}, nil
+}
+
+// rotateMaster re-encrypts the vault under a fresh master key.
+func (s *Server) rotateMaster(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
+	if err := s.d.RotateMaster(ctx); err != nil {
 		return nil, err
 	}
 	return okResponse{OK: true}, nil

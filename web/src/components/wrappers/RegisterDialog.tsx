@@ -57,11 +57,11 @@ const EMPTY = {
  * under each option, which a checkbox here would quietly become a third
  * rendering of.
  *
- * The audit is the test. There is no separate "Test connection" button
- * because storing the connection *is* the test: keeper audits the role, keeps
- * the connection disabled, and enables it only once each finding has been
- * accepted. The findings themselves are read on the page rather than in here,
- * where a checkbox per finding and its narrower grant would be cramped.
+ * There is no separate "Test connection" button because storing the
+ * connection *is* the test: keeper opens the credential to audit the role, and
+ * a credential that cannot connect fails here. What the audit found is read on
+ * `Audit` rather than in here — it is a report about the database, not a step
+ * in this form, and the connection works either way.
  *
  * Registry search: `pnpm dlx shadcn@latest search @shadcn -q "dialog"`
  * returns `@shadcn/dialog`, used here, and there is no registry item that

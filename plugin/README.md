@@ -29,11 +29,11 @@ to do — including not asking for a sensitive value in chat, and not probing a
 masked column to recover what is under it.
 
 **The `keeper-install` skill** gets it working. Installing has state in it — is
-the binary there, is it the right version, is the daemon running, is the vault
-unlocked, are the privilege findings accepted, is the catalog classified — and
-each of those has a different fix. The skill walks them, does what it can, and
-hands back the parts only a person can do: `sudo`, the vault passphrase, the
-connection string, and which findings to accept.
+the binary there, is it the right version, is the daemon running, is a connection
+registered, is the catalog classified — and each of those has a different fix.
+The skill walks them, does what it can, and hands back the parts only a person
+can do: `sudo`, the connection string, and any privilege change the audit
+suggests.
 
 **The `/keeper:ui` command** prints the dashboard's address. That is all it
 does, and it is a command rather than part of a skill because the port is chosen
@@ -50,7 +50,7 @@ remember.
 
 No approval command, no connection registration, no catalog editing. Those are
 reachable from the CLI and the web UI and from nowhere else — an agent that
-could approve its own query, or accept the privilege findings on the credential
+could approve its own query, or re-run the privilege audit on the credential
 it is being masked by, would be removing its own supervision. The plugin cannot
 grant what the MCP surface does not expose.
 

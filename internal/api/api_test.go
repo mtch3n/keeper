@@ -1,7 +1,9 @@
 package api_test
 
 import (
+	jsonv1 "encoding/json"
 	json "encoding/json/v2"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -261,19 +263,21 @@ func TestLoopbackRequiresCSRFToken(t *testing.T) {
 	b := r.browser()
 	b.header.Del("X-Keeper-CSRF")
 
-	resp, raw := b.do("POST", "/v1/vault/unlock", map[string]any{"passphrase": "x"})
+	register := map[string]any{"name": "x", "dsn": "postgres://u@h/db"}
+
+	resp, raw := b.do("POST", "/v1/connections", register)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a mutating request without the CSRF token succeeded: %d %s", resp.StatusCode, raw)
 	}
 
 	b.header.Set("X-Keeper-CSRF", "not-the-token")
-	resp, raw = b.do("POST", "/v1/vault/unlock", map[string]any{"passphrase": "x"})
+	resp, raw = b.do("POST", "/v1/connections", register)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a wrong CSRF token was accepted: %d %s", resp.StatusCode, raw)
 	}
 
 	b.header.Set("X-Keeper-CSRF", r.srv.CSRFToken())
-	if resp, raw := b.do("POST", "/v1/vault/unlock", map[string]any{"passphrase": "x"}); resp.StatusCode != http.StatusOK {
+	if resp, raw := b.do("POST", "/v1/connections", register); resp.StatusCode != http.StatusOK {
 		t.Fatalf("the right token was refused: %d %s", resp.StatusCode, raw)
 	}
 }
@@ -289,7 +293,7 @@ func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 		body         any
 	}{
 		{"POST", "/v1/connections", map[string]any{"name": "x", "dsn": "postgres://u@h/db"}},
-		{"POST", "/v1/connections/c1/accept", map[string]any{"finding_ids": []string{"rolsuper"}, "actor": "a", "via": "cli"}},
+		{"GET", "/v1/audit", nil},
 		{"PATCH", "/v1/connections/c1", map[string]any{"mode": "permissive"}},
 		{"PUT", "/v1/connections/c1/denylist", map[string]any{"relations": []types.RelationRef{}}},
 		{"GET", "/v1/approvals", nil},
@@ -300,7 +304,8 @@ func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 		{"POST", "/v1/catalog/c1/init", map[string]any{}},
 		{"GET", "/v1/activity", nil},
 		{"GET", "/v1/doctor", nil},
-		{"POST", "/v1/vault/unlock", map[string]any{"passphrase": "x"}},
+		{"POST", "/v1/vault/export", nil},
+		{"POST", "/v1/vault/rotate-master", nil},
 	}
 	for _, tc := range cases {
 		resp, raw := a.do(tc.method, tc.path, tc.body)
@@ -543,18 +548,66 @@ func TestAWriteApprovalCannotBecomeAGrant(t *testing.T) {
 	}
 }
 
-// §3.4: the daemon starts locked and says so with a status a client can act on.
-func TestLockedVaultIsReportedAs423(t *testing.T) {
+// R4.1: G0 reports, it does not gate — including when G0 cannot run.
+//
+// A managed server that hides pg_authid, a role without the introspection
+// grants and a host that is down at registration all made the audit fail, and a
+// failed audit refused the registration outright. That is the acceptance gate
+// wearing the auditor's clothes: keeper held nothing, masked nothing, and the
+// connections worth masking were the ones it turned away.
+func TestRegisterSurvivesAnAuditThatCannotRun(t *testing.T) {
 	r := newRig(t)
-	r.vault.locked = true
-	a := r.agent("reconcile OPS-441")
+	r.aud.err = errors.New("permission denied for table pg_authid")
+	b := r.browser()
 
-	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"})
-	if resp.StatusCode != http.StatusLocked {
-		t.Fatalf("want 423, got %d %s", resp.StatusCode, raw)
+	var got struct {
+		ID        string    `json:"id"`
+		Name      string    `json:"name"`
+		AuditedAt time.Time `json:"audited_at"`
 	}
-	if code := decodeError(t, raw).Code; code != types.CodeVaultLocked {
-		t.Fatalf("want vault_locked, got %q", code)
+	b.mustJSON("POST", "/v1/connections", map[string]any{
+		"name": "managed", "dsn": "postgres://u@h/db",
+	}, &got)
+	if got.ID == "" || got.Name != "managed" {
+		t.Fatalf("an unauditable connection was refused registration: %+v", got)
+	}
+	// No report is a state, not a blank one: `keeper audit` says "never" rather
+	// than dating the report to the year 1 or claiming a clean bill of health.
+	if !got.AuditedAt.IsZero() {
+		t.Fatalf("an audit that never ran was timestamped: %v", got.AuditedAt)
+	}
+}
+
+// §4.3: keeper serves no unlock surface, and still names its key source.
+//
+// keeperd opens the vault from the keychain, KEEPER_MASTER_KEY or key.age
+// before it announces a listener and exits if it cannot, so there is no locked
+// state for a client to resolve and nothing for an operator to type. The route
+// is deleted rather than deprecated: a vault something can ask to open is a
+// vault something has to remember to ask to open, and every source it would
+// have asked about resolves inside the daemon anyway.
+//
+// R4.3 survives the removal — silent degradation to a weaker source is still a
+// defect, so doctor still names the one in use.
+func TestNoUnlockSurfaceAndTheKeySourceIsStillNamed(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+
+	// Compared against a path that was never registered, rather than against a
+	// literal status: what matters is that the router treats the two the same.
+	gone, _ := b.do("POST", "/v1/vault/unlock", map[string]any{"passphrase": "x"})
+	never, _ := b.do("POST", "/v1/no-such-route", map[string]any{})
+	if gone.StatusCode != never.StatusCode {
+		t.Fatalf("the unlock route still answers: %d, while an unregistered path gives %d",
+			gone.StatusCode, never.StatusCode)
+	}
+
+	var rep struct {
+		KeySource string `json:"key_source"`
+	}
+	b.mustJSON("GET", "/v1/doctor", nil, &rep)
+	if rep.KeySource != "test" {
+		t.Fatalf("doctor stopped naming the key source: %q", rep.KeySource)
 	}
 }
 
@@ -658,24 +711,6 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 		if c.Name == "has_hiv_diagnosis" || c.Name == "secret" {
 			t.Fatalf("a suppressed column name was disclosed: %s", c.Name)
 		}
-	}
-}
-
-// R4.1f: an acceptance is CLI or UI, never MCP.
-func TestAcceptanceRefusesAnMCPVia(t *testing.T) {
-	r := newRig(t)
-	cli := r.socket()
-	resp, raw := cli.do("POST", "/v1/connections/c1/accept", map[string]any{
-		"finding_ids": []string{"rolsuper"}, "actor": "ming", "via": "mcp",
-	})
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("via=mcp accepted: %d %s", resp.StatusCode, raw)
-	}
-	cli.mustJSON("POST", "/v1/connections/c1/accept", map[string]any{
-		"finding_ids": []string{"rolsuper"}, "actor": "ming",
-	}, nil)
-	if got := r.vault.acceptCalls; len(got) != 1 || got[0] != "cli" {
-		t.Fatalf("the socket's default via is not cli: %v", got)
 	}
 }
 
@@ -804,5 +839,78 @@ func TestATicketIsDecidedOnce(t *testing.T) {
 	}
 	if n := len(r.d.Approvals()); n != 0 {
 		t.Fatalf("queue still holds the item: %d", n)
+	}
+}
+
+// The detail response carries types.Limits, and its StatementTimeout is a
+// time.Duration — a type encoding/json/v2 refuses to encode without being told
+// how. writeJSON used to stream straight at the ResponseWriter and discard the
+// error, so 200 was already on the wire when the encode gave up and the body
+// stopped mid-value. Every reader saw a success it could not parse, and
+// `keeper doctor` called the daemon unreachable while it was serving requests.
+// CONTRACT §2 puts nanoseconds on the wire; this pins both halves.
+func TestConnectionDetailIsCompleteAndCarriesDuration(t *testing.T) {
+	r := newRig(t)
+	resp, raw := r.socket().do("GET", "/v1/connections/c1", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	// An untyped decode is the truncation check: a body that stops inside a
+	// value fails here regardless of which field it stopped in.
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("body is not complete JSON (%d bytes): %v", len(raw), err)
+	}
+	if _, ok := body["limits"]; !ok {
+		t.Fatalf("no limits in detail response: %s", raw)
+	}
+	var detail struct {
+		Limits types.Limits `json:"limits"`
+	}
+	if err := json.Unmarshal(raw, &detail, jsonv1.FormatDurationAsNano(true)); err != nil {
+		t.Fatalf("decode with the wire's duration representation: %v", err)
+	}
+	if got, want := detail.Limits.StatementTimeout, types.DefaultLimits().StatementTimeout; got != want {
+		t.Fatalf("statement_timeout = %v, want %v", got, want)
+	}
+}
+
+// R4.1: the privilege audit is its own surface. It reports every connection's
+// findings with the statement that would narrow each one, and reporting is all
+// it does — the connection carrying them answers queries like any other.
+func TestAuditReportsFindingsAndGatesNothing(t *testing.T) {
+	r := newRig(t)
+	r.vault.conns["c1"].Findings = []types.Finding{{
+		ID: "rolsuper", Kind: types.FindingAttribute, Subject: "rolsuper",
+		Detail:   "This role can do anything on the server.",
+		Narrower: "CREATE ROLE app_ro LOGIN;",
+	}}
+
+	var reports []struct {
+		ConnectionID string          `json:"connection_id"`
+		Name         string          `json:"name"`
+		Findings     []types.Finding `json:"findings"`
+	}
+	r.socket().mustJSON("GET", "/v1/audit", nil, &reports)
+
+	if len(reports) != 1 {
+		t.Fatalf("got %d report(s), want 1", len(reports))
+	}
+	if reports[0].ConnectionID != "c1" || reports[0].Name != "prod" {
+		t.Fatalf("report does not name its connection: %+v", reports[0])
+	}
+	if len(reports[0].Findings) != 1 {
+		t.Fatalf("got %d finding(s), want 1", len(reports[0].Findings))
+	}
+	// The suggested fix is the reason the screen is worth opening; a report
+	// that dropped it would leave the operator with a problem and no move.
+	if got := reports[0].Findings[0].Narrower; got != "CREATE ROLE app_ro LOGIN;" {
+		t.Errorf("Narrower = %q, want the narrowing statement", got)
+	}
+
+	// And the connection is untouched by any of it.
+	resp, raw := r.socket().do("GET", "/v1/connections/c1", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a connection with findings is not describable: %d %s", resp.StatusCode, raw)
 	}
 }

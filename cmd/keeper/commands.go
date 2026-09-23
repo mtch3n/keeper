@@ -49,7 +49,7 @@ func catalogInit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("catalog init", flag.ContinueOnError)
 	sample := fs.Int("sample", 0, "rows to sample per column; 0 skips sampling")
 	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -61,7 +61,12 @@ func catalogInit(ctx context.Context, args []string) error {
 	}
 	defer cli.Close()
 
-	prop, err := cli.CatalogInit(ctx, fs.Arg(0), *sample)
+	// The catalog routes are keyed by id; the command line takes a name.
+	id, err := resolveConnectionID(ctx, cli, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	prop, err := cli.CatalogInit(ctx, id, *sample)
 	if err != nil {
 		return err
 	}
@@ -95,7 +100,7 @@ func catalogLs(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("catalog ls", flag.ContinueOnError)
 	only := fs.Bool("unclassified", false, "list only the backlog")
 	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -107,7 +112,12 @@ func catalogLs(ctx context.Context, args []string) error {
 	}
 	defer cli.Close()
 
-	cat, err := cli.GetCatalog(ctx, fs.Arg(0))
+	// The catalog routes are keyed by id; the command line takes a name.
+	id, err := resolveConnectionID(ctx, cli, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	cat, err := cli.GetCatalog(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -137,7 +147,7 @@ func catalogEdit(ctx context.Context, args []string) error {
 	namespace := fs.String("namespace", "", "token namespace; mandatory for token (R5.2b)")
 	form := fs.String("form", "", "partial form; mandatory for partial (R5.2d)")
 	hideName := fs.Bool("hide-name", false, "suppress the column name on every response surface")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
@@ -164,7 +174,12 @@ func catalogEdit(ctx context.Context, args []string) error {
 	}
 	defer cli.Close()
 
-	res, err := cli.PutCatalogColumns(ctx, fs.Arg(0), map[string]types.ColumnPolicy{fs.Arg(1): entry})
+	// The catalog routes are keyed by id; the command line takes a name.
+	id, err := resolveConnectionID(ctx, cli, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	res, err := cli.PutCatalogColumns(ctx, id, map[string]types.ColumnPolicy{fs.Arg(1): entry})
 	if err != nil {
 		return err
 	}
@@ -175,7 +190,7 @@ func catalogEdit(ctx context.Context, args []string) error {
 
 func catalogGrants(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("catalog grants", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -187,7 +202,12 @@ func catalogGrants(ctx context.Context, args []string) error {
 	}
 	defer cli.Close()
 
-	stmts, err := cli.CatalogGrants(ctx, fs.Arg(0))
+	// The catalog routes are keyed by id; the command line takes a name.
+	id, err := resolveConnectionID(ctx, cli, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	stmts, err := cli.CatalogGrants(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -212,7 +232,7 @@ func runApprove(args []string) error {
 	session := fs.Bool("session", false, "also create a session allow rule for the paths")
 	ceiling := fs.Int("row-ceiling", 0, "row ceiling for the allow rule")
 	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -297,17 +317,12 @@ func printQueue(queue []types.ApprovalItem) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tINTENT\tCONNECTION\tTIER\tAGE")
 	for _, it := range queue {
-		mark := it.Connection
-		if it.ConnectionDegraded {
-			mark += " (!)"
-		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
 			it.TicketID, it.Session.Client.Name, it.Session.Client.Workspace,
-			truncate(it.Session.Intent, 40), mark, it.Tier, age(it.CreatedAt))
+			truncate(it.Session.Intent, 40), it.Connection, it.Tier, age(it.CreatedAt))
 	}
 	w.Flush()
-	fmt.Println("\n(!) marks a connection running with accepted privilege findings.")
-	fmt.Println("keeper approve <ticket> to decide one.")
+	fmt.Println("\nkeeper approve <ticket> to decide one.")
 	return nil
 }
 
@@ -328,10 +343,6 @@ func printApproval(it types.ApprovalItem) {
 		fmt.Printf("egress    %s\n", strings.Join(f.Egress, ", "))
 	}
 	fmt.Printf("cost      est. %.0f\n", f.EstimatedCost)
-	if it.ConnectionDegraded {
-		fmt.Printf("warning   %s runs with accepted privilege findings: keeper's database-level\n", it.Connection)
-		fmt.Println("          protection does not apply to it (SPEC R4.1)")
-	}
 	if len(f.Reasons) > 0 {
 		fmt.Printf("why       %s\n", strings.Join(f.Reasons, ", "))
 	}
@@ -362,7 +373,7 @@ func runAllow(args []string) error {
 	case "ls":
 		fs := flag.NewFlagSet("allow ls", flag.ContinueOnError)
 		asJSON := fs.Bool("json", false, "emit JSON")
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		grants, err := cli.ListGrants(ctx)
@@ -423,7 +434,7 @@ func runActivity(args []string) error {
 	since := fs.Duration("since", 0, "how far back to look, e.g. 24h")
 	limit := fs.Int("limit", 50, "maximum records")
 	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -441,7 +452,14 @@ func runActivity(args []string) error {
 		return printJSON(rec)
 	}
 
-	f := client.ActivityFilter{SessionID: *session, ConnectionID: *conn, Limit: *limit}
+	f := client.ActivityFilter{SessionID: *session, Limit: *limit}
+	if *conn != "" {
+		// Records carry the connection's id. A name passed through unresolved
+		// matched nothing and printed an empty log.
+		if f.ConnectionID, err = resolveConnectionID(ctx, cli, *conn); err != nil {
+			return err
+		}
+	}
 	if *tier >= 0 {
 		t := types.Tier(*tier)
 		f.Tier = &t
@@ -488,7 +506,7 @@ func runActivity(args []string) error {
 func runVersion(args []string) error {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -542,7 +560,7 @@ func runVersion(args []string) error {
 func runDoctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -558,7 +576,10 @@ func runDoctor(args []string) error {
 
 	rep, err := cli.GetDoctor(ctx)
 	if err != nil {
-		return daemonlessDoctor(sock, err, *asJSON)
+		// The handshake succeeded, so the daemon is up. Reporting this as the
+		// daemonless case pointed at a stale socket and sent people after the
+		// one thing that was working.
+		return fmt.Errorf("doctor: the daemon is running but its report failed: %w", err)
 	}
 	// The daemon does not report its own liveness in the body — reaching this
 	// line is the report. Without this the JSON form said `"daemon_running":
@@ -571,13 +592,11 @@ func runDoctor(args []string) error {
 	fmt.Printf("daemon        running\n")
 	fmt.Printf("version       daemon %s · cli %s%s\n", rep.Version, client.Version, versionNote(rep.Version))
 	fmt.Printf("socket        %s\n", sock)
-	if rep.VaultLocked {
-		fmt.Println("vault         locked — run `keeper vault unlock`")
-	} else {
-		// R4.3: silent degradation to a weaker key source is a defect, so the
-		// source in use is always named.
-		fmt.Printf("vault         unlocked, key source %s\n", rep.KeySource)
-	}
+	// R4.3: silent degradation to a weaker key source is a defect, so the source
+	// in use is always named. There is no locked state to report beside it —
+	// keeperd opens the vault before it serves and exits if it cannot, so a
+	// daemon that answered this call has an open vault by construction.
+	fmt.Printf("vault         open, key source %s\n", rep.KeySource)
 	if rep.Judge.Configured {
 		state := "unreachable"
 		if rep.Judge.Available {
@@ -592,14 +611,6 @@ func runDoctor(args []string) error {
 	}
 	for _, c := range rep.Connections {
 		state := "ok"
-		switch {
-		case !c.Enabled:
-			state = fmt.Sprintf("disabled — %d finding(s) await acceptance", c.Unaccepted)
-		case c.Degraded:
-			state = "running with accepted privilege findings"
-		case !c.Healthy && c.Reason != "":
-			state = c.Reason
-		}
 		if c.FreshKnown && !c.CatalogFresh {
 			state += " · catalog is stale"
 		} else if !c.FreshKnown {
@@ -608,6 +619,12 @@ func runDoctor(args []string) error {
 		fmt.Printf("connection    %-20s %s\n", c.Name, state)
 		if c.Unclassified > 0 {
 			fmt.Printf("              %d unclassified column(s) — `keeper catalog ls %s --unclassified`\n", c.Unclassified, c.Name)
+		}
+		if c.Findings > 0 {
+			// A pointer, not a verdict: the findings do not stop this
+			// connection, and doctor reporting them as a fault would be
+			// the acceptance gate wearing a different hat (SPEC R4.1).
+			fmt.Printf("              %d privilege finding(s) — `keeper audit %s`\n", c.Findings, c.Name)
 		}
 	}
 	return nil
@@ -661,7 +678,7 @@ func daemonlessDoctor(sock string, dialErr error, asJSON bool) error {
 
 func runVault(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("vault: expected a subcommand (unlock, export, rotate-master)")
+		return fmt.Errorf("vault: expected a subcommand (export, rotate-master)")
 	}
 	ctx := context.Background()
 	cli, err := connectDaemon(ctx)
@@ -671,40 +688,6 @@ func runVault(args []string) error {
 	defer cli.Close()
 
 	switch args[0] {
-	case "unlock":
-		// Three of §4.3's four key sources need nothing from the operator: the
-		// keychain, KEEPER_MASTER_KEY and key.age all resolve inside keeperd, and
-		// a first-ever unlock generates a fresh key straight into the keychain.
-		// Only an install that has none of them needs a passphrase, and only
-		// keeperd can say so — so ask it first and prompt on the answer.
-		//
-		// Prompting unconditionally, as this did, asked for a secret that on most
-		// installs is never used, and made an unattended unlock impossible
-		// because readSecret refuses a non-terminal.
-		err := cli.UnlockVault(ctx, "")
-		if client.IsCode(err, types.CodeVaultLocked) {
-			if !term.IsTerminal(int(os.Stdin.Fd())) {
-				return err
-			}
-			pass, perr := readSecret("passphrase: ")
-			if perr != nil {
-				return perr
-			}
-			err = cli.UnlockVault(ctx, pass)
-		}
-		if err != nil {
-			return err
-		}
-		// R4.3: the source in use is always named. With the passphrase prompt gone
-		// the operator otherwise has no signal at all about which source answered,
-		// which is precisely the silent degradation that rule is about.
-		if rep, derr := cli.GetDoctor(ctx); derr == nil && rep.KeySource != "" {
-			fmt.Printf("vault unlocked, key source %s\n", rep.KeySource)
-			return nil
-		}
-		fmt.Println("vault unlocked")
-		return nil
-
 	case "export":
 		out, err := cli.ExportVault(ctx)
 		if err != nil {
@@ -791,7 +774,7 @@ func runDaemon(args []string) error {
 
 func runUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -901,20 +884,6 @@ func confirm(prompt string) bool {
 		return true
 	}
 	return false
-}
-
-func readSecret(prompt string) (string, error) {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return "", fmt.Errorf("refusing to read a passphrase from a non-terminal")
-	}
-	fmt.Print(prompt)
-	b, err := term.ReadPassword(fd)
-	fmt.Println()
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 func age(t time.Time) string {

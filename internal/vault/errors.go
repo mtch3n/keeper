@@ -15,9 +15,9 @@ func (e *NotFoundError) Error() string {
 
 // ConflictError reports that a request could not be honoured because it named
 // something the vault does not recognise, or something that has changed since
-// it was last seen. Accept returns this for an unknown finding id or one whose
-// Hash no longer matches the audit (SPEC R4.1, R4.1g). The API boundary is
-// expected to map it to HTTP 409 via errors.AsType[*vault.ConflictError].
+// it was last seen. Register returns this for an id that is already taken. The
+// API boundary is expected to map it to HTTP 409 via
+// errors.AsType[*vault.ConflictError].
 type ConflictError struct {
 	Subject string
 	Reason  string

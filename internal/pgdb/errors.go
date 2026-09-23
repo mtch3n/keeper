@@ -45,7 +45,6 @@ var summaries = map[types.Code]string{
 	types.CodePermissionDenied:  "the database refused this statement for this connection's role",
 	types.CodeTimeout:           "the statement exceeded this connection's statement timeout",
 	types.CodeApprovalRequired:  "the statement modifies data; writes are approved before they run",
-	types.CodeVaultLocked:       "the vault holding this connection's credential is locked",
 	types.CodeNoWriteCredential: "this connection has no write credential, so it cannot modify data",
 	types.CodeInternal:          "the database did not complete this statement",
 }
@@ -57,7 +56,6 @@ var actions = map[types.Code]string{
 	types.CodePermissionDenied:  "ask an operator to widen this connection's grants",
 	types.CodeTimeout:           "narrow the statement, or ask an operator to raise statement_timeout",
 	types.CodeApprovalRequired:  "resubmit the statement so it can be previewed and approved",
-	types.CodeVaultLocked:       "run keeper vault unlock",
 	types.CodeNoWriteCredential: "ask an operator to register a write credential for this connection",
 	types.CodeInternal:          "retry; tell an operator if it persists",
 }

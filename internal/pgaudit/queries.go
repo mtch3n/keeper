@@ -109,8 +109,7 @@ WHERE n.nspname = 'pg_catalog'
 // azure_* helpers live there: SPEC R4.1d.
 const securityDefinerQuery = `
 SELECT n.nspname, p.proname,
-       pg_get_function_identity_arguments(p.oid) AS args,
-       p.prosrc
+       pg_get_function_identity_arguments(p.oid) AS args
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE p.prosecdef
@@ -155,11 +154,13 @@ type functionPrivRow struct {
 	Exec   bool   `db:"can_exec"`
 }
 
+// secDefRow deliberately does not carry prosrc. Nothing downstream reads a
+// function's body now that findings are advisory, and a body can contain
+// literals that SPEC R10a keeps out of anything loggable.
 type secDefRow struct {
 	Schema string `db:"nspname"`
 	Name   string `db:"proname"`
 	Args   string `db:"args"`
-	Source string `db:"prosrc"`
 }
 
 // quoteIdent double-quotes a SQL identifier, escaping embedded quotes, so
@@ -316,12 +317,11 @@ func functionExecFindings(currentUser string, rows []functionPrivRow) []types.Fi
 }
 
 // securityDefinerFindings maps §4.1d's reachable-SECDEF rows to findings.
-// Hash binds the acceptance to the function's source and full signature, so a
-// redefinition invalidates it: SPEC R4.1g. Narrower is left empty: a SECDEF
-// function's reachability can come from a PUBLIC grant, an explicit grant, or
-// schema USAGE combined with the default PUBLIC EXECUTE, and these functions
-// are frequently vendor-owned (SPEC R4.1d's azure_sys_fn example), so no
-// single REVOKE is safe to propose as copyable-as-is.
+// Narrower is left empty: a SECDEF function's reachability can come from a
+// PUBLIC grant, an explicit grant, or schema USAGE combined with the default
+// PUBLIC EXECUTE, and these functions are frequently vendor-owned (SPEC
+// R4.1d's azure_sys_fn example), so no single REVOKE is safe to propose as
+// copyable-as-is.
 func securityDefinerFindings(rows []secDefRow) []types.Finding {
 	var out []types.Finding
 	for _, r := range rows {
@@ -331,7 +331,6 @@ func securityDefinerFindings(rows []secDefRow) []types.Finding {
 			Kind:    types.FindingSecurityDefine,
 			Subject: sig,
 			Detail:  fmt.Sprintf("SECURITY DEFINER function %s runs with its defining owner's privileges whenever this role calls it.", sig),
-			Hash:    securityDefinerHash(sig, r.Source),
 		})
 	}
 	return out

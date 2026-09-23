@@ -14,12 +14,12 @@ import (
 // registration or credential detail full describe does — host, password and
 // connection string never appear here or anywhere else (SPEC §6.1).
 type ConnectionSummary struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Engine   string `json:"engine"`
-	Database string `json:"database"`
-	Role     string `json:"role"`
-	Degraded bool   `json:"degraded"`
+	ID       string     `json:"id"`
+	Name     string     `json:"name"`
+	Engine   string     `json:"engine"`
+	Database string     `json:"database"`
+	Role     string     `json:"role"`
+	Mode     types.Mode `json:"mode"`
 }
 
 // ListConnections lists every registered connection.
@@ -31,22 +31,23 @@ func (c *Client) ListConnections(ctx context.Context) ([]ConnectionSummary, erro
 	return out, nil
 }
 
-// ConnectionDetail is describe_connection's field set (SPEC §6.1): engine,
-// version, database, schema, role, audited privileges, catalog status,
-// policy summary, mode, degraded — plus everything else a human-facing
-// caller (the CLI, the UI) needs about the connection, which is most of
-// [types.Connection] anyway. Rather than duplicate that struct's fields
-// (and drift from it), ConnectionDetail embeds it directly: Findings,
-// Acceptances, Limits, Denylist and WriteScope all come along for free, and
-// "audited privileges" is exactly Connection.Findings under its frozen name.
-// AuditedPrivileges is the G0 half of describe_connection. Unaccepted is what
-// keeps the connection disabled: a finding stays there until somebody accepts
-// it by name (SPEC R4.1).
+// AuditedPrivileges is the G0 half of describe_connection: what the last
+// privilege audit found, and when it ran. Nothing in it gates the connection
+// (SPEC R4.1) — `keeper audit` is where these are meant to be read.
 type AuditedPrivileges struct {
-	AuditedAt   time.Time          `json:"audited_at"`
-	Findings    []types.Finding    `json:"findings,omitzero"`
-	Acceptances []types.Acceptance `json:"acceptances,omitzero"`
-	Unaccepted  []types.Finding    `json:"unaccepted,omitzero"`
+	AuditedAt time.Time       `json:"audited_at"`
+	Findings  []types.Finding `json:"findings,omitzero"`
+}
+
+// AuditReport is one connection's entry in `keeper audit`, mirroring
+// daemon.AuditReport.
+type AuditReport struct {
+	ConnectionID string          `json:"connection_id"`
+	Name         string          `json:"name"`
+	Database     string          `json:"database"`
+	Role         string          `json:"role"`
+	AuditedAt    time.Time       `json:"audited_at"`
+	Findings     []types.Finding `json:"findings,omitzero"`
 }
 
 // CatalogStatus is the freshness and backlog half.
@@ -77,8 +78,6 @@ type ConnectionDetail struct {
 	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
 	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
 	HasWriteCredential bool                    `json:"has_write_credential"`
-	Enabled            bool                    `json:"enabled"`
-	Degraded           bool                    `json:"degraded"`
 	Degradations       []types.Degradation     `json:"degradations,omitzero"`
 }
 
@@ -88,13 +87,6 @@ func (c *Client) DescribeConnection(ctx context.Context, id string) (*Connection
 	var out ConnectionDetail
 	if err := c.do(ctx, http.MethodGet, "/v1/connections/"+url.PathEscape(id), nil, &out); err != nil {
 		return nil, err
-	}
-	// Defensive: an accepted finding means this connection runs without
-	// keeper's database-level protection, and that marker must appear
-	// everywhere the connection does (R4.1). Derive it rather than trust the
-	// field to have been set.
-	if !out.Degraded && len(out.AuditedPrivileges.Acceptances) > 0 {
-		out.Degraded = true
 	}
 	return &out, nil
 }
@@ -109,10 +101,9 @@ type RegisterConnectionParams struct {
 	CatalogPath string `json:"catalog_path,omitzero"`
 }
 
-// RegisterConnection stores a connection and audits it (G0). The returned
-// connection carries every finding and is always disabled until each is
-// individually accepted (SPEC R4.1) — this call itself never accepts
-// anything, implicitly or otherwise.
+// RegisterConnection stores a connection and audits it once (G0). The
+// returned connection carries every finding and is usable regardless of them:
+// the audit advises, it does not gate (SPEC R4.1).
 func (c *Client) RegisterConnection(ctx context.Context, p RegisterConnectionParams) (*types.Connection, error) {
 	var out types.Connection
 	if err := c.do(ctx, http.MethodPost, "/v1/connections", p, &out); err != nil {
@@ -130,25 +121,15 @@ func (c *Client) AuditConnection(ctx context.Context, id string) (*types.Connect
 	return &out, nil
 }
 
-// AcceptFindings records actor agreeing to the named findings on via ("cli"
-// or "ui" — never "mcp", SPEC R4.1f). Accepting an unknown or changed
-// finding id is a 409, decoded like any other *types.Error.
-func (c *Client) AcceptFindings(ctx context.Context, id string, findingIDs []string, actor, via string) (*types.Connection, error) {
-	body := struct {
-		FindingIDs []string `json:"finding_ids"`
-		Actor      string   `json:"actor"`
-		Via        string   `json:"via"`
-	}{FindingIDs: findingIDs, Actor: actor, Via: via}
-	var out types.Connection
-	if err := c.do(ctx, http.MethodPost, "/v1/connections/"+url.PathEscape(id)+"/accept", body, &out); err != nil {
+// Audit returns the privilege-audit report for every connection.
+func (c *Client) Audit(ctx context.Context) ([]AuditReport, error) {
+	var out []AuditReport
+	if err := c.do(ctx, http.MethodGet, "/v1/audit", nil, &out); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return out, nil
 }
 
-// PatchConnectionParams is `keeper connection set`'s body. Every field is a
-// §4.5 operator limit, unreachable from MCP. Fields are flattened rather
-// than nested under a single Limits object so that setting one (say
 // --max-rows) never implicitly resets the others to zero; a zero value here
 // means "leave this alone", not "set it to zero".
 type PatchConnectionParams struct {

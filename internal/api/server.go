@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	jsonv1 "encoding/json"
 	json "encoding/json/v2"
 	"log/slog"
 	"net/http"
@@ -369,10 +370,32 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// durationAsNano is threaded through every Marshal/Unmarshal call on this
+// surface. encoding/json/v2 refuses to encode a time.Duration by default and
+// types.Limits.StatementTimeout is one; v1's nanosecond representation is what
+// internal/client decodes and what the vault stores (CONTRACT §2).
+var durationAsNano = jsonv1.FormatDurationAsNano(true)
+
+// writeJSON marshals into memory before it writes anything. Streaming straight
+// at the ResponseWriter cannot fail safely: the status is already on the wire,
+// so a mid-encode error ships a body that stops in the middle of a value under
+// a 200, and every reader downstream — the CLI, the UI, `keeper doctor` — sees
+// a successful response it cannot parse. Buffering keeps a failed encode a 500.
 func writeJSON(w http.ResponseWriter, code int, v any) {
+	b, err := json.Marshal(v, durationAsNano)
+	if err != nil {
+		// Not marshalled: encoding the error value could fail the same way and
+		// recurse through failTo. The body is a constant for that reason, and
+		// carries no detail of what failed (CONTRACT §4).
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"code":"` + string(types.CodeInternal) +
+			`","summary":"keeper could not encode the response"}`))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.MarshalWrite(w, v)
+	_, _ = w.Write(b)
 }
 
 // readJSON decodes a body. The body is never logged and never echoed: R8.7d
@@ -380,7 +403,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // form's body is the one value in the system the agent must never see.
 func (s *Server) readJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	defer r.Body.Close()
-	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, s.maxBody), v); err != nil {
+	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, s.maxBody), v, durationAsNano); err != nil {
 		return &types.ValidationError{Field: "body", Reason: "is not the JSON this route expects"}
 	}
 	return nil

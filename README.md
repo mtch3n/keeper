@@ -26,10 +26,12 @@ database → keeper → MCP response → agent context → cloud provider
 - **Keyed, namespaced tokens** so masked columns still join, group and count
   distinct. `⟨email1:a3f21b4c9d8e7f60⟩` is unmistakably not real data, which is the
   feature — a plausible fake is worse for an LLM consumer than an obvious token.
-- **Audits the credential and tells you what it found.** It never refuses one: a
-  master account works, and every finding is reported with the narrower grant that
-  would remove it and accepted by name. The cost of accepting is recorded and shown
-  on every screen that touches the connection.
+- **Audits the credential and tells you what it found.** It never refuses one and
+  never holds one shut: a master account works immediately. Every finding is
+  reported on its own screen, with the statement that would narrow the grant,
+  copyable as-is. Acting on it is database work you choose to do; keeper does not
+  run those statements, because a tool that can narrow its own grants can widen
+  them.
 - **One approval queue across every agent**, attributed to the session, workspace
   and stated intent, so a human working across three windows can tell whose task
   they are authorizing.
@@ -85,7 +87,8 @@ package manager, since the next upgrade of that package would undo it.
 
 It is a CLI command and is not on the MCP surface. An agent that could replace
 keeper's own executable would be removing its own supervision, which is the
-same reason it cannot register a connection, accept a finding or approve.
+same reason it cannot register a connection, re-run a privilege audit or
+approve.
 
 ### From source
 
@@ -106,16 +109,17 @@ keeper ui                        # prints a loopback URL; register the database 
 
 ```sh
 keeper connection add --name prod --dsn 'postgres://…'
-# audits the role, prints every privilege finding with the narrower grant that
-# would remove it, and stops. The connection is stored disabled.
+# audits the role and prints every privilege finding with the statement that
+# would narrow it. The connection is usable from this point on.
 
-keeper connection accept prod --finding rolsuper
 keeper catalog init prod --sample 200
+keeper audit          # the same report, any time, for every connection
 ```
 
-keeper never refuses a credential. A master account works; what it will not do
-is let you hold one without knowing, so every finding is accepted by name and
-the consequence is shown wherever that connection appears afterwards.
+keeper never refuses a credential and never blocks one. A master account works;
+what it will not do is let you hold one without knowing, so `keeper audit` and
+the UI's `Audit` screen say what the role can do beyond reading, and what would
+narrow it. Nothing there has to be answered before the connection runs.
 
 `catalog init` proposes a policy for every column and groups the proposals: typed
 scalars and name matches are safe to accept in bulk, and free text no rule

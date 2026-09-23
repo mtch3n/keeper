@@ -10,10 +10,6 @@ func keeperErr(code types.Code, summary, action string) *types.Error {
 }
 
 var (
-	errVaultLocked = keeperErr(types.CodeVaultLocked,
-		"the vault is locked, so no connection can be opened",
-		"run `keeper unlock`")
-
 	errUnknownConnection = keeperErr(types.CodeTicketUnknown,
 		"no connection with that id is registered",
 		"run `keeper connection list`")
@@ -61,12 +57,6 @@ var (
 		"keeper could not complete the request",
 		"run `keeper doctor`")
 )
-
-func errConnectionDisabled(name string) *types.Error {
-	return keeperErr(types.CodeConnectionDisabled,
-		"connection "+name+" has privilege-audit findings that nobody has accepted, so it is disabled",
-		"run `keeper connection accept "+name+"` after reading the findings")
-}
 
 func errValidation(field, reason string) *types.Error {
 	return keeperErr(types.CodeSyntax, field+" "+reason, "correct the request and retry")

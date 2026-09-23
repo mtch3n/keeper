@@ -338,7 +338,6 @@ func testConnection() *types.Connection {
 		Role:     "acme_prod_app_ro",
 		Mode:     types.ModeAssisted,
 		Limits:   types.DefaultLimits(),
-		Enabled:  true,
 	}
 }
 

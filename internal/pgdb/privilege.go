@@ -69,13 +69,17 @@ func (db *DB) ReadableColumns(ctx context.Context, connID string, rel types.Rela
 // expose different information, so an unchanged dependency set proves nothing.
 // Nested views are covered by their own relations' fingerprints; the caller
 // fingerprints each relation it depends on.
+//
+// attidentity is "char", and text || "char" matches more than one operator, so
+// it is cast. Uncast, the server refused the statement as ambiguous (42725) and
+// no catalog could open on any real database.
 const fingerprintSQL = `
 SELECT c.relkind::text,
        coalesce(
          (SELECT string_agg(
                     a.attnum::text || ':' || a.attname || ':' ||
                     a.atttypid::text || ':' || a.attnotnull::text ||
-                    ':' || a.attidentity || ':' || a.atthasdef::text,
+                    ':' || a.attidentity::text || ':' || a.atthasdef::text,
                     ',' ORDER BY a.attnum)
             FROM pg_attribute a
            WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped),
