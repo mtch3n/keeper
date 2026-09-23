@@ -8,8 +8,40 @@ changelog at all.
 The 0.0.1 entry below is written by hand, because a first release has no previous
 tag to generate a range from. Every entry after it is produced from the commits.
 
+## 0.0.7 — 2026-09-23
 
+Two things stop standing between an operator and a database they are trying to
+use: the privilege audit, which held a connection shut until every finding was
+signed off, and the vault, which asked for a passphrase most installs never set.
+Both were asking a person to resolve a state keeper could resolve itself, and
+neither was protecting anything a statement against the server was not already
+deciding. What replaces them is a report you can read when you want it, and a
+vault that opens before the daemon serves.
 
+Underneath that, the release is mostly things that were broken against a real
+PostgreSQL rather than against a fake: no catalog would open at all, every
+connection detail response was truncated mid-value, `list_connections` was
+rejected by its own client, and one unreachable host could stall every other
+connection behind it.
+
+### Added
+
+- **audit:** A privilege finding is a report, not a gate
+- **vault:** The vault opens itself and keeper has no unlock step
+- **pgdb:** The read credential's session is read-only, whatever its role can do
+
+### Fixed
+
+- **pgdb:** The fingerprint statement casts attidentity, so a catalog can open
+- **api:** A response that fails to encode is no longer a truncated 200
+- **mcp:** `list_connections` answers with an object, as MCP requires
+- **cli:** A flag after the connection name is no longer ignored
+- **cli:** Catalog grants reads the shape the daemon sends
+- **daemon:** One unreachable database no longer stalls every catalog
+
+### Performance
+
+- **daemon:** Doctor bounds its per-connection probes and runs them together
 
 ## 0.0.6 — 2026-09-21
 
