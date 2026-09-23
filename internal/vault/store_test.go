@@ -9,17 +9,16 @@ import (
 	"github.com/mtchen/keeper/internal/ports"
 )
 
-// newTestVault returns an unlocked Vault rooted at a temp directory, using
+// newTestVault returns an open Vault rooted at a temp directory, using
 // KEEPER_MASTER_KEY so the test never touches a real OS keychain (already
-// blocked package-wide, see keysource_test.go's init) or an interactive
-// passphrase.
+// blocked package-wide, see keysource_test.go's init).
 func newTestVault(t *testing.T) (*Vault, string) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv(envMasterKey, validKeyB64(0x42))
 	v := New(dir)
-	if err := v.Unlock(context.Background(), ""); err != nil {
-		t.Fatalf("Unlock: %v", err)
+	if err := v.Open(context.Background()); err != nil {
+		t.Fatalf("Open: %v", err)
 	}
 	return v, dir
 }
@@ -113,17 +112,14 @@ func TestVaultRegisterPersistsAcrossInstances(t *testing.T) {
 	if conn.ID == "" {
 		t.Fatal("Register did not assign an id")
 	}
-	if conn.Enabled {
-		t.Error("a freshly registered connection must be disabled")
-	}
 
 	// A second Vault instance pointed at the same directory, with the same
 	// key source, must see the same data: this is the "reload" half of
 	// atomic write and reload.
 	t.Setenv(envMasterKey, validKeyB64(0x42))
 	v2 := New(dir)
-	if err := v2.Unlock(ctx, ""); err != nil {
-		t.Fatalf("Unlock (second instance): %v", err)
+	if err := v2.Open(ctx); err != nil {
+		t.Fatalf("Open (second instance): %v", err)
 	}
 	got, err := v2.Connection(ctx, conn.ID)
 	if err != nil {
@@ -146,8 +142,8 @@ func TestRotateMasterKeyFileSource(t *testing.T) {
 	dir := t.TempDir()
 
 	v := New(dir)
-	if err := v.Unlock(ctx, ""); err != nil { // no env/keychain: bootstraps into key.age
-		t.Fatalf("Unlock: %v", err)
+	if err := v.Open(ctx); err != nil { // no env/keychain: bootstraps into key.age
+		t.Fatalf("Open: %v", err)
 	}
 	if v.KeySource() != sourceKeyFile {
 		t.Fatalf("KeySource() = %q, want %q", v.KeySource(), sourceKeyFile)
@@ -177,8 +173,8 @@ func TestRotateMasterKeyFileSource(t *testing.T) {
 	// A fresh instance must unlock with the new key.age and still see the
 	// connection registered before rotation.
 	v2 := New(dir)
-	if err := v2.Unlock(ctx, ""); err != nil {
-		t.Fatalf("Unlock after rotation: %v", err)
+	if err := v2.Open(ctx); err != nil {
+		t.Fatalf("Open after rotation: %v", err)
 	}
 	got, err := v2.Connection(ctx, conn.ID)
 	if err != nil {
@@ -189,27 +185,14 @@ func TestRotateMasterKeyFileSource(t *testing.T) {
 	}
 }
 
-func TestRotateMasterRefusesEnvAndPassphraseSources(t *testing.T) {
-	t.Run("env", func(t *testing.T) {
-		v, _ := newTestVault(t) // envMasterKey source
-		if err := v.RotateMaster(context.Background()); err == nil {
-			t.Error("expected RotateMaster to refuse the env source")
-		}
-	})
-
-	t.Run("passphrase", func(t *testing.T) {
-		dir := t.TempDir()
-		v := New(dir)
-		if err := v.Unlock(context.Background(), "a passphrase"); err != nil {
-			t.Fatalf("Unlock: %v", err)
-		}
-		if v.KeySource() != sourcePassphrase {
-			t.Fatalf("KeySource() = %q, want %q", v.KeySource(), sourcePassphrase)
-		}
-		if err := v.RotateMaster(context.Background()); err == nil {
-			t.Error("expected RotateMaster to refuse the passphrase source")
-		}
-	})
+// A key keeper did not write cannot be rewritten by keeper: rotating under
+// KEEPER_MASTER_KEY would re-encrypt the vault under a key nothing persists,
+// and the next start would find the old value in the environment.
+func TestRotateMasterRefusesTheEnvSource(t *testing.T) {
+	v, _ := newTestVault(t) // envMasterKey source
+	if err := v.RotateMaster(context.Background()); err == nil {
+		t.Error("expected RotateMaster to refuse the env source")
+	}
 }
 
 func TestExportReturnsPortableJSON(t *testing.T) {

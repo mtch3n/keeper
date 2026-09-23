@@ -7,7 +7,7 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// idleDaemon is bare() plus the two fields the idle path needs.
+// idleDaemon is bare() plus the fields the idle path needs.
 func idleDaemon(t *testing.T, now time.Time) *Daemon {
 	t.Helper()
 	d := bare(t)
@@ -15,7 +15,6 @@ func idleDaemon(t *testing.T, now time.Time) *Daemon {
 	d.queue = nil
 	d.cfg.Now = func() time.Time { return now }
 	d.cfg.IdleExit = time.Minute
-	d.cfg.VaultIdleLock = 30 * time.Second
 	d.lastActivity.Store(now.UnixNano())
 	return d
 }

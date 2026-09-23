@@ -222,10 +222,8 @@ func (d *Daemon) LocalRequest(ctx context.Context, id string) (*LocalRequestView
 
 	// UI §6.1: the page states the effective mode, because what happens to an
 	// uncertain value depends on it (§9.4).
-	if !d.deps.Vault.Locked() {
-		if c, err := d.deps.Vault.Connection(ctx, v.ConnectionID); err == nil && c != nil {
-			v.Mode = c.Mode
-		}
+	if c, err := d.deps.Vault.Connection(ctx, v.ConnectionID); err == nil && c != nil {
+		v.Mode = c.Mode
 	}
 	return v, nil
 }
