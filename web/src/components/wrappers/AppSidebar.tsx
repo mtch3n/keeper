@@ -18,7 +18,6 @@ import {
 } from '@/components/ui/sidebar'
 import { Brand } from '@/components/wrappers/Brand'
 import { Lamp } from '@/components/wrappers/Lamp'
-import { AcceptedFindingsMark } from '@/components/wrappers/AcceptedFindingsMark'
 import { getDoctor, listConnections } from '@/lib/api'
 import { useLiveStatus } from '@/lib/live-status'
 import { useSessionScope } from '@/lib/session-scope'
@@ -208,7 +207,6 @@ export function AppSidebar({ scope }: { scope: Scope }) {
                     >
                       <Database />
                       <span className="truncate">{connection.name}</span>
-                      {connection.degraded && <AcceptedFindingsMark className="ml-auto text-waiting" />}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}

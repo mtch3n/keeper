@@ -139,32 +139,25 @@ func TestFunctionExecFindings(t *testing.T) {
 
 func TestSecurityDefinerFindings(t *testing.T) {
 	rows := []secDefRow{
-		{Schema: "pg_catalog", Name: "azure_sys_fn", Args: "", Source: "body v1"},
+		{Schema: "pg_catalog", Name: "azure_sys_fn", Args: ""},
+		{Schema: "pg_catalog", Name: "azure_sys_fn", Args: "text"},
 	}
 	got := securityDefinerFindings(rows)
-	assertIDs(t, got, []string{"security-definer:pg_catalog.azure_sys_fn()"})
-	if got[0].Hash == "" {
-		t.Fatal("expected a non-empty Hash")
-	}
 
-	// A redefinition (same signature, different source) must change the hash:
-	// SPEC R4.1g.
-	changed := []secDefRow{
-		{Schema: "pg_catalog", Name: "azure_sys_fn", Args: "", Source: "body v2"},
-	}
-	got2 := securityDefinerFindings(changed)
-	if got2[0].Hash == got[0].Hash {
-		t.Error("redefining the function body must change the hash")
-	}
+	// Per overload: two signatures of one name are two findings, because the
+	// EXECUTE grant attaches to the overload (R4.1c's reasoning, applied here).
+	assertIDs(t, got, []string{
+		"security-definer:pg_catalog.azure_sys_fn()",
+		"security-definer:pg_catalog.azure_sys_fn(text)",
+	})
 
-	// A changed signature (different args) must also change the hash even with
-	// identical source, since it is a different overload.
-	sameSourceDifferentArgs := []secDefRow{
-		{Schema: "pg_catalog", Name: "azure_sys_fn", Args: "text", Source: "body v1"},
-	}
-	got3 := securityDefinerFindings(sameSourceDifferentArgs)
-	if got3[0].Hash == got[0].Hash {
-		t.Error("a different signature must change the hash")
+	// Narrower stays empty for a SECDEF function: no single REVOKE is safe to
+	// propose when the reachability may come from a PUBLIC grant on a
+	// vendor-owned object (SPEC R4.1d).
+	for _, f := range got {
+		if f.Narrower != "" {
+			t.Errorf("finding %s: Narrower = %q, want empty", f.ID, f.Narrower)
+		}
 	}
 }
 

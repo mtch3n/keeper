@@ -30,6 +30,8 @@ func run(args []string) error {
 		return runConnection(rest)
 	case "catalog":
 		return runCatalog(rest)
+	case "audit":
+		return runAudit(rest)
 	case "approve":
 		return runApprove(rest)
 	case "allow":
@@ -68,8 +70,6 @@ Usage:
   keeper connection add --name X --dsn ... [--write-dsn ...] [--catalog path]
   keeper connection ls
   keeper connection show <name>
-  keeper connection audit <name>
-  keeper connection accept <name> --finding ID [--finding ID ...] | --accept-all
   keeper connection set <name> [--mode ...] [--max-rows N] [--timeout D] [--scan-sample N]
   keeper connection denylist <name> [--add schema.table] [--remove schema.table] [--list]
   keeper connection rm <name>
@@ -77,12 +77,13 @@ Usage:
   keeper catalog edit <name> <schema.table.column> --policy P [--namespace N] [--form F] [--hide-name]
   keeper catalog grants <name>
   keeper catalog ls <name> [--unclassified]
+  keeper audit [<name>] [--rerun]
   keeper approve [<ticket>]
   keeper allow ls | keeper allow revoke <id>
   keeper activity [--session S] [--connection C] [--tier N] [--since D] [--limit N]
   keeper doctor
   keeper update [--check] [--force]
-  keeper vault unlock | export | rotate-master
+  keeper vault export | rotate-master
   keeper daemon start | restart | status
   keeper ui
 

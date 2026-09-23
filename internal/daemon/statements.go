@@ -44,19 +44,14 @@ func (d *Daemon) resolveParams(ctx context.Context, sessionID string, params []P
 	return out, nil
 }
 
-// usableConnection is the admission check every statement passes: the vault is
-// open, the connection exists, and no privilege-audit finding is waiting for a
-// human (R4.1).
+// usableConnection is the admission check every statement passes, and all it
+// checks now is that the connection exists. A privilege finding does not gate a
+// statement (R4.1) and the vault cannot be shut while the daemon serves (§4.3),
+// so both of the conditions this used to test are gone.
 func (d *Daemon) usableConnection(ctx context.Context, id string) (*types.Connection, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	c, err := d.deps.Vault.Connection(ctx, id)
 	if err != nil || c == nil {
 		return nil, errUnknownConnection
-	}
-	if !c.Enabled || len(c.Unaccepted()) > 0 {
-		return nil, errConnectionDisabled(c.Name)
 	}
 	return c, nil
 }
@@ -89,8 +84,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	if info.Intent == "" {
 		return nil, nil, errIntentRequired
 	}
-	conn, err := d.usableConnection(ctx, connID)
-	if err != nil {
+	if _, err := d.usableConnection(ctx, connID); err != nil {
 		return nil, nil, err
 	}
 	bound, err := d.resolveParams(ctx, info.ID, params)
@@ -145,6 +139,6 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 		}
 	}
 	facts.Intent = info.Intent
-	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, preview, conn.Degraded())
+	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, preview)
 	return nil, tk, nil
 }

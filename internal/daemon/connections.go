@@ -20,17 +20,26 @@ type ConnectionSummary struct {
 	Engine   string     `json:"engine"`
 	Database string     `json:"database"`
 	Role     string     `json:"role"`
-	Degraded bool       `json:"degraded"`
-	Enabled  bool       `json:"enabled"`
 	Mode     types.Mode `json:"mode"`
 }
 
-// AuditedPrivileges is what G0 found and what a human agreed to.
+// AuditedPrivileges is what G0 found on one connection, and when. It is a
+// report and nothing else: no field here decides whether the connection runs.
 type AuditedPrivileges struct {
-	AuditedAt   time.Time          `json:"audited_at"`
-	Findings    []types.Finding    `json:"findings,omitzero"`
-	Acceptances []types.Acceptance `json:"acceptances,omitzero"`
-	Unaccepted  []types.Finding    `json:"unaccepted,omitzero"`
+	AuditedAt time.Time       `json:"audited_at"`
+	Findings  []types.Finding `json:"findings,omitzero"`
+}
+
+// AuditReport is one connection's entry in GET /v1/audit. The privilege audit
+// is its own surface rather than a step in registration, so it carries enough
+// of the connection to be read on its own. SPEC R4.1.
+type AuditReport struct {
+	ConnectionID string          `json:"connection_id"`
+	Name         string          `json:"name"`
+	Database     string          `json:"database"`
+	Role         string          `json:"role"`
+	AuditedAt    time.Time       `json:"audited_at"`
+	Findings     []types.Finding `json:"findings,omitzero"`
 }
 
 // CatalogStatus is the freshness and backlog half of describe_connection.
@@ -59,16 +68,11 @@ type ConnectionDetail struct {
 	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
 	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
 	HasWriteCredential bool                    `json:"has_write_credential"`
-	Enabled            bool                    `json:"enabled"`
-	Degraded           bool                    `json:"degraded"`
 	Degradations       []types.Degradation     `json:"degradations,omitzero"`
 }
 
 // Connections lists what is registered.
 func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	cs, err := d.deps.Vault.Connections(ctx)
 	if err != nil {
 		return nil, err
@@ -77,7 +81,7 @@ func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
 	for _, c := range cs {
 		out = append(out, ConnectionSummary{
 			ID: c.ID, Name: c.Name, Engine: c.Engine, Database: c.Database,
-			Role: c.Role, Degraded: c.Degraded(), Enabled: c.Enabled, Mode: c.Mode,
+			Role: c.Role, Mode: c.Mode,
 		})
 	}
 	slices.SortStableFunc(out, func(a, b ConnectionSummary) int { return strings.Compare(a.Name, b.Name) })
@@ -87,9 +91,6 @@ func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
 // Describe is describe_connection. Every layer that could not be consulted is
 // reported as a degradation rather than left to look like a clean answer (§7.10).
 func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	c, err := d.deps.Vault.Connection(ctx, id)
 	if err != nil || c == nil {
 		return nil, errUnknownConnection
@@ -97,20 +98,40 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 	det := &ConnectionDetail{
 		ID: c.ID, Name: c.Name, Engine: c.Engine, Version: c.Version,
 		Database: c.Database, Role: c.Role,
-		AuditedPrivileges: AuditedPrivileges{
-			AuditedAt: c.AuditedAt, Findings: c.Findings,
-			Acceptances: c.Acceptances, Unaccepted: c.Unaccepted(),
-		},
+		AuditedPrivileges:  AuditedPrivileges{AuditedAt: c.AuditedAt, Findings: c.Findings},
 		CatalogStatus:      CatalogStatus{Path: c.CatalogPath},
 		Mode:               c.Mode,
 		Limits:             c.Limits,
 		Denylist:           c.Denylist,
 		WriteScope:         c.WriteScope,
 		HasWriteCredential: c.HasWriteCredential,
-		Enabled:            c.Enabled,
-		Degraded:           c.Degraded(),
 	}
 
+	// Every catalog layer needs the catalog open, and opening is what an
+	// unreachable database answers with a connect timeout. Asking once keeps
+	// describe from paying that timeout again for each layer.
+	if cat, err := d.deps.Catalogs(id); err != nil {
+		for _, reason := range []string{"entries unavailable", "backlog unavailable", "freshness unknown"} {
+			det.Degradations = append(det.Degradations, types.Degradation{Layer: "catalog", Reason: reason})
+		}
+	} else {
+		d.describeCatalog(ctx, id, cat, det)
+	}
+	if rels, err := d.deps.Executor.Introspect(ctx, id); err == nil {
+		for _, r := range rels {
+			if !slices.Contains(det.Schemas, r.Ref.Schema) {
+				det.Schemas = append(det.Schemas, r.Ref.Schema)
+			}
+		}
+		slices.Sort(det.Schemas)
+	} else {
+		det.Degradations = append(det.Degradations, types.Degradation{Layer: "catalog", Reason: "introspection unavailable"})
+	}
+	return det, nil
+}
+
+// describeCatalog fills describe's catalog layers from an open catalog.
+func (d *Daemon) describeCatalog(ctx context.Context, id string, cat ports.Catalog, det *ConnectionDetail) {
 	if entries, err := d.deps.CatalogStore.Entries(ctx, id); err == nil {
 		det.PolicySummary = map[types.Policy]int{}
 		for _, p := range entries {
@@ -125,23 +146,12 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 	} else {
 		det.Degradations = append(det.Degradations, types.Degradation{Layer: "catalog", Reason: "backlog unavailable"})
 	}
-	if fresh, err := d.freshness(ctx, id); err == nil {
+	if fresh, err := cat.Fresh(ctx, nil); err == nil {
 		det.CatalogStatus.Fresh, det.CatalogStatus.FreshnessKnown = fresh, true
 	} else {
 		// R5.6b: a false answer is uncertainty, not permission. So is no answer.
 		det.Degradations = append(det.Degradations, types.Degradation{Layer: "catalog", Reason: "freshness unknown"})
 	}
-	if rels, err := d.deps.Executor.Introspect(ctx, id); err == nil {
-		for _, r := range rels {
-			if !slices.Contains(det.Schemas, r.Ref.Schema) {
-				det.Schemas = append(det.Schemas, r.Ref.Schema)
-			}
-		}
-		slices.Sort(det.Schemas)
-	} else {
-		det.Degradations = append(det.Degradations, types.Degradation{Layer: "catalog", Reason: "introspection unavailable"})
-	}
-	return det, nil
 }
 
 // ColumnView is one column of get_schema.
@@ -242,27 +252,16 @@ type RegisterSpec struct {
 	CatalogPath string
 }
 
-// Register audits the role and stores the connection disabled. R4.1: audit,
-// report, accept by name — never refuse, never accept silently. Nothing here
-// logs or echoes the DSN.
+// Register stores the connection and runs G0 once so the audit report has
+// something to show. R4.1: the audit reports, it does not gate — a registered
+// connection is usable whatever the audit found, and what to do about a
+// finding is a separate decision the operator makes from the audit surface.
+// Nothing here logs or echoes the DSN.
 func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connection, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	if spec.Name == "" || spec.DSN == "" {
 		return nil, errValidation("name and dsn", "are required")
 	}
-	findings, err := d.deps.Auditor.Audit(ctx, spec.DSN, ports.RoleRead)
-	if err != nil {
-		return nil, err
-	}
-	if spec.WriteDSN != "" {
-		wf, werr := d.deps.Auditor.Audit(ctx, spec.WriteDSN, ports.RoleWrite)
-		if werr != nil {
-			return nil, werr
-		}
-		findings = append(findings, wf...)
-	}
+	findings, audited := d.tryAudit(ctx, spec)
 	user, database := dsnIdentity(spec.DSN)
 	c := &types.Connection{
 		ID:                 timeID(),
@@ -274,8 +273,7 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 		Mode:               types.ModeAssisted,
 		Limits:             types.DefaultLimits(),
 		Findings:           findings,
-		Enabled:            len(findings) == 0,
-		AuditedAt:          d.now(),
+		AuditedAt:          audited,
 		HasWriteCredential: spec.WriteDSN != "",
 	}
 	if err := d.deps.Vault.Register(ctx, c, spec.DSN, spec.WriteDSN); err != nil {
@@ -285,12 +283,41 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 	return c, nil
 }
 
-// Audit re-runs G0. R4.1e: on an unaccepted finding the connection is disabled,
-// its pooled connections are closed and its pending tickets are cancelled.
-func (d *Daemon) Audit(ctx context.Context, id string) (*types.Connection, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
+// tryAudit runs G0 over the credentials being registered and returns what it
+// found, with the time it ran. A zero time means the audit did not complete and
+// this connection has no report yet.
+//
+// An audit that cannot run is not a connection keeper refuses to hold. G0 reads
+// pg_authid, pg_proc and the ACLs, and a managed server that hides them, a role
+// without the introspection grants, or a host that is down at registration all
+// arrived here as "cannot register at all" — which taught the operator to keep
+// exactly the connections worth masking outside keeper. R4.1 says the audit
+// reports and does not gate; failing to produce a report is the strongest form
+// of not gating there is.
+//
+// It is all-or-nothing on purpose: a half-collected report rendered beside a
+// timestamp claims a completeness it does not have, and the question the audit
+// surface answers is "what can this role do", which no partial answer answers.
+func (d *Daemon) tryAudit(ctx context.Context, spec RegisterSpec) ([]types.Finding, time.Time) {
+	findings, err := d.deps.Auditor.Audit(ctx, spec.DSN, ports.RoleRead)
+	if err != nil {
+		return nil, time.Time{}
 	}
+	if spec.WriteDSN != "" {
+		wf, werr := d.deps.Auditor.Audit(ctx, spec.WriteDSN, ports.RoleWrite)
+		if werr != nil {
+			return nil, time.Time{}
+		}
+		findings = append(findings, wf...)
+	}
+	return findings, d.now()
+}
+
+// Audit re-runs G0 and replaces the stored report. R4.1e: it neither disables
+// the connection nor cancels anything in flight. A privilege that appears
+// between runs is a line in the audit report, and the operator decides whether
+// to narrow the grant — keeper noticing was never what constrained the role.
+func (d *Daemon) Audit(ctx context.Context, id string) (*types.Connection, error) {
 	c, err := d.deps.Vault.Connection(ctx, id)
 	if err != nil || c == nil {
 		return nil, errUnknownConnection
@@ -314,39 +341,29 @@ func (d *Daemon) Audit(ctx context.Context, id string) (*types.Connection, error
 	}
 	c.Findings = findings
 	c.AuditedAt = d.now()
-	c.Enabled = len(c.Unaccepted()) == 0
 	if err := d.deps.Vault.Update(ctx, c); err != nil {
 		return nil, err
 	}
-	if !c.Enabled {
-		d.deps.Executor.Close(id)
-		d.CancelTicketsForConnection(id)
-	}
-	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "audited", "connection_id": id, "enabled": c.Enabled}})
+	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "audited", "connection_id": id, "findings": len(findings)}})
 	return c, nil
 }
 
-// Accept records a human agreeing to named findings. R4.1f: via is "cli" or
-// "ui" and never "mcp", and no mode, allow rule or model decision creates one.
-func (d *Daemon) Accept(ctx context.Context, id string, findingIDs []string, actor, via string) (*types.Connection, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
-	if len(findingIDs) == 0 {
-		return nil, errValidation("finding_ids", "must name at least one finding")
-	}
-	if actor == "" {
-		return nil, errValidation("actor", "is required")
-	}
-	if via != "cli" && via != "ui" {
-		return nil, errValidation("via", "must be cli or ui")
-	}
-	c, err := d.deps.Vault.Accept(ctx, id, findingIDs, actor, via)
+// Audits is GET /v1/audit: the last privilege audit for every connection, in
+// the same order the connection list uses.
+func (d *Daemon) Audits(ctx context.Context) ([]AuditReport, error) {
+	cs, err := d.deps.Vault.Connections(ctx)
 	if err != nil {
 		return nil, err
 	}
-	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "accepted", "connection_id": id}})
-	return c, nil
+	out := make([]AuditReport, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, AuditReport{
+			ConnectionID: c.ID, Name: c.Name, Database: c.Database,
+			Role: c.Role, AuditedAt: c.AuditedAt, Findings: c.Findings,
+		})
+	}
+	slices.SortStableFunc(out, func(a, b AuditReport) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
 }
 
 // Patch is §4.5's operator limits. Unreachable from MCP (§6.3), which the api
@@ -358,9 +375,6 @@ type Patch struct {
 
 // Update applies a patch.
 func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connection, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	c, err := d.deps.Vault.Connection(ctx, id)
 	if err != nil || c == nil {
 		return nil, errUnknownConnection
@@ -390,9 +404,6 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 // SetDenylist is R4.5's relation list. It is evaluated against the plan, never
 // against statement text, which is the pipeline's job; the daemon only stores it.
 func (d *Daemon) SetDenylist(ctx context.Context, id string, rels []types.RelationRef) (*types.Connection, error) {
-	if d.deps.Vault.Locked() {
-		return nil, errVaultLocked
-	}
 	c, err := d.deps.Vault.Connection(ctx, id)
 	if err != nil || c == nil {
 		return nil, errUnknownConnection
@@ -410,14 +421,34 @@ func (d *Daemon) SetDenylist(ctx context.Context, id string, rels []types.Relati
 	return c, nil
 }
 
-// Unlock is the interactive headless path of §4.3. The daemon starts locked
-// because key source 4 cannot work for an auto-started daemon with no TTY.
-func (d *Daemon) Unlock(ctx context.Context, passphrase string) error {
-	if err := d.deps.Vault.Unlock(ctx, passphrase); err != nil {
-		return err
+// OpenVault resolves the master key and decrypts the vault, returning the key
+// source that answered. keeperd calls it once, before it serves.
+//
+// R4.3 requires the source in use to be named, and this is where it becomes
+// known. Nothing else asks: `doctor` reports it from the vault, and asking
+// doctor for it instead would charge one string a database connect per
+// registered connection.
+func (d *Daemon) OpenVault(ctx context.Context) (string, error) {
+	if err := d.deps.Vault.Open(ctx); err != nil {
+		return "", err
 	}
-	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "vault_unlocked"}})
-	return nil
+	return d.deps.Vault.KeySource(), nil
+}
+
+// ExportVault is `keeper vault export`: every connection record and credential,
+// encrypted, for the operator to store somewhere the keychain is not.
+//
+// It is the only way back. With no passphrase source there is no second way to
+// derive the master key, so a keychain item lost to a reinstall or a profile
+// reset takes every registered connection with it unless an export exists. That
+// is the trade the automatic open makes, and this is the other half of it.
+func (d *Daemon) ExportVault(ctx context.Context) ([]byte, error) {
+	return d.deps.Vault.Export(ctx)
+}
+
+// RotateMaster re-encrypts the vault under a fresh master key, in place.
+func (d *Daemon) RotateMaster(ctx context.Context) error {
+	return d.deps.Vault.RotateMaster(ctx)
 }
 
 // dsnIdentity extracts the role and database from a DSN for display. It is
@@ -464,9 +495,6 @@ func (d *Daemon) freshness(ctx context.Context, connID string) (bool, error) {
 // connection that no longer exists would be a rule nobody can read and nobody
 // can revoke, which is the state R9.3e's list exists to prevent.
 func (d *Daemon) Remove(ctx context.Context, id string) error {
-	if d.deps.Vault.Locked() {
-		return errVaultLocked
-	}
 	if _, err := d.deps.Vault.Connection(ctx, id); err != nil {
 		return err
 	}

@@ -47,6 +47,20 @@ export function age(iso: string | undefined): string {
   return `${Math.round(s / 86400)}d`
 }
 
+/**
+ * When G0 last ran, or `never`.
+ *
+ * An audit that could not run leaves Go's zero time, which is a real state and
+ * not a missing field: the credential is registered and usable, and nobody has
+ * a report on what its role can do. Rendering that as an age dated it to the
+ * year 1, which read as a bug rather than as the invitation to run `keeper
+ * audit` that it is.
+ */
+export function auditedAge(iso: string | undefined): string {
+  if (!iso || iso.startsWith('0001-01-01')) return 'never'
+  return `${age(iso)} ago`
+}
+
 /** A relation list as text, for one line of facts. */
 export function relationList(rels: { schema: string; relation: string }[] | undefined): string {
   if (!rels?.length) return '—'

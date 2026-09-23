@@ -22,22 +22,15 @@ export type FindingKind =
   | 'function-exec'
   | 'security-definer'
 
+/** One thing the privilege audit found. Advice, not a gate: no finding stops
+ * a connection from running (SPEC R4.1). `narrower` is the statement that
+ * would remove it, copyable as-is, and is empty where no single one would. */
 export interface Finding {
   id: string
   kind: FindingKind
   subject: string
   detail: string
   narrower?: string
-  hash?: string
-}
-
-export interface Acceptance {
-  finding_id: string
-  hash?: string
-  actor: string
-  at: string
-  /** "cli" or "ui" — never "mcp" (SPEC R4.1f, §6.3). */
-  via: string
 }
 
 export interface RelationRef {
@@ -72,8 +65,6 @@ export interface Connection {
   denylist?: RelationRef[]
   write_scope?: WriteScopeEntry[]
   findings?: Finding[]
-  acceptances?: Acceptance[]
-  enabled: boolean
   audited_at: string
   has_write_credential: boolean
 }
@@ -86,7 +77,18 @@ export interface ConnectionSummary {
   engine: string
   database: string
   role: string
-  degraded: boolean
+  mode: Mode
+}
+
+/** One connection's entry in `GET /v1/audit` — the privilege audit as its own
+ * surface, read separately from the connection it describes (SPEC R4.1). */
+export interface AuditReport {
+  connection_id: string
+  name: string
+  database: string
+  role: string
+  audited_at: string
+  findings?: Finding[]
 }
 
 // ── policy.go ───────────────────────────────────────────────────────────────
@@ -166,8 +168,6 @@ export type Code =
   | 'ddl_refused'
   | 'out_of_write_scope'
   | 'no_write_credential'
-  | 'vault_locked'
-  | 'connection_disabled'
   | 'approval_required'
   | 'approval_refused'
   | 'ticket_unknown'
@@ -199,7 +199,6 @@ export interface AuditRecord {
   client: ClientInfo
   intent?: string
   connection: string
-  connection_degraded?: boolean
   statement: string
   statement_type: string
   relations?: RelationRef[]
@@ -301,7 +300,6 @@ export interface ApprovalItem {
   ticket_id: string
   session: Session
   connection: string
-  connection_degraded: boolean
   tier: Tier
   facts: ApprovalFacts
   sql: string

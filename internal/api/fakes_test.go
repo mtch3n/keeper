@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
@@ -14,12 +13,10 @@ import (
 // ---------------------------------------------------------------- vault
 
 type fakeVault struct {
-	mu          sync.Mutex
-	locked      bool
-	conns       map[string]*types.Connection
-	dsns        map[string]string
-	registered  []*types.Connection
-	acceptCalls []string
+	mu         sync.Mutex
+	conns      map[string]*types.Connection
+	dsns       map[string]string
+	registered []*types.Connection
 }
 
 func newVault(cs ...*types.Connection) *fakeVault {
@@ -30,24 +27,7 @@ func newVault(cs ...*types.Connection) *fakeVault {
 	return v
 }
 
-func (v *fakeVault) Unlock(context.Context, string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.locked = false
-	return nil
-}
-
-func (v *fakeVault) Lock() {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.locked = true
-}
-
-func (v *fakeVault) Locked() bool {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return v.locked
-}
+func (v *fakeVault) Open(context.Context) error { return nil }
 
 func (v *fakeVault) KeySource() string { return "test" }
 
@@ -101,21 +81,6 @@ func (v *fakeVault) DSN(_ context.Context, id string, _ ports.Role) (string, err
 	return v.dsns[id], nil
 }
 
-func (v *fakeVault) Accept(_ context.Context, id string, findings []string, actor, via string) (*types.Connection, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.acceptCalls = append(v.acceptCalls, via)
-	c := v.conns[id]
-	if c == nil {
-		return nil, errors.New("no such connection")
-	}
-	for _, f := range findings {
-		c.Acceptances = append(c.Acceptances, types.Acceptance{FindingID: f, Actor: actor, Via: via, At: time.Now()})
-	}
-	c.Enabled = len(c.Unaccepted()) == 0
-	return c, nil
-}
-
 func (v *fakeVault) TokenKey(context.Context, string, int) ([]byte, int, error) {
 	return []byte("k"), 1, nil
 }
@@ -124,9 +89,18 @@ func (v *fakeVault) RotateMaster(context.Context) error     { return nil }
 
 // ---------------------------------------------------------------- auditor
 
-type fakeAuditor struct{ findings []types.Finding }
+type fakeAuditor struct {
+	findings []types.Finding
+	// err stands in for the servers G0 cannot read: a managed instance that
+	// hides pg_authid, a role without the introspection grants, a host that is
+	// down while somebody registers it.
+	err error
+}
 
 func (a *fakeAuditor) Audit(context.Context, string, ports.Role) ([]types.Finding, error) {
+	if a.err != nil {
+		return nil, a.err
+	}
 	return a.findings, nil
 }
 

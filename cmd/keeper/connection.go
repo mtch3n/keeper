@@ -15,7 +15,7 @@ import (
 
 func runConnection(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("connection: expected a subcommand (add, ls, show, audit, accept, set, denylist, rm)")
+		return fmt.Errorf("connection: expected a subcommand (add, ls, show, set, denylist, rm)")
 	}
 	ctx := context.Background()
 	sub, rest := args[0], args[1:]
@@ -26,10 +26,6 @@ func runConnection(args []string) error {
 		return connectionLs(ctx, rest)
 	case "show":
 		return connectionShow(ctx, rest)
-	case "audit":
-		return connectionAudit(ctx, rest)
-	case "accept":
-		return connectionAccept(ctx, rest)
 	case "set":
 		return connectionSet(ctx, rest)
 	case "denylist":
@@ -64,7 +60,7 @@ func connectionAdd(ctx context.Context, args []string) error {
 	writeDSN := fs.String("write-dsn", "", "write (_rw) DSN; write mode does not exist without one (SPEC §4.2)")
 	catalogPath := fs.String("catalog", "", "catalog.yaml path (default .keeper/catalog.yaml, SPEC R5.2a)")
 	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *name == "" || *dsn == "" {
@@ -90,71 +86,40 @@ func connectionAdd(ctx context.Context, args []string) error {
 	return nil
 }
 
-func connectionAudit(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("connection audit", flag.ExitOnError)
-	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	name := fs.Arg(0)
-	if name == "" {
-		return fmt.Errorf("connection audit: expected a connection name")
-	}
-
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	id, err := resolveConnectionID(ctx, cli, name)
-	if err != nil {
-		return err
-	}
-	conn, err := cli.AuditConnection(ctx, id)
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return printJSON(conn)
-	}
-	printFindingsReport(conn, "re-audited")
-	return nil
-}
-
 // printFindingsReport is SPEC R4.1's requirement in text form: every finding
-// in full — what it means and the narrower SQL that removes it — never a
-// summary, never a count.
+// in full — what it means and the statement that would narrow it — never a
+// summary, never a count. The connection is usable either way; what this
+// prints is work the operator may choose to do on the database.
 func printFindingsReport(c *types.Connection, verb string) {
 	fmt.Printf("connection %q %s (id %s)\n", c.Name, verb, c.ID)
 	if len(c.Findings) == 0 {
-		fmt.Println("G0 privilege audit found nothing to accept. The connection is enabled.")
+		fmt.Println("G0 privilege audit found nothing. This role holds no privilege keeper would report.")
 		return
 	}
-	unaccepted := c.Unaccepted()
-	fmt.Printf("\nG0 privilege audit found %d finding(s). Nothing is accepted implicitly:\n", len(c.Findings))
-	for _, f := range c.Findings {
-		fmt.Printf("\n  [%s] %s (%s)\n", f.ID, f.Subject, f.Kind)
-		fmt.Printf("    means:    %s\n", f.Detail)
+	fmt.Printf("\nG0 privilege audit found %d finding(s). The connection is usable; these are\n", len(c.Findings))
+	fmt.Printf("what the role can do beyond reading, and what would narrow it:\n")
+	printFindings(c.Findings, "  ")
+	fmt.Printf("\nRe-read this at any time with `keeper audit`.\n")
+}
+
+// printFindings renders findings with their suggested remediation. Shared by
+// `keeper connection add` and `keeper audit`.
+func printFindings(findings []types.Finding, indent string) {
+	for _, f := range findings {
+		fmt.Printf("\n%s[%s] %s (%s)\n", indent, f.ID, f.Subject, f.Kind)
+		fmt.Printf("%s  means: %s\n", indent, f.Detail)
 		if f.Narrower != "" {
-			fmt.Printf("    narrower: %s\n", f.Narrower)
+			fmt.Printf("%s  fix:   %s\n", indent, f.Narrower)
 		} else {
-			fmt.Printf("    narrower: (no single statement removes this — see SPEC R4.1d)\n")
+			fmt.Printf("%s  fix:   (no single statement removes this — see SPEC R4.1d)\n", indent)
 		}
-	}
-	if len(unaccepted) > 0 {
-		fmt.Printf("\nThe connection remains disabled until every finding above is accepted:\n\n")
-		fmt.Printf("  keeper connection accept %s --finding <id> [--finding <id> ...]\n", c.Name)
-		fmt.Printf("  keeper connection accept %s --accept-all\n\n", c.Name)
-	} else if c.Degraded() {
-		fmt.Printf("\nEvery finding has an acceptance on record; the connection runs degraded (SPEC R4.1).\n")
 	}
 }
 
 func connectionLs(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("connection ls", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -176,9 +141,9 @@ func connectionLs(ctx context.Context, args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tENGINE\tDATABASE\tROLE\tDEGRADED")
+	fmt.Fprintln(w, "NAME\tENGINE\tDATABASE\tROLE\tMODE")
 	for _, c := range conns {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%v\n", c.Name, c.Engine, c.Database, c.Role, c.Degraded)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.Name, c.Engine, c.Database, c.Role, c.Mode)
 	}
 	return w.Flush()
 }
@@ -186,7 +151,7 @@ func connectionLs(ctx context.Context, args []string) error {
 func connectionShow(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("connection show", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
@@ -220,97 +185,15 @@ func connectionShow(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("role:      %s\n", detail.Role)
 	fmt.Printf("mode:      %s\n", detail.Mode)
-	fmt.Printf("degraded:  %v\n", detail.Degraded)
 	fmt.Printf("catalog:   %s\n", detail.CatalogStatus.Path)
 	if detail.CatalogStatus.Unclassified > 0 {
 		fmt.Printf("           %d unclassified column(s)\n", detail.CatalogStatus.Unclassified)
 	}
-	if n := len(detail.AuditedPrivileges.Unaccepted); n > 0 {
-		fmt.Printf("findings:  %d awaiting acceptance — `keeper connection accept %s --finding ID`\n", n, name)
-	}
-	if n := len(detail.AuditedPrivileges.Acceptances); n > 0 {
-		// R4.1: an accepted finding is displayed wherever the connection is.
-		fmt.Printf("accepted:  %d finding(s) — this connection runs without keeper's\n", n)
-		fmt.Printf("           database-level protection for them\n")
+	if n := len(detail.AuditedPrivileges.Findings); n > 0 {
+		fmt.Printf("findings:  %d from the privilege audit — `keeper audit %s` for each one\n", n, name)
 	}
 	if len(detail.Denylist) > 0 {
 		fmt.Printf("denylist:  %d relation(s) (run `keeper connection denylist %s --list`)\n", len(detail.Denylist), name)
-	}
-	return nil
-}
-
-func connectionAccept(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("connection accept", flag.ExitOnError)
-	var findings stringList
-	fs.Var(&findings, "finding", "a finding id to accept (repeatable)")
-	acceptAll := fs.Bool("accept-all", false, "accept every currently reported finding")
-	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	name := fs.Arg(0)
-	if name == "" {
-		return fmt.Errorf("connection accept: expected a connection name")
-	}
-	if !*acceptAll && len(findings) == 0 {
-		return fmt.Errorf("connection accept: pass --finding <id> (repeatable) or --accept-all")
-	}
-	if *acceptAll && len(findings) > 0 {
-		return fmt.Errorf("connection accept: --accept-all and --finding are mutually exclusive")
-	}
-
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	id, err := resolveConnectionID(ctx, cli, name)
-	if err != nil {
-		return err
-	}
-
-	ids := []string(findings)
-	if *acceptAll {
-		detail, err := cli.DescribeConnection(ctx, id)
-		if err != nil {
-			return err
-		}
-		// --accept-all names every finding it accepted, in stdout and in the
-		// vault. A blanket flag that hid what it agreed to would be the thing
-		// R4.1f exists to prevent.
-		for _, f := range detail.AuditedPrivileges.Unaccepted {
-			fmt.Printf("accepting %s\n", f.ID)
-			ids = append(ids, f.ID)
-		}
-		if len(ids) == 0 {
-			fmt.Println("no outstanding findings to accept")
-			return nil
-		}
-	}
-
-	conn, err := cli.AcceptFindings(ctx, id, ids, currentActor(), "cli")
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return printJSON(conn)
-	}
-
-	// R4.1f / R4.1: name every finding accepted, in full — --accept-all is
-	// not a way to agree to something quietly.
-	fmt.Printf("accepted %d finding(s) on %q as %s:\n", len(ids), conn.Name, currentActor())
-	for _, id := range ids {
-		for _, f := range conn.Findings {
-			if f.ID == id {
-				fmt.Printf("  [%s] %s — %s\n", f.ID, f.Subject, f.Detail)
-			}
-		}
-	}
-	if len(conn.Unaccepted()) == 0 {
-		fmt.Println("\nevery finding is accepted; the connection is enabled")
-	} else {
-		fmt.Printf("\n%d finding(s) remain unaccepted; the connection stays disabled\n", len(conn.Unaccepted()))
 	}
 	return nil
 }
@@ -322,7 +205,7 @@ func connectionSet(ctx context.Context, args []string) error {
 	timeout := fs.Duration("timeout", 0, "SET LOCAL statement_timeout for every statement")
 	scanSample := fs.Int("scan-sample", 0, "sample size for the model layer of a scan column")
 	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
@@ -367,7 +250,7 @@ func connectionDenylist(ctx context.Context, args []string) error {
 	fs.Var(&remove, "remove", "schema.table to remove from the denylist (repeatable)")
 	list := fs.Bool("list", false, "print the current denylist and make no changes")
 	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
@@ -484,7 +367,7 @@ var _ = time.Second // reserved for future duration formatting helpers
 func connectionRemove(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("connection rm", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "do not ask")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
