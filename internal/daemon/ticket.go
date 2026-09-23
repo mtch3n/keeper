@@ -56,7 +56,7 @@ func (d *Daemon) setTicketStateLocked(tk *ticket, state types.TicketState, res *
 // issueTicket registers the pipeline's escalation and puts it on the shared
 // queue. tmpl carries Tier, Reason and AuditID; the id, the session binding and
 // the connection binding are the daemon's.
-func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Param, maxRows int, write bool, tmpl *types.Ticket, facts *types.ApprovalFacts, preview *types.WritePreview, degraded bool) *types.Ticket {
+func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Param, maxRows int, write bool, tmpl *types.Ticket, facts *types.ApprovalFacts, preview *types.WritePreview) *types.Ticket {
 	now := d.now()
 	tk := &ticket{
 		t: types.Ticket{
@@ -77,14 +77,13 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 		updated: make(chan struct{}),
 	}
 	item := types.ApprovalItem{
-		TicketID:           tk.t.ID,
-		Session:            s.Info(),
-		Connection:         connID,
-		ConnectionDegraded: degraded,
-		Tier:               tmpl.Tier,
-		SQL:                forDisplay(sql),
-		CreatedAt:          now,
-		Write:              preview,
+		TicketID:   tk.t.ID,
+		Session:    s.Info(),
+		Connection: connID,
+		Tier:       tmpl.Tier,
+		SQL:        forDisplay(sql),
+		CreatedAt:  now,
+		Write:      preview,
 	}
 	if facts != nil {
 		item.Facts = *facts
@@ -144,22 +143,4 @@ func (d *Daemon) WaitTicket(ctx context.Context, s *Session, id string, wait tim
 // connection is not this session (R3.4e).
 func (d *Daemon) ticketBelongsLocked(tk *ticket, s *Session) bool {
 	return s != nil && sameCapability(tk.t.SessionID, s.id) && tk.conn == s.conn
-}
-
-// CancelTicketsForConnection is R4.1e: a connection whose re-audit failed is
-// disabled, its pool closed and its pending tickets cancelled.
-func (d *Daemon) CancelTicketsForConnection(connID string) {
-	var events []Event
-	d.mu.Lock()
-	for id, tk := range d.tickets {
-		if tk.t.ConnectionID != connID || tk.t.State.Terminal() {
-			continue
-		}
-		d.setTicketStateLocked(tk, types.TicketCancelled, nil, nil)
-		events = append(events, d.dequeueLocked(id, "connection_disabled")...)
-	}
-	d.mu.Unlock()
-	for _, e := range events {
-		d.hub.Publish(e)
-	}
 }

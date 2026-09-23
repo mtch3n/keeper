@@ -176,11 +176,6 @@ function RecordDetail({ record, onClose }: { record: AuditRecord; onClose: () =>
           <Fact label="duration">{durationMs(record.duration)}</Fact>
           <Fact label="authorization">{record.authorization || 'tier 0'}</Fact>
           {record.approver ? <Fact label="approver">{record.approver}</Fact> : null}
-          {record.connection_degraded ? (
-            <Fact label="connection">
-              <span className="text-waiting">ran with accepted privilege findings</span>
-            </Fact>
-          ) : null}
           {record.collisions ? (
             <Fact label="collisions">
               {record.collisions} cell(s) redacted because a token was already bound to a different value

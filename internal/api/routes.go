@@ -22,8 +22,8 @@ func (s *Server) routes() {
 
 	// --- human surface, CLI over the socket and the UI over loopback -----
 	s.handle("POST /v1/connections", accessHuman, s.registerConnection)
+	s.handle("GET /v1/audit", accessHuman, s.listAudits)
 	s.handle("POST /v1/connections/{id}/audit", accessHuman, s.auditConnection)
-	s.handle("POST /v1/connections/{id}/accept", accessHuman, s.acceptFindings)
 	s.handle("PATCH /v1/connections/{id}", accessHuman, s.patchConnection)
 	s.handle("DELETE /v1/connections/{id}", accessHuman, s.removeConnection)
 	s.handle("PUT /v1/connections/{id}/denylist", accessHuman, s.putDenylist)
@@ -45,7 +45,13 @@ func (s *Server) routes() {
 
 	s.handle("GET /v1/doctor", accessHuman, s.doctor)
 	s.handle("POST /v1/daemon/shutdown", accessHuman, s.shutdown)
-	s.handle("POST /v1/vault/unlock", accessHuman, s.unlockVault)
+
+	// The vault opens itself and never locks, so these two are all that is left
+	// of its surface: take a copy, and change the key it is under. Both are
+	// human-only — an agent that could export the vault would be carrying off
+	// every connection keeper exists to stand in front of.
+	s.handle("POST /v1/vault/export", accessHuman, s.exportVault)
+	s.handle("POST /v1/vault/rotate-master", accessHuman, s.rotateMaster)
 
 	s.raw("GET /v1/events", accessHuman, s.events)
 

@@ -263,12 +263,6 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 				"run keeper catalog init for this connection"))
 	}
 	st.cat = cat
-	if !conn.Enabled || len(conn.Unaccepted()) > 0 {
-		return refuse(st, types.Tier4Refuse,
-			keeperError(types.CodeConnectionDisabled,
-				"this connection has privilege-audit findings that nobody has accepted yet",
-				"review the findings in keeper and accept them from the CLI or the UI"))
-	}
 
 	// --- G1 admission ----------------------------------------------------
 	// Parse and Describe over the extended protocol. PostgreSQL's own parser
@@ -533,12 +527,6 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 			"run keeper catalog init for this connection")
 	}
 	st.cat = cat
-	if !conn.Enabled || len(conn.Unaccepted()) > 0 {
-		st.tier = types.Tier4Refuse
-		return nil, keeperError(types.CodeConnectionDisabled,
-			"this connection has privilege-audit findings that nobody has accepted yet",
-			"review the findings in keeper and accept them from the CLI or the UI")
-	}
 
 	described, err := p.exec.Describe(ctx, req.ConnID, req.SQL, req.Params)
 	if err != nil {
@@ -616,9 +604,6 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		Collisions:    st.collisions,
 		Duration:      p.now().Sub(st.started),
 		ErrorCode:     st.errCode,
-	}
-	if st.conn != nil {
-		rec.ConnectionDegraded = st.conn.Degraded()
 	}
 	if st.plan != nil {
 		rec.StatementType = st.plan.StatementType

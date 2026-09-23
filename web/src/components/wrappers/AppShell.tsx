@@ -11,14 +11,25 @@ import { AppSidebar, type Scope } from '@/components/wrappers/AppSidebar'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { useLiveStatus } from '@/lib/live-status'
 
-export type Section = 'connections' | 'approvals' | 'permissions' | 'activity' | 'catalog' | 'policy' | 'settings'
+export type Section =
+  | 'connections'
+  | 'audit'
+  | 'approvals'
+  | 'permissions'
+  | 'activity'
+  | 'catalog'
+  | 'policy'
+  | 'settings'
 
 /** Which scope a screen reads. `Approvals`, `Permissions` and `Activity` are
  * read one agent at a time (SPEC R9.1, R9.3e, §10); `Catalog` and `Policy`
- * are per-connection (UI.md §2.3). `Connections` and `Settings` are about the
- * daemon rather than either scope, so neither group is dimmed for them. */
+ * are per-connection (UI.md §2.3). `Connections`, `Audit` and `Settings` are
+ * about the daemon rather than either scope, so neither group is dimmed for
+ * them — `Audit` covers every connection at once, which is the point of it
+ * being its own screen. */
 const SCOPE: Record<Section, Scope> = {
   connections: null,
+  audit: null,
   approvals: 'session',
   permissions: 'session',
   activity: 'session',
@@ -29,6 +40,7 @@ const SCOPE: Record<Section, Scope> = {
 
 const SECTIONS: { section: Section; label: string; to: string }[] = [
   { section: 'connections', label: 'Connections', to: '/connections' },
+  { section: 'audit', label: 'Audit', to: '/audit' },
   { section: 'approvals', label: 'Approvals', to: '/approvals' },
   { section: 'permissions', label: 'Permissions', to: '/permissions' },
   { section: 'activity', label: 'Activity', to: '/activity' },
@@ -38,7 +50,7 @@ const SECTIONS: { section: Section; label: string; to: string }[] = [
 
 /**
  * The persistent chrome every screen sits inside: `AppSidebar` down the left
- * holding both scopes and the brand, and across the top the six sections, the
+ * holding both scopes and the brand, and across the top the seven sections, the
  * theme toggle and settings as the right-most control (CONTRACT.md §5,
  * UI.md §2.3). The scope controls left the bar because four of the six
  * sections ignored the one that used to sit there, and a control that is

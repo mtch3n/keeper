@@ -6,7 +6,6 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
-import { AcceptedFindingsMark } from '@/components/wrappers/AcceptedFindingsMark'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { decideApproval, listApprovals, subscribeToEvents } from '@/lib/api'
 import { useSessionScope } from '@/lib/session-scope'
@@ -138,10 +137,7 @@ export function ApprovalsPage() {
               <TableCell className="text-meta">{item.session.client.name}</TableCell>
               <TableCell className="text-meta">{item.session.client.workspace ?? '—'}</TableCell>
               <TableCell className="text-sm">{item.session.intent ?? '—'}</TableCell>
-              <TableCell className="text-meta">
-                {item.connection}
-                {item.connection_degraded ? <AcceptedFindingsMark /> : null}
-              </TableCell>
+              <TableCell className="text-meta">{item.connection}</TableCell>
               <TableCell className="text-right text-meta">{item.tier}</TableCell>
               <TableCell className="text-right text-meta">{age(item.created_at)}</TableCell>
             </TableRow>
@@ -162,11 +158,6 @@ export function ApprovalsPage() {
   )
 }
 
-/**
- * The accepted-findings marker (SPEC R4.1). It is the one place amber appears on
- * this screen other than the waiting lamp, and it carries the same meaning: this
- * needs you to know something.
- */
 /**
  * §9.2's layout: facts first, SQL last. A human cannot tell from
  * `SELECT * FROM users WHERE created_at > '2024-01-01'` that it returns 50,000
@@ -208,14 +199,6 @@ function ApprovalDetail({
         {f.egress?.length ? <Fact label="egress">{f.egress.join(', ')}</Fact> : null}
         <Fact label="cost">est. {Math.round(f.estimated_cost)}</Fact>
         {f.reasons?.length ? <Fact label="why">{f.reasons.join(', ')}</Fact> : null}
-        {item.connection_degraded ? (
-          <Fact label="warning">
-            <span className="text-waiting">
-              {item.connection} runs with accepted privilege findings. keeper's database-level protection does not
-              apply to it.
-            </span>
-          </Fact>
-        ) : null}
         {homoglyph ? (
           <Fact label="warning">
             <span className="text-waiting">

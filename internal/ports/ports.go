@@ -29,22 +29,23 @@ const (
 // Vault is internal/vault. It is the only thing that touches the master key, the
 // age file or the OS keychain, and the only place a DSN exists at rest.
 type Vault interface {
-	// Unlock resolves the master key through the source chain: keychain,
-	// KEEPER_MASTER_KEY, key.age, passphrase. SPEC §4.3.
-	Unlock(ctx context.Context, passphrase string) error
-	// Lock forgets the key again. The daemon calls it after a period with
-	// nothing happening, so an unlocked vault does not sit in memory for as
-	// long as the machine is on.
-	Lock()
-	Locked() bool
+	// Open resolves the master key through the source chain — keychain,
+	// KEEPER_MASTER_KEY, key.age — and mints one on a first run. SPEC §4.3.
+	//
+	// There is no counterpart. A vault that can be closed again is a vault
+	// something has to reopen, and every source here resolves without a person:
+	// the operator would be answering a prompt for a secret the process can
+	// already fetch itself. keeperd calls this before it serves and exits if it
+	// fails, so no other method here has a "not open yet" answer to give.
+	Open(ctx context.Context) error
 	// KeySource names the source in use, so doctor can report it. Silent
 	// degradation to a weaker source is a defect: SPEC R4.3.
 	KeySource() string
 
 	Connections(ctx context.Context) ([]*types.Connection, error)
 	Connection(ctx context.Context, id string) (*types.Connection, error)
-	// Register stores a connection and its credentials. The connection arrives
-	// disabled, with findings and no acceptances.
+	// Register stores a connection and its credentials, with whatever the audit
+	// reported about the role. Findings gate nothing: SPEC R4.1.
 	Register(ctx context.Context, c *types.Connection, readDSN, writeDSN string) error
 	Update(ctx context.Context, c *types.Connection) error
 	Remove(ctx context.Context, id string) error
@@ -52,10 +53,6 @@ type Vault interface {
 	// DSN returns the credential for a role, or an error when none exists. There
 	// is no boolean that enables writes: SPEC §4.2.
 	DSN(ctx context.Context, id string, role Role) (string, error)
-
-	// Accept records a human agreeing to named findings. It fails when a finding
-	// id is unknown or its hash has changed since the audit. SPEC R4.1.
-	Accept(ctx context.Context, id string, findingIDs []string, actor, via string) (*types.Connection, error)
 
 	// TokenKey is the per-connection HMAC key and its version. It never leaves
 	// the vault and is never sent to a model: SPEC R8.3a.
@@ -66,7 +63,8 @@ type Vault interface {
 }
 
 // Auditor is internal/pgaudit. It runs G0 against a live connection and reports
-// what it found. It never refuses: SPEC R4.1.
+// what it found. It never refuses and never disables: what it returns is a
+// report the operator reads, not a gate on the connection. SPEC R4.1.
 type Auditor interface {
 	Audit(ctx context.Context, dsn string, role Role) ([]types.Finding, error)
 }
