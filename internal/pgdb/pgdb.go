@@ -73,6 +73,12 @@ type poolKey struct {
 
 const discardTimeout = 5 * time.Second
 
+// connectTimeout bounds establishing a connection when the connection string
+// does not. A server that drops packets instead of refusing them otherwise holds
+// the connect for the kernel's SYN retry budget, about two minutes on Linux, and
+// catalog opening has no caller deadline to cut it short.
+const connectTimeout = 10 * time.Second
+
 // New builds an Executor. Pools are created lazily, one per connection id and
 // role, the first time a statement needs one.
 func New(cfg Config) (*DB, error) {
@@ -129,6 +135,9 @@ func (db *DB) pool(ctx context.Context, connID string, role ports.Role) (*pgxpoo
 		// and the parse error can quote the string — which holds the password.
 		return nil, keeperError(types.CodeInternal)
 	}
+	if cfg.ConnConfig.ConnectTimeout == 0 {
+		cfg.ConnConfig.ConnectTimeout = connectTimeout
+	}
 	cfg.MaxConns = db.maxConns
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 5 * time.Minute
@@ -149,6 +158,23 @@ func (db *DB) pool(ctx context.Context, connID string, role ports.Role) (*pgxpoo
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	cfg.ConnConfig.RuntimeParams["application_name"] = db.appName
+
+	// The read credential's session cannot write, whatever the account behind it
+	// is allowed to do. Every read path already runs BEGIN READ ONLY, so this
+	// changes nothing about the statements keeper means to send; what it removes
+	// is the assumption that a read DSN names a read-only role. Most of them do
+	// not — an operator registers the credential they have, and the one they
+	// have is usually the application's read-write login.
+	//
+	// It is set in the startup packet rather than with SET, so it survives
+	// DISCARD ALL: RESET ALL restores a parameter to its value at connection
+	// start, which is this one. A session that somehow left the envelope is
+	// still refused at the server, and the refusal is PostgreSQL's own
+	// read-only-transaction error rather than a check keeper has to remember to
+	// write.
+	if role == ports.RoleRead {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	}
 
 	p, err = pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
