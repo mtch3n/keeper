@@ -7,12 +7,10 @@ import (
 
 	"github.com/mtchen/keeper/internal/daemon"
 	"github.com/mtchen/keeper/internal/types"
-	"github.com/mtchen/keeper/internal/vault"
 )
 
 // status maps a keeper code to an HTTP status. CONTRACT §3: 400 for syntax, 403
-// for permission, 404 for unknown, 409 for approval required, 423 for vault
-// locked, 500 for internal.
+// for permission, 404 for unknown, 409 for approval required, 500 for internal.
 //
 // The codes are deliberately coarser than SQLSTATE so a mapped code discloses
 // less (R6.4a), and the status is coarser again.
@@ -22,7 +20,7 @@ func status(c types.Code) int {
 		return http.StatusBadRequest
 	case types.CodePermissionDenied, types.CodeUnclassified, types.CodeDenylisted,
 		types.CodeDDLRefused, types.CodeOutOfWriteScope, types.CodeNoWriteCredential,
-		types.CodeConnectionDisabled, types.CodeApprovalRefused, types.CodeRowCap:
+		types.CodeApprovalRefused, types.CodeRowCap:
 		return http.StatusForbidden
 	case types.CodeTicketUnknown:
 		return http.StatusNotFound
@@ -30,8 +28,6 @@ func status(c types.Code) int {
 		return http.StatusConflict
 	case types.CodeStaleToken:
 		return http.StatusConflict
-	case types.CodeVaultLocked:
-		return http.StatusLocked
 	case types.CodeTimeout:
 		return http.StatusGatewayTimeout
 	default:
@@ -57,20 +53,6 @@ func asError(err error) (*types.Error, int) {
 			Summary: e.Field + ": " + e.Reason,
 			Action:  "correct the request and retry",
 		}, http.StatusBadRequest
-	}
-	if errors.Is(err, vault.ErrNoKeySource) {
-		// The vault stayed locked because nothing in the chain resolved, which is
-		// a different thing from a broken source and the only case where a
-		// passphrase is the answer. It is named so `keeper vault unlock` can
-		// prompt for one here and nowhere else (§4.3): the keychain, the
-		// environment and key.age all unlock without asking the operator
-		// anything, and a generic internal error would make the CLI prompt
-		// blindly for a secret this install may never have had.
-		return &types.Error{
-			Code:    types.CodeVaultLocked,
-			Summary: "no key source resolved: the keychain, KEEPER_MASTER_KEY and key.age are all absent",
-			Action:  "supply a passphrase",
-		}, status(types.CodeVaultLocked)
 	}
 	if e, ok := errors.AsType[*daemon.VersionSkew](err); ok {
 		// §3.4: the client errors naming both versions and `keeper daemon
@@ -105,7 +87,7 @@ var (
 		"call it over the keeper socket")
 
 	errHumanOnly = denied(
-		"registering connections, accepting findings, approving, granting, editing the catalog and setting limits are CLI and UI actions only",
+		"registering connections, approving, granting, editing the catalog and setting limits are CLI and UI actions only",
 		"use `keeper` or the local page")
 
 	errSessionNeeded = denied(

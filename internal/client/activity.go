@@ -66,7 +66,6 @@ type DoctorReport struct {
 	DaemonRunning    bool                    `json:"daemon_running"`
 	Version          string                  `json:"version,omitzero"`
 	UIBase           string                  `json:"ui_base,omitzero"`
-	VaultLocked      bool                    `json:"vault_locked"`
 	KeySource        string                  `json:"key_source,omitzero"`
 	Connections      []ConnectionHealth      `json:"connections,omitzero"`
 	Detector         *ports.DetectorIdentity `json:"detector,omitzero"`
@@ -92,14 +91,10 @@ type JudgeHealth struct {
 type ConnectionHealth struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
-	Healthy      bool   `json:"healthy"`
-	Enabled      bool   `json:"enabled"`
-	Degraded     bool   `json:"degraded"`
-	Unaccepted   int    `json:"unaccepted_findings"`
+	Findings     int    `json:"findings"`
 	Unclassified int    `json:"unclassified_columns"`
 	CatalogFresh bool   `json:"catalog_fresh"`
 	FreshKnown   bool   `json:"catalog_freshness_known"`
-	Reason       string `json:"reason,omitzero"`
 }
 
 // GetDoctor fetches the daemon-connected doctor report. cmd/keeper's

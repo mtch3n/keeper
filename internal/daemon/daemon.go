@@ -82,15 +82,6 @@ type Config struct {
 	// An agent has no such problem: its client spawns the daemon when the socket
 	// is gone, which is the same path a first run takes.
 	IdleExit time.Duration
-	// VaultIdleLock is how long the daemon goes without a request before it
-	// locks the vault again. Zero uses the default; a negative value disables
-	// it, which is a choice somebody makes rather than one they drift into.
-	//
-	// It locks rather than exits. Exiting would take the UI, the approval queue
-	// and every client's socket with it; locking gives up only the thing worth
-	// bounding, which is a decrypted credential sitting in memory for as long as
-	// the machine is on.
-	VaultIdleLock time.Duration
 
 	Now    func() time.Time
 	Logger *slog.Logger
@@ -120,9 +111,6 @@ func (c *Config) withDefaults() {
 	}
 	if c.Sweep <= 0 {
 		c.Sweep = 15 * time.Second
-	}
-	if c.VaultIdleLock == 0 {
-		c.VaultIdleLock = time.Hour
 	}
 	if c.IdleExit == 0 {
 		c.IdleExit = 4 * time.Hour
@@ -158,8 +146,8 @@ type Daemon struct {
 	requests map[string]*localRequest
 }
 
-// New wires the daemon. It does not unlock the vault: SPEC §3.4 starts locked,
-// because key source 4 cannot work for an auto-started daemon with no TTY.
+// New wires the daemon. It does not open the vault — keeperd does that itself,
+// before it announces a listener, and exits if it cannot (§4.3).
 func New(cfg Config, deps Deps) (*Daemon, error) {
 	switch {
 	case deps.Vault == nil:
@@ -246,7 +234,6 @@ func (d *Daemon) sweep() {
 		case <-t.C:
 			d.expire()
 			d.flushGrants()
-			d.lockIfIdle()
 			d.exitIfIdle()
 		}
 	}
@@ -308,36 +295,12 @@ func (d *Daemon) Shutdown() <-chan struct{} { return d.shutdown }
 // Touch records that something happened. Every request passes through it, so
 // "idle" means nobody asked keeper for anything — not that no agent is
 // connected. A human reading the activity log with no agent running is using
-// keeper, and locking the vault under them would be wrong.
+// keeper.
 func (d *Daemon) Touch() { d.lastActivity.Store(d.now().UnixNano()) }
 
 // idleFor reports how long it has been since the last request.
 func (d *Daemon) idleFor() time.Duration {
 	return d.now().Sub(time.Unix(0, d.lastActivity.Load()))
-}
-
-// lockIfIdle is the other half of Touch, run on the sweep.
-//
-// Nothing pending may be dropped on the floor: a queued approval means a human
-// is expected, and locking under them would turn their click into an error.
-func (d *Daemon) lockIfIdle() {
-	if d.cfg.VaultIdleLock < 0 || d.deps.Vault.Locked() {
-		return
-	}
-	if d.idleFor() < d.cfg.VaultIdleLock {
-		return
-	}
-
-	d.mu.Lock()
-	busy := len(d.queue) > 0 || len(d.requests) > 0
-	d.mu.Unlock()
-	if busy {
-		return
-	}
-
-	d.deps.Vault.Lock()
-	d.cfg.Logger.Info("vault locked after idle", "idle", d.idleFor().Round(time.Second))
-	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "vault_locked", "reason": "idle"}})
 }
 
 // attached reports whether anything is using the daemon. Callers hold no lock.
@@ -351,10 +314,10 @@ func (d *Daemon) attached() bool {
 // exitIfIdle stops the daemon when nothing has been attached to it for a while.
 //
 // Stopping is better than idling for the case it covers: the pools close, the
-// memory goes back, the socket is removed, and there is nothing left to reach.
-// It is only safe because the standing grants are on disk and the vault is
-// already locked by the time this fires — everything else the daemon holds is
-// scoped to a session that is gone.
+// memory goes back, the socket is removed, and there is nothing left to reach —
+// including the decrypted credentials, which is the only bound keeper puts on
+// how long they sit in memory. It is safe because the standing grants are on
+// disk; everything else the daemon holds is scoped to a session that is gone.
 func (d *Daemon) exitIfIdle() {
 	if d.cfg.IdleExit < 0 || d.attached() {
 		return

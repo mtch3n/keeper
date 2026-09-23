@@ -83,25 +83,3 @@ func (rec *connectionRecord) tokenKeyVersion(version int) (tokenKeyEntry, bool) 
 	}
 	return tokenKeyEntry{}, false
 }
-
-// findFinding returns the finding with the given id from findings, or false.
-func findFinding(findings []types.Finding, id string) (types.Finding, bool) {
-	for _, f := range findings {
-		if f.ID == id {
-			return f, true
-		}
-	}
-	return types.Finding{}, false
-}
-
-// upsertAcceptance replaces the acceptance for a.FindingID if one exists, or
-// appends a new one.
-func upsertAcceptance(list []types.Acceptance, a types.Acceptance) []types.Acceptance {
-	for i := range list {
-		if list[i].FindingID == a.FindingID {
-			list[i] = a
-			return list
-		}
-	}
-	return append(list, a)
-}

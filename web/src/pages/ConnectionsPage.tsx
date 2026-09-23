@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
@@ -11,25 +11,23 @@ import { Fact, Facts } from '@/components/wrappers/Facts'
 import { RegisterDialog } from '@/components/wrappers/RegisterDialog'
 import { Lamp } from '@/components/wrappers/Lamp'
 import {
-  acceptFindings,
   auditConnection,
   removeConnection,
   getConnection,
   listConnections,
   type ConnectionDetail,
 } from '@/lib/api'
-import { age } from '@/lib/render'
-import type { ConnectionSummary, Finding } from '@/lib/types'
+import { auditedAge } from '@/lib/render'
+import type { ConnectionSummary } from '@/lib/types'
 
 /**
- * Register a database and accept its privilege findings (SPEC R4.1, UI.md §2.7).
+ * Register a database (SPEC R4.1, UI.md §2.7).
  *
- * keeper never refuses a credential. A master account works; what it does not do
- * is let you hold one without knowing. So the sequence here is fixed — audit,
- * then every finding in full, then one checkbox per finding, then the button —
- * and there is deliberately no single "I understand the risks" confirmation over
- * a collapsed list. That control is the one people click without reading, and the
- * requirement exists to prevent exactly it.
+ * keeper never refuses a credential, and it no longer holds one shut either. A
+ * registered connection works; what its role can do beyond reading is a report
+ * on `Audit`, where it can be read as a piece of database work rather than as a
+ * gate standing between the operator and a connection they are trying to set
+ * up. Nothing on this page asks anyone to agree to anything.
  */
 export function ConnectionsPage() {
   const [list, setList] = useState<ConnectionSummary[] | null>(null)
@@ -87,8 +85,9 @@ export function ConnectionsPage() {
           <EmptyHeader>
             <EmptyTitle>No connections</EmptyTitle>
             <EmptyDescription>
-              Register one and keeper audits the credential, then shows you what it found. It does not refuse
-              a credential; it makes holding a broad one impossible by accident.
+              Register one and it works straight away. keeper audits the credential in the background and
+              reports what the role can do on Audit — it does not refuse a credential, and it does not hold
+              one shut.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -101,22 +100,20 @@ export function ConnectionsPage() {
               <TableHead>Engine</TableHead>
               <TableHead>Database</TableHead>
               <TableHead>Role</TableHead>
-              <TableHead>State</TableHead>
+              <TableHead>Mode</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {list.map((c) => (
               <TableRow key={c.id} className="cursor-pointer" onClick={() => void open(c.id)}>
                 <TableCell>
-                  <Lamp state={c.degraded ? 'waiting' : 'live'} />
+                  <Lamp state="live" />
                 </TableCell>
                 <TableCell className="text-meta">{c.name}</TableCell>
                 <TableCell className="text-meta">{c.engine}</TableCell>
                 <TableCell className="text-meta">{c.database}</TableCell>
                 <TableCell className="text-meta">{c.role}</TableCell>
-                <TableCell className="text-sm">
-                  {c.degraded ? 'running with accepted privilege findings' : 'ok'}
-                </TableCell>
+                <TableCell className="text-meta">{c.mode}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -148,7 +145,7 @@ function ConnectionDetailPanel({
   onError: (e: string) => void
 }) {
   const audited = detail.audited_privileges
-  const outstanding = audited.unaccepted ?? []
+  const findings = audited.findings ?? []
 
   return (
     <div className="flex flex-col gap-6 border border-border p-6">
@@ -158,7 +155,7 @@ function ConnectionDetailPanel({
           <Fact label="role">{detail.role}</Fact>
           <Fact label="database">{detail.database}</Fact>
           <Fact label="catalog">{detail.catalog_status.path}</Fact>
-          <Fact label="audited">{age(audited.audited_at)} ago</Fact>
+          <Fact label="audited">{auditedAge(audited.audited_at)}</Fact>
           <Fact label="write credential">
             {detail.has_write_credential ? 'present' : 'none — write mode does not exist for this connection'}
           </Fact>
@@ -186,152 +183,26 @@ function ConnectionDetailPanel({
 
       <Separator />
 
-      {outstanding.length === 0 ? (
+      {findings.length === 0 ? (
         <p className="text-sm">
-          Nothing outstanding.
-          {audited.acceptances?.length
-            ? ` ${audited.acceptances?.length} finding(s) were accepted; this connection runs without keeper's database-level protection for them.`
-            : ' This credential holds nothing keeper would report.'}
+          The privilege audit found nothing: this credential holds nothing keeper would report.
         </p>
       ) : (
-        <FindingsAcceptance
-          connectionId={detail.id}
-          findings={outstanding}
-          onAccepted={onChanged}
-          onError={onError}
-        />
-      )}
-
-      {audited.acceptances?.length ? (
-        <>
-          <Separator />
-          <div>
-            <h3 className="text-label text-muted-foreground">accepted</h3>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Finding</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Via</TableHead>
-                  <TableHead className="text-right">When</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(audited.acceptances ?? []).map((a) => (
-                  <TableRow key={`${a.finding_id}-${a.at}`}>
-                    <TableCell className="text-meta">{a.finding_id}</TableCell>
-                    <TableCell className="text-meta">{a.actor}</TableCell>
-                    <TableCell className="text-meta">{a.via}</TableCell>
-                    <TableCell className="text-right text-meta">{age(a.at)} ago</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </>
-      ) : null}
-    </div>
-  )
-}
-
-/**
- * One checkbox per finding. Never one confirmation over a collapsed list.
- *
- * Each finding says what it means in one sentence and shows the narrower grant
- * that would remove it, copyable as-is — so the operator who wanted to fix it is
- * one paste away, and the one who did not is unaffected.
- */
-function FindingsAcceptance({
-  connectionId,
-  findings,
-  onAccepted,
-  onError,
-}: {
-  connectionId: string
-  findings: Finding[]
-  onAccepted: () => Promise<void>
-  onError: (e: string) => void
-}) {
-  const [checked, setChecked] = useState<Set<string>>(new Set())
-  const [actor, setActor] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  const toggle = (id: string) =>
-    setChecked((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
-  return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h3 className="text-heading">Privilege findings</h3>
-        <p className="text-sm text-muted-foreground">
-          This connection is disabled until each of these is accepted by name. Accepting one does not accept the
-          others, and a finding that appears at a later audit needs its own acceptance.
+        <p className="text-sm">
+          The privilege audit found {findings.length} thing{findings.length === 1 ? '' : 's'} this role can do
+          beyond reading.{' '}
+          <Link to="/audit" className="underline underline-offset-4">
+            Read them on Audit
+          </Link>
+          , with the statement that would narrow each one. The connection works either way.
         </p>
-      </div>
-
-      {findings.map((f) => (
-        <div key={f.id} className="flex gap-4">
-          <Checkbox
-            checked={checked.has(f.id)}
-            onCheckedChange={() => toggle(f.id)}
-            aria-label={`accept ${f.id}`}
-          />
-          <div className="flex min-w-0 flex-col gap-1">
-            <span className="text-meta">{f.id}</span>
-            <span className="text-sm">{f.detail}</span>
-            {f.narrower ? (
-              <>
-                <span className="text-label text-muted-foreground">narrower</span>
-                <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{f.narrower}</pre>
-              </>
-            ) : (
-              <span className="text-meta text-muted-foreground">
-                No single statement removes this one — it may be a vendor-owned object you cannot revoke on.
-              </span>
-            )}
-          </div>
-        </div>
-      ))}
-
-      <div className="flex items-end gap-3">
-        <label className="flex flex-col gap-1">
-          <span className="text-label text-muted-foreground">your name, recorded with each acceptance</span>
-          <Input value={actor} onChange={(e) => setActor(e.target.value)} className="w-64" />
-        </label>
-        <Button
-          disabled={busy || checked.size === 0 || actor.trim() === ''}
-          onClick={async () => {
-            setBusy(true)
-            try {
-              await acceptFindings(connectionId, {
-                finding_ids: [...checked],
-                actor: actor.trim(),
-                via: 'ui',
-              })
-              setChecked(new Set())
-              await onAccepted()
-            } catch (e) {
-              onError(e instanceof Error ? e.message : String(e))
-            } finally {
-              setBusy(false)
-            }
-          }}
-        >
-          Accept {checked.size} finding{checked.size === 1 ? '' : 's'} and enable
-        </Button>
-      </div>
+      )}
     </div>
   )
 }
 
 /**
- * Removing a connection takes its credential, its acceptances and every allow
- * rule naming it. The name is retyped rather than confirmed with a click,
+ * Removing a connection takes its credential and every allow rule naming it. The name is retyped rather than confirmed with a click,
  * because a grant naming a connection that no longer exists is a rule nobody
  * can read and nobody can revoke.
  *
@@ -387,7 +258,7 @@ function RemoveConnection({
         </Button>
       </div>
       <span className="text-meta text-muted-foreground">
-        Its credential, its accepted findings and every allow rule naming it go with it. The catalog file stays.
+        Its credential and every allow rule naming it go with it. The catalog file stays.
       </span>
     </div>
   )

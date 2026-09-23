@@ -3,9 +3,9 @@
 // the CLI, each MCP server, the browser — is a thin client of the two listeners
 // this binary serves.
 //
-// It starts with the vault locked. Key source 4 is a passphrase and there is no
-// TTY on an auto-started daemon, so the alternative is a daemon that pretends to
-// be ready and fails on the first query (§3.4).
+// It opens the vault before it announces a listener and exits if it cannot, so
+// a keeperd that is up is a keeperd that can serve. The alternative is a daemon
+// that pretends to be ready and fails on the first query (§3.4).
 package daemonapp
 
 import (
@@ -26,7 +26,6 @@ import (
 
 	"github.com/mtchen/keeper/internal/api"
 	"github.com/mtchen/keeper/internal/daemon"
-	"github.com/mtchen/keeper/internal/vault"
 )
 
 // version is set with -ldflags "-X main.version=...". The handshake compares it
@@ -68,11 +67,11 @@ func Run(args []string) int {
 		logLevel   = fs.String("log-level", env("KEEPER_LOG_LEVEL", "info"), "debug, info, warn or error")
 		logFormat  = fs.String("log-format", env("KEEPER_LOG_FORMAT", "text"), "text or json")
 		printVer   = fs.Bool("version", false, "print the version and exit")
-		// Two idle timers, because they give up different things. Locking the
-		// vault forgets a decrypted credential and keeps everything else running;
-		// exiting gives the whole process back once nothing is attached at all.
-		idleLock = fs.Duration("vault-idle-lock", envDur("KEEPER_VAULT_IDLE_LOCK", time.Hour),
-			"lock the vault after this long with no request; negative disables")
+		// One idle timer. A second one locked the vault and left the process up,
+		// which only made sense while something could unlock it again; with the
+		// key sources all resolving inside this process, a lock it could undo by
+		// itself bounded nothing. Exiting still does: the pools close, the socket
+		// goes, and the decrypted credentials go with the address space.
 		idleExit = fs.Duration("idle-exit", envDur("KEEPER_IDLE_EXIT", 4*time.Hour),
 			"stop after this long with nothing attached; negative disables")
 	)
@@ -155,12 +154,11 @@ func Run(args []string) int {
 
 	stateDir, _ := configDir()
 	d, err := daemon.New(daemon.Config{
-		Version:       version,
-		UIBase:        base,
-		Logger:        logger,
-		StateDir:      stateDir,
-		VaultIdleLock: *idleLock,
-		IdleExit:      *idleExit,
+		Version:  version,
+		UIBase:   base,
+		Logger:   logger,
+		StateDir: stateDir,
+		IdleExit: *idleExit,
 	}, deps)
 	if err == nil {
 		// The pipeline and the daemon each need the other; this is the second
@@ -196,55 +194,38 @@ func Run(args []string) int {
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 
-	// Open the vault before announcing the listener, with no passphrase.
+	// Open the vault before announcing the listener, and refuse to serve without
+	// one.
 	//
-	// Three of §4.3's four key sources need nothing from a person: the OS
-	// keychain, KEEPER_MASTER_KEY and key.age all resolve inside this process,
-	// and a first-ever start mints a fresh master key straight into the
-	// keychain. Only an install that has none of them needs source 4, and only
-	// this process can find out which kind of install it is. `keeper vault
-	// unlock` has asked exactly this question since its passphrase prompt was
-	// made conditional — it calls UnlockVault with "" and prompts on the answer
-	// — but the daemon never asked it of itself. So every start left the vault
-	// shut, and every install paid an unlock step that on nearly all of them
-	// opened nothing a passphrase was ever needed for.
+	// All of §4.3's key sources resolve inside this process — the OS keychain,
+	// KEEPER_MASTER_KEY, key.age — and a first-ever start mints a master key
+	// into whichever is available. So there is exactly one question here and
+	// this process can always answer it, which is why there is no unlock step
+	// anywhere in keeper and no locked state for anything to report.
 	//
-	// This grants no access that did not already exist. The key sources tried
-	// here resolve with no secret from the operator, which means any process
-	// running as this user could already obtain the master key; the manual step
-	// it replaces ran the identical resolution and was reachable by anything
-	// that could reach the socket. What is removed is a prompt that cost a
-	// person an action and an attacker nothing.
+	// This grants no access that did not already exist. These sources resolve
+	// with no secret from the operator, so any process running as this user
+	// could already obtain the master key; the unlock step this replaces ran the
+	// identical resolution and was reachable by anything that could reach the
+	// socket. What is gone is a prompt that cost a person an action and an
+	// attacker nothing.
 	//
-	// §3.4's rule survives intact: the daemon may not *block* on a passphrase,
-	// because an auto-started daemon has no TTY to read one from. That is an
-	// argument against prompting, not against trying, and a source that
-	// resolves without input is not the interactive path. When none resolves,
-	// the daemon stays locked exactly as it did before, tools return
-	// CodeVaultLocked, and Settings and `keeper vault unlock` offer source 4.
-	//
-	// --vault-idle-lock is untouched and still bounds how long decrypted DSNs
-	// sit in this process's memory. It is deliberately not re-opened here after
-	// it fires: an idle lock that something in the same process re-opens on a
-	// timer protects nothing at all.
-	vaultState := "locked"
-	switch err := d.Unlock(ctx, ""); {
-	case err == nil:
-		vaultState = "unlocked"
-	case errors.Is(err, vault.ErrNoKeySource):
-		logger.Info("vault stays locked: no key source resolves without a passphrase")
-	default:
-		// R4.3: a source that is configured but broken is never quietly
-		// downgraded into "ask for a passphrase instead". Staying locked is
-		// correct; staying silent about why is not.
-		logger.Error("vault unlock", "err", err)
+	// Failing here is fatal rather than degraded. A keeperd with no vault has no
+	// credential for any connection, so every tool it serves would answer with
+	// the same error; serving that is worse than not starting, because the
+	// operator has to work out which of keeper's parts is broken instead of
+	// reading it on the first line of the log.
+	keySource, err := d.OpenVault(ctx)
+	if err != nil {
+		logger.Error("vault", "err", err)
+		return 1
 	}
 
-	// R4.3 again: the source in use is a reported fact, and now that the unlock
-	// happens where nobody is watching, this line is the only place it is
-	// stated at the moment it is chosen.
+	// R4.3: the source in use is a reported fact, and since it is chosen where
+	// nobody is watching, this line is the only place it is stated at the moment
+	// it is chosen.
 	logger.Info("keeperd listening", "version", version, "socket", sock, "ui", base,
-		"vault", vaultState, "key source", deps.Vault.KeySource())
+		"key source", keySource)
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)

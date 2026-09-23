@@ -33,11 +33,13 @@ const (
 	FindingSecurityDefine FindingKind = "security-definer" // SECURITY DEFINER reachable by this role
 )
 
-// Finding is one thing the privilege audit found. keeper never refuses a
-// credential over a finding; it reports every one and requires a named
-// acceptance before the connection is usable. SPEC R4.1.
+// Finding is one thing the privilege audit found. It is advice, not a gate:
+// keeper neither refuses a credential over a finding nor holds the connection
+// shut until somebody signs it off. The audit reports what the role can do and
+// the statement that would narrow it; acting on that is the operator's call.
+// SPEC R4.1.
 type Finding struct {
-	// ID is the stable key an acceptance names: "rolsuper",
+	// ID is the stable key the audit report groups by: "rolsuper",
 	// "relation-write:public.orders", "security-definer:pg_catalog.azure_sys_fn".
 	ID      string      `json:"id"`
 	Kind    FindingKind `json:"kind"`
@@ -47,20 +49,6 @@ type Finding struct {
 	// Narrower is the SQL that would remove the finding, copyable as-is. Empty
 	// where no single statement would ("rolsuper" on a managed server, say).
 	Narrower string `json:"narrower,omitzero"`
-	// Hash binds an acceptance to what was accepted. For a SECURITY DEFINER
-	// function it covers the source and signature, so a redefinition invalidates
-	// the acceptance. SPEC R4.1g.
-	Hash string `json:"hash,omitzero"`
-}
-
-// Acceptance records a human agreeing to one finding on one connection.
-type Acceptance struct {
-	FindingID string    `json:"finding_id"`
-	Hash      string    `json:"hash,omitzero"`
-	Actor     string    `json:"actor"`
-	At        time.Time `json:"at"`
-	// Via is "cli" or "ui". It is never "mcp": SPEC R4.1f and §6.3.
-	Via string `json:"via"`
 }
 
 // RelationRef names a relation. keeper stores names and resolves them to OIDs at
@@ -127,39 +115,13 @@ type Connection struct {
 	Denylist   []RelationRef     `json:"denylist,omitzero"`
 	WriteScope []WriteScopeEntry `json:"write_scope,omitzero"`
 
-	// Findings is what the last audit reported; Acceptances is what a human agreed
-	// to. Enabled is false while any finding lacks an acceptance.
-	Findings    []Finding    `json:"findings,omitzero"`
-	Acceptances []Acceptance `json:"acceptances,omitzero"`
-	Enabled     bool         `json:"enabled"`
-	AuditedAt   time.Time    `json:"audited_at"`
+	// Findings is what the last audit reported. It does not gate anything: a
+	// registered connection is usable, and the audit is a separate report the
+	// operator reads on its own schedule. SPEC R4.1.
+	Findings  []Finding `json:"findings,omitzero"`
+	AuditedAt time.Time `json:"audited_at"`
 
 	// HasWriteCredential reports whether a _rw credential exists. Without one,
 	// write mode does not exist; there is no boolean that enables it. SPEC §4.2.
 	HasWriteCredential bool `json:"has_write_credential"`
 }
-
-// Unaccepted returns the findings with no matching acceptance. A connection is
-// usable only when this is empty.
-func (c *Connection) Unaccepted() []Finding {
-	var out []Finding
-	for _, f := range c.Findings {
-		if !c.accepted(f) {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-func (c *Connection) accepted(f Finding) bool {
-	for _, a := range c.Acceptances {
-		if a.FindingID == f.ID && a.Hash == f.Hash {
-			return true
-		}
-	}
-	return false
-}
-
-// Degraded reports whether this connection runs with accepted findings, which is
-// the marker the UI shows everywhere the connection appears. SPEC R4.1.
-func (c *Connection) Degraded() bool { return len(c.Acceptances) > 0 }

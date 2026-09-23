@@ -41,7 +41,7 @@ func TestResolveMasterKeyChain(t *testing.T) {
 			return want, nil
 		}, keychainSet)
 
-		key, source, err := resolveMasterKey(dir, "")
+		key, source, err := resolveMasterKey(dir)
 		if err != nil {
 			t.Fatalf("resolveMasterKey: %v", err)
 		}
@@ -61,7 +61,7 @@ func TestResolveMasterKeyChain(t *testing.T) {
 			return "not-base64!!", nil
 		}, keychainSet)
 
-		_, _, err := resolveMasterKey(dir, "")
+		_, _, err := resolveMasterKey(dir)
 		if err == nil {
 			t.Fatal("expected an error, got nil")
 		}
@@ -72,7 +72,7 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		want := validKeyB64(0x33)
 		t.Setenv(envMasterKey, want)
 
-		key, source, err := resolveMasterKey(dir, "")
+		key, source, err := resolveMasterKey(dir)
 		if err != nil {
 			t.Fatalf("resolveMasterKey: %v", err)
 		}
@@ -90,7 +90,7 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		t.Setenv(envMasterKey, "garbage")
 		writeKeyFile(t, dir, bytes32(0x44), 0o600)
 
-		_, _, err := resolveMasterKey(dir, "")
+		_, _, err := resolveMasterKey(dir)
 		if err == nil {
 			t.Fatal("expected an error, got nil")
 		}
@@ -101,7 +101,7 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		want := bytes32(0x55)
 		writeKeyFile(t, dir, want, 0o600)
 
-		key, source, err := resolveMasterKey(dir, "")
+		key, source, err := resolveMasterKey(dir)
 		if err != nil {
 			t.Fatalf("resolveMasterKey: %v", err)
 		}
@@ -117,7 +117,7 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		dir := t.TempDir()
 		writeKeyFile(t, dir, bytes32(0x66), 0o644)
 
-		_, _, err := resolveMasterKey(dir, "")
+		_, _, err := resolveMasterKey(dir)
 		if err == nil {
 			t.Fatal("expected an error, got nil")
 		}
@@ -127,49 +127,21 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		dir := t.TempDir()
 		writeKeyFile(t, dir, []byte("too-short"), 0o600)
 
-		_, _, err := resolveMasterKey(dir, "")
+		_, _, err := resolveMasterKey(dir)
 		if err == nil {
 			t.Fatal("expected an error, got nil")
 		}
 	})
 
-	t.Run("passphrase resolves against a persisted salt", func(t *testing.T) {
+	t.Run("nothing resolves", func(t *testing.T) {
 		dir := t.TempDir()
-		salt := bytes16(0x77)
-		if err := os.WriteFile(saltPath(dir), salt, 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		key, source, err := resolveMasterKey(dir, "correct horse battery staple")
-		if err != nil {
-			t.Fatalf("resolveMasterKey: %v", err)
-		}
-		if source != sourcePassphrase {
-			t.Errorf("source = %q, want %q", source, sourcePassphrase)
-		}
-		want := deriveArgon2("correct horse battery staple", salt)
-		if string(key) != string(want) {
-			t.Errorf("key mismatch")
+		_, _, err := resolveMasterKey(dir)
+		if !errors.Is(err, errNoKeySource) {
+			t.Fatalf("err = %v, want errNoKeySource", err)
 		}
 	})
 
-	t.Run("passphrase given but never set up on this install fails", func(t *testing.T) {
-		dir := t.TempDir()
-		_, _, err := resolveMasterKey(dir, "some passphrase")
-		if err == nil {
-			t.Fatal("expected an error, got nil")
-		}
-	})
-
-	t.Run("nothing resolves and no passphrase given", func(t *testing.T) {
-		dir := t.TempDir()
-		_, _, err := resolveMasterKey(dir, "")
-		if !errors.Is(err, ErrNoKeySource) {
-			t.Fatalf("err = %v, want ErrNoKeySource", err)
-		}
-	})
-
-	t.Run("precedence: keychain beats env, key.age and passphrase", func(t *testing.T) {
+	t.Run("precedence: keychain beats env and key.age", func(t *testing.T) {
 		dir := t.TempDir()
 		want := validKeyB64(0x88)
 		withKeychain(t, func(service, user string) (string, error) {
@@ -178,7 +150,7 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		t.Setenv(envMasterKey, validKeyB64(0x99))
 		writeKeyFile(t, dir, bytes32(0xaa), 0o600)
 
-		_, source, err := resolveMasterKey(dir, "irrelevant")
+		_, source, err := resolveMasterKey(dir)
 		if err != nil {
 			t.Fatalf("resolveMasterKey: %v", err)
 		}
@@ -187,12 +159,12 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		}
 	})
 
-	t.Run("precedence: env beats key.age and passphrase", func(t *testing.T) {
+	t.Run("precedence: env beats key.age", func(t *testing.T) {
 		dir := t.TempDir()
 		t.Setenv(envMasterKey, validKeyB64(0xbb))
 		writeKeyFile(t, dir, bytes32(0xcc), 0o600)
 
-		_, source, err := resolveMasterKey(dir, "irrelevant")
+		_, source, err := resolveMasterKey(dir)
 		if err != nil {
 			t.Fatalf("resolveMasterKey: %v", err)
 		}
@@ -201,49 +173,17 @@ func TestResolveMasterKeyChain(t *testing.T) {
 		}
 	})
 
-	t.Run("precedence: key.age beats passphrase", func(t *testing.T) {
-		dir := t.TempDir()
-		writeKeyFile(t, dir, bytes32(0xdd), 0o600)
-		if err := os.WriteFile(saltPath(dir), bytes16(0xee), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		_, source, err := resolveMasterKey(dir, "irrelevant")
-		if err != nil {
-			t.Fatalf("resolveMasterKey: %v", err)
-		}
-		if source != sourceKeyFile {
-			t.Errorf("source = %q, want %q", source, sourceKeyFile)
-		}
-	})
 }
 
 func TestBootstrap(t *testing.T) {
-	t.Run("prefers a supplied passphrase", func(t *testing.T) {
-		dir := t.TempDir()
-		key, source, err := bootstrap(dir, "a fresh passphrase")
-		if err != nil {
-			t.Fatalf("bootstrap: %v", err)
-		}
-		if source != sourcePassphrase {
-			t.Errorf("source = %q, want %q", source, sourcePassphrase)
-		}
-		if len(key) != masterKeyLen {
-			t.Errorf("key length = %d, want %d", len(key), masterKeyLen)
-		}
-		if _, err := os.Stat(saltPath(dir)); err != nil {
-			t.Errorf("salt file not written: %v", err)
-		}
-	})
-
-	t.Run("uses the keychain when no passphrase is given and it accepts", func(t *testing.T) {
+	t.Run("uses the keychain when it accepts", func(t *testing.T) {
 		dir := t.TempDir()
 		var stored string
 		withKeychain(t, keychainGet, func(service, user, pass string) error {
 			stored = pass
 			return nil
 		})
-		key, source, err := bootstrap(dir, "")
+		key, source, err := bootstrap(dir)
 		if err != nil {
 			t.Fatalf("bootstrap: %v", err)
 		}
@@ -261,7 +201,7 @@ func TestBootstrap(t *testing.T) {
 
 	t.Run("falls back to key.age when the keychain refuses", func(t *testing.T) {
 		dir := t.TempDir()
-		key, source, err := bootstrap(dir, "")
+		key, source, err := bootstrap(dir)
 		if err != nil {
 			t.Fatalf("bootstrap: %v", err)
 		}
@@ -300,14 +240,6 @@ func writeKeyFile(t *testing.T, dir string, contents []byte, perm os.FileMode) {
 
 func bytes32(b byte) []byte {
 	out := make([]byte, 32)
-	for i := range out {
-		out[i] = b
-	}
-	return out
-}
-
-func bytes16(b byte) []byte {
-	out := make([]byte, 16)
 	for i := range out {
 		out[i] = b
 	}

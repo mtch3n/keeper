@@ -49,7 +49,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			buf.Reset()
-			if err := json.MarshalWrite(&buf, ev.Data); err != nil {
+			if err := json.MarshalWrite(&buf, ev.Data, durationAsNano); err != nil {
 				continue
 			}
 			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, buf.Bytes()); err != nil {

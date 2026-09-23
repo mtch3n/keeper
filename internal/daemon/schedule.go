@@ -6,13 +6,10 @@ import (
 )
 
 // RunStartupAudit is the first half of R4.1e: the privilege audit re-runs at
-// every daemon start. It is a method rather than something New does, because the
-// daemon starts with the vault locked (§3.4) and there is nothing to audit until
-// a human unlocks it.
+// every daemon start. It is a method rather than something New does so the
+// caller chooses when it runs — after the listener is up, because a re-audit
+// reaches every registered server and nothing should wait on that.
 func (d *Daemon) RunStartupAudit(ctx context.Context) {
-	if d.deps.Vault.Locked() {
-		return
-	}
 	cs, err := d.deps.Vault.Connections(ctx)
 	if err != nil {
 		return
@@ -25,7 +22,7 @@ func (d *Daemon) RunStartupAudit(ctx context.Context) {
 }
 
 // StartSchedules starts R4.1e's 24-hour re-audit and the catalog freshness
-// sweep. Both are no-ops while the vault is locked.
+// sweep.
 //
 // The freshness sweep is R9.3b's mechanism, and it is coarser than R9.3b asks
 // for. ports.Catalog.Fresh answers yes or no for a set of OIDs and never says
@@ -56,9 +53,6 @@ func (d *Daemon) every(interval time.Duration, f func(context.Context)) {
 }
 
 func (d *Daemon) checkFreshness(ctx context.Context) {
-	if d.deps.Vault.Locked() {
-		return
-	}
 	// Every connection has its own catalog and its own answer; a single check
 	// would suspend grants on connections whose schema never moved.
 	stale := map[string]bool{}

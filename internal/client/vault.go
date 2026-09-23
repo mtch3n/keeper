@@ -5,16 +5,6 @@ import (
 	"net/http"
 )
 
-// UnlockVault unlocks the vault for the interactive headless path
-// (POST /v1/vault/unlock, SPEC §4.3). Only keeperd ever opens the vault
-// (R3.1); this just carries the passphrase to it over the socket.
-func (c *Client) UnlockVault(ctx context.Context, passphrase string) error {
-	body := struct {
-		Passphrase string `json:"passphrase"`
-	}{Passphrase: passphrase}
-	return c.do(ctx, http.MethodPost, "/v1/vault/unlock", body, nil)
-}
-
 // ExportResult is `keeper vault export`'s response: an encrypted export blob
 // the operator is responsible for storing safely. keeperd is the only thing
 // that ever has the material to produce it (R3.1).

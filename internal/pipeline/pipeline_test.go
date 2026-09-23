@@ -767,16 +767,25 @@ func TestAuditFailureStopsTheResponse(t *testing.T) {
 	}
 }
 
-func TestDisabledConnectionIsRefused(t *testing.T) {
+// R4.1: a privilege finding is a report, not a gate. This is the test that
+// keeps it one — the pipeline must not grow a check on Findings, whatever a
+// later reading of "the connection is degraded" suggests.
+func TestFindingsDoNotBlockAQuery(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
-		h.authority.conn.Enabled = false
+		h.exec.cols = []types.ColumnMeta{computed("label", "text")}
+		h.exec.rows = [][]any{{"ok"}}
+		h.exec.plan = readPlan(1, cleanRef)
+		h.authority.conn.Findings = []types.Finding{
+			{ID: "rolsuper", Kind: types.FindingAttribute, Subject: "rolsuper",
+				Detail: "this role is a superuser"},
+		}
 	})
-	dec := h.query(t, Request{SQL: "SELECT 1"})
-	if dec.Error == nil || dec.Error.Code != types.CodeConnectionDisabled {
-		t.Fatalf("got %v, want connection_disabled", dec.Error)
+	dec := h.query(t, Request{SQL: "SELECT label FROM clean_ids"})
+	if dec.Error != nil {
+		t.Fatalf("a finding refused the query: %v", dec.Error)
 	}
-	if h.exec.called("Describe") {
-		t.Error("a disabled connection reached the database")
+	if !h.exec.called("Describe") {
+		t.Error("the statement never reached the database")
 	}
 }
 

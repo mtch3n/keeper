@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/mtchen/keeper/internal/audit"
 	"github.com/mtchen/keeper/internal/catalog"
 	"github.com/mtchen/keeper/internal/daemon"
@@ -103,7 +105,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		Vault:        v,
 		Auditor:      pgaudit.New(),
 		Catalogs:     cats.For,
-		CatalogStore: cats.store,
+		CatalogStore: openingStore{cats},
 		Executor:     exec,
 		Redactor:     red,
 		Audit:        alog,
@@ -136,17 +138,24 @@ func limitsFrom(ctx context.Context, v *vault.Vault) func(string) types.Limits {
 
 // catalogs opens one catalog per connection, on first use, and keeps it.
 //
-// It cannot be eager: the connection list lives in the vault and the vault is
-// locked until somebody unlocks it. It cannot be shared either — a
-// (tableOID, attnum) pair means nothing without knowing which database produced
-// it, and two databases reuse OIDs freely.
+// It cannot be eager: opening a catalog introspects the database, and doing
+// that for every registered connection at start would make keeperd's start time
+// the sum of every server's. It cannot be shared either — a (tableOID, attnum)
+// pair means nothing without knowing which database produced it, and two
+// databases reuse OIDs freely.
 type catalogs struct {
 	store *catalog.Store
-	vault *vault.Vault
+	vault connectionLookup
 	dir   string
 
-	mu   sync.Mutex
-	open map[string]*catalog.Catalog
+	mu      sync.Mutex
+	open    map[string]*catalog.Catalog
+	opening singleflight.Group
+}
+
+// connectionLookup is the one thing catalogs needs from the vault.
+type connectionLookup interface {
+	Connection(ctx context.Context, id string) (*types.Connection, error)
 }
 
 func newCatalogs(v *vault.Vault, exec *pgdb.DB, det *rules.Detector, dir string) *catalogs {
@@ -166,13 +175,43 @@ func newCatalogs(v *vault.Vault, exec *pgdb.DB, det *rules.Detector, dir string)
 }
 
 // For resolves the catalog for one connection, opening it if needed.
+//
+// Opening introspects the database, so it lasts as long as a connect can. It is
+// serialized per connection and never across them: a single lock held over the
+// open let one unreachable server stall every other connection behind it, and
+// since a failed open is not kept, the queue never drained.
 func (c *catalogs) For(connID string) (ports.Catalog, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if cat, ok := c.open[connID]; ok {
+	if cat := c.cached(connID); cat != nil {
 		return cat, nil
 	}
+	v, err, _ := c.opening.Do(connID, func() (any, error) {
+		// A caller that missed the cache while another flight was finishing
+		// arrives here after the catalog was stored.
+		if cat := c.cached(connID); cat != nil {
+			return cat, nil
+		}
+		cat, err := c.openOne(connID)
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		c.open[connID] = cat
+		c.mu.Unlock()
+		return cat, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*catalog.Catalog), nil
+}
 
+func (c *catalogs) cached(connID string) *catalog.Catalog {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.open[connID]
+}
+
+func (c *catalogs) openOne(connID string) (*catalog.Catalog, error) {
 	ctx := context.Background()
 	conn, err := c.vault.Connection(ctx, connID)
 	if err != nil {
@@ -186,16 +225,62 @@ func (c *catalogs) For(connID string) (ports.Catalog, error) {
 	if committed == "" {
 		committed = filepath.Join(".keeper", "catalog.yaml")
 	}
-	cat, err := c.store.Open(ctx, connID, catalog.Paths{
+	return c.store.Open(ctx, connID, catalog.Paths{
 		Committed: committed,
 		Overlay:   filepath.Join(filepath.Dir(committed), "catalog.local.yaml"),
 		Cache:     filepath.Join(c.dir, "catalog-"+safeFileName(connID)+".db"),
 	})
-	if err != nil {
+}
+
+// openingStore is the CatalogStore the daemon is given. catalog.Store answers
+// only for a connection whose catalog is already open, and opening is For's
+// job, so every method opens first. Handing the daemon the bare store made
+// every catalog command on a fresh daemon fail as "not open" until some query
+// happened to open that connection.
+type openingStore struct{ c *catalogs }
+
+var _ ports.CatalogStore = openingStore{}
+
+func (s openingStore) Entries(ctx context.Context, connID string) (map[string]types.ColumnPolicy, error) {
+	if _, err := s.c.For(connID); err != nil {
 		return nil, err
 	}
-	c.open[connID] = cat
-	return cat, nil
+	return s.c.store.Entries(ctx, connID)
+}
+
+func (s openingStore) Put(ctx context.Context, connID string, entries map[string]types.ColumnPolicy) error {
+	if _, err := s.c.For(connID); err != nil {
+		return err
+	}
+	return s.c.store.Put(ctx, connID, entries)
+}
+
+func (s openingStore) Raise(ctx context.Context, connID, key string, p types.ColumnPolicy) error {
+	if _, err := s.c.For(connID); err != nil {
+		return err
+	}
+	return s.c.store.Raise(ctx, connID, key, p)
+}
+
+func (s openingStore) Init(ctx context.Context, connID string, sample int) (*ports.InitProposal, error) {
+	if _, err := s.c.For(connID); err != nil {
+		return nil, err
+	}
+	return s.c.store.Init(ctx, connID, sample)
+}
+
+func (s openingStore) SuggestGrants(ctx context.Context, connID string) ([]string, error) {
+	if _, err := s.c.For(connID); err != nil {
+		return nil, err
+	}
+	return s.c.store.SuggestGrants(ctx, connID)
+}
+
+func (s openingStore) Unclassified(ctx context.Context, connID string) ([]string, error) {
+	if _, err := s.c.For(connID); err != nil {
+		return nil, err
+	}
+	return s.c.store.Unclassified(ctx, connID)
 }
 
 // Lookup satisfies redact.PolicyLookup. The Redactor needs a column's namespace
