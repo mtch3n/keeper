@@ -109,18 +109,26 @@ type ConnectionInfo struct {
 	Role     string `json:"role"`
 }
 
-func (h *daemonHolder) listConnections(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, []ConnectionInfo, error) {
+// ListConnectionsOut wraps the list because MCP structured content must be a
+// JSON object: a bare array passes this SDK and is then rejected by the client
+// as a malformed result, which leaves an agent with no way to learn any
+// connection id at all.
+type ListConnectionsOut struct {
+	Connections []ConnectionInfo `json:"connections"`
+}
+
+func (h *daemonHolder) listConnections(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, ListConnectionsOut, error) {
 	cli, err := h.get(ctx, req)
 	if err != nil {
-		return nil, nil, err
+		return nil, ListConnectionsOut{}, err
 	}
 	conns, err := cli.ListConnections(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, ListConnectionsOut{}, err
 	}
-	out := make([]ConnectionInfo, len(conns))
+	out := ListConnectionsOut{Connections: make([]ConnectionInfo, len(conns))}
 	for i, c := range conns {
-		out[i] = ConnectionInfo{ID: c.ID, Name: c.Name, Engine: c.Engine, Database: c.Database, Role: c.Role}
+		out.Connections[i] = ConnectionInfo{ID: c.ID, Name: c.Name, Engine: c.Engine, Database: c.Database, Role: c.Role}
 	}
 	return nil, out, nil
 }
