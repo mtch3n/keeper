@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"os"
-	"os/user"
 
+	jsonv1 "encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 
@@ -34,21 +34,11 @@ func dial(ctx context.Context, sock string) (*client.Client, error) {
 	return client.DialHuman(ctx, sock)
 }
 
-// currentActor names whoever is running this command, for acceptances
-// (SPEC R4.1) and grants — recorded with every one, never inferred.
-func currentActor() string {
-	if u, err := user.Current(); err == nil && u.Username != "" {
-		return u.Username
-	}
-	if v := os.Getenv("USER"); v != "" {
-		return v
-	}
-	return "unknown"
-}
-
 // printJSON writes v as indented JSON to stdout.
 func printJSON(v any) error {
-	data, err := jsonv2.Marshal(v, jsonv2.Deterministic(true))
+	// types.Limits.StatementTimeout is a time.Duration, which json/v2 refuses to
+	// encode without a format. Nanoseconds match what the daemon sends.
+	data, err := jsonv2.Marshal(v, jsonv2.Deterministic(true), jsonv1.FormatDurationAsNano(true))
 	if err != nil {
 		return err
 	}
