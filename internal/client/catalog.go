@@ -55,9 +55,12 @@ func (c *Client) CatalogInit(ctx context.Context, connID string, sample int) (*p
 // CatalogGrants returns the suggested `GRANT SELECT (...)` statements for a
 // connection's catalog (SPEC §5.5, §2.4).
 func (c *Client) CatalogGrants(ctx context.Context, connID string) ([]string, error) {
-	var out []string
+	// The daemon wraps the list, as the UI reads it.
+	var out struct {
+		Statements []string `json:"statements"`
+	}
 	if err := c.do(ctx, http.MethodPost, "/v1/catalog/"+url.PathEscape(connID)+"/grants", nil, &out); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return out.Statements, nil
 }

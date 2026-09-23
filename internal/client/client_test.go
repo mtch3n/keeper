@@ -138,7 +138,7 @@ func TestListConnections(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusOK, []ConnectionSummary{
-			{ID: "c1", Name: "prod", Engine: "postgresql", Database: "app", Role: "app_ro", Degraded: false},
+			{ID: "c1", Name: "prod", Engine: "postgresql", Database: "app", Role: "app_ro", Mode: types.ModeAssisted},
 		})
 	})
 	sock, _ := newTestServer(t, mux)
@@ -154,6 +154,33 @@ func TestListConnections(t *testing.T) {
 	}
 	if len(conns) != 1 || conns[0].Name != "prod" {
 		t.Errorf("conns = %+v", conns)
+	}
+}
+
+// The daemon answers catalog grants with {"statements": [...]}, the shape the UI
+// reads. The client decoded a bare array, so `keeper catalog grants` failed on
+// every connection.
+func TestCatalogGrantsReadsTheDaemonsShape(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
+	})
+	mux.HandleFunc("POST /v1/catalog/c1/grants", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string][]string{"statements": {"GRANT SELECT (id) ON public.users TO app_ro;"}})
+	})
+	sock, _ := newTestServer(t, mux)
+	c, err := Dial(t.Context(), sock, types.ClientInfo{Name: "keeper"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	stmts, err := c.CatalogGrants(t.Context(), "c1")
+	if err != nil {
+		t.Fatalf("CatalogGrants: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Errorf("statements = %q", stmts)
 	}
 }
 
@@ -210,9 +237,9 @@ func TestErrorDecoding(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/connections/missing", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusNotFound, types.Error{
-			Code:    types.CodeConnectionDisabled,
-			Summary: "connection missing has unaccepted findings",
-			Action:  "run keeper connection accept",
+			Code:    types.CodeTicketUnknown,
+			Summary: "no connection with that id is registered",
+			Action:  "run keeper connection list",
 		})
 	})
 	sock, _ := newTestServer(t, mux)
@@ -226,8 +253,8 @@ func TestErrorDecoding(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !IsCode(err, types.CodeConnectionDisabled) {
-		t.Errorf("IsCode(CodeConnectionDisabled) = false, err = %v", err)
+	if !IsCode(err, types.CodeTicketUnknown) {
+		t.Errorf("IsCode(CodeTicketUnknown) = false, err = %v", err)
 	}
 }
 
