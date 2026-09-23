@@ -8,12 +8,18 @@ package pgaudit
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
+
+// connectTimeout applies when the connection string sets none. An unreachable
+// server that drops packets would otherwise hold registration and re-audit for
+// the kernel's SYN retry budget.
+const connectTimeout = 10 * time.Second
 
 // Auditor is the concrete ports.Auditor. It holds no state: every Audit call
 // opens its own connection and closes it before returning.
@@ -28,7 +34,14 @@ func New() *Auditor { return &Auditor{} }
 // SPEC R4.1. The whole audit runs inside one read-only transaction; nothing
 // it does can write.
 func (a *Auditor) Audit(ctx context.Context, dsn string, role ports.Role) ([]types.Finding, error) {
-	conn, err := pgx.Connect(ctx, dsn)
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("pgaudit: connect: %w", err)
+	}
+	if cfg.ConnectTimeout == 0 {
+		cfg.ConnectTimeout = connectTimeout
+	}
+	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("pgaudit: connect: %w", err)
 	}
