@@ -7,9 +7,8 @@ import { ConnectionsPage } from '@/pages/ConnectionsPage'
 import { ApprovalsPage } from '@/pages/ApprovalsPage'
 import { PermissionsPage } from '@/pages/PermissionsPage'
 import { ActivityPage } from '@/pages/ActivityPage'
-import { CatalogPage } from '@/pages/CatalogPage'
-import { PolicyPage } from '@/pages/PolicyPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { ConnectionPage } from '@/pages/connection/ConnectionPage'
 import { LocalRequestPage } from '@/pages/LocalRequestPage'
 
 function App() {
@@ -22,11 +21,11 @@ function App() {
         <Route path="/" element={<Navigate to="/connections" replace />} />
 
         <Route path="/connections" element={<AppShell section="connections"><ConnectionsPage /></AppShell>} />
+        <Route path="/connections/:id" element={<AppShell section="connections"><ConnectionPage /></AppShell>} />
+        <Route path="/connections/:id/:tab" element={<AppShell section="connections"><ConnectionPage /></AppShell>} />
         <Route path="/approvals" element={<AppShell section="approvals"><ApprovalsPage /></AppShell>} />
         <Route path="/permissions" element={<AppShell section="permissions"><PermissionsPage /></AppShell>} />
         <Route path="/activity" element={<AppShell section="activity"><ActivityPage /></AppShell>} />
-        <Route path="/catalog" element={<AppShell section="catalog"><CatalogPage /></AppShell>} />
-        <Route path="/policy" element={<AppShell section="policy"><PolicyPage /></AppShell>} />
         <Route path="/settings" element={<AppShell section="settings"><SettingsPage /></AppShell>} />
 
         {/* The local one-use decision page (SPEC R8.7g). No AppShell: this is

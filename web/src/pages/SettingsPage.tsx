@@ -12,7 +12,7 @@ import { age } from '@/lib/render'
 /**
  * What this daemon is doing (UI.md §2.3, §2.7).
  *
- * `Policy` answers *what may this connection do*; this screen answers *what is
+ * A connection's page answers *what may this connection do*; this screen answers *what is
  * this daemon doing*, which is the question you ask when something is wrong. So
  * it reports rather than configures, and it carries `doctor`'s output rather
  * than a preferences form.
@@ -129,7 +129,7 @@ export function SettingsPage() {
                       this connection, and doctor calling it a fault would be the
                       acceptance gate under another name (SPEC R4.1). */}
                   <TableCell className="text-right text-meta">
-                    {c.findings > 0 ? <Link to={`/policy?connection=${c.id}`} className="underline underline-offset-4">{c.findings}</Link> : '—'}
+                    {c.findings > 0 ? <Link to={`/connections/${c.id}/privileges`} className="underline underline-offset-4">{c.findings}</Link> : '—'}
                   </TableCell>
                   <TableCell className="text-right text-meta">{c.unclassified_columns}</TableCell>
                   <TableCell className="text-meta">
