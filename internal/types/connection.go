@@ -85,6 +85,9 @@ func (r RelationRef) String() string { return r.Schema + "." + r.Relation }
 type Limits struct {
 	// MaxRowsCeiling bounds query(max_rows); the agent cannot raise it.
 	MaxRowsCeiling int `json:"max_rows_ceiling"`
+	// MaxBytes bounds a result's row data, so one wide column cannot flood
+	// the agent's context under the row ceiling.
+	MaxBytes int `json:"max_bytes"`
 	// StatementTimeout is the SET LOCAL value for every statement.
 	StatementTimeout time.Duration `json:"statement_timeout"`
 	// ScanSample is how many rows the model layer of a scan column sees.
@@ -96,6 +99,7 @@ type Limits struct {
 func DefaultLimits() Limits {
 	return Limits{
 		MaxRowsCeiling:   1000,
+		MaxBytes:         1 << 20,
 		StatementTimeout: 30 * time.Second,
 		ScanSample:       300, // ~299 rows finds a 1% rate at 95% confidence, SPEC R8.5b
 	}

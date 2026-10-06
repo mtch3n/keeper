@@ -440,6 +440,9 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 		if p.Limits.StatementTimeout <= 0 {
 			return nil, errValidation("limits.statement_timeout", "must be positive")
 		}
+		if p.Limits.MaxBytes <= 0 {
+			return nil, errValidation("limits.max_bytes", "must be positive")
+		}
 		c.Limits = *p.Limits
 	}
 	if err := d.deps.Vault.Update(ctx, c); err != nil {

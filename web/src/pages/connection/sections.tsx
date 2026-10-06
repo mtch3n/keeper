@@ -199,6 +199,7 @@ export function LimitsForm({
   onError: (e: string) => void
 }) {
   const [maxRows, setMaxRows] = useState(String(detail.limits.max_rows_ceiling))
+  const [maxKiB, setMaxKiB] = useState(String(Math.round(detail.limits.max_bytes / 1024)))
   const [timeout, setTimeoutMs] = useState(String(Math.round(detail.limits.statement_timeout / 1e6)))
   const [scanSample, setScanSample] = useState(String(detail.limits.scan_sample))
   const [busy, setBusy] = useState(false)
@@ -210,6 +211,10 @@ export function LimitsForm({
         <label className="flex flex-col gap-1">
           <span className="text-label text-muted-foreground">row ceiling</span>
           <Input value={maxRows} onChange={(e) => setMaxRows(e.target.value)} className="w-32" />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-label text-muted-foreground">size cap (KiB)</span>
+          <Input value={maxKiB} onChange={(e) => setMaxKiB(e.target.value)} className="w-32" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-label text-muted-foreground">statement timeout (ms)</span>
@@ -227,6 +232,7 @@ export function LimitsForm({
               await updateConnection(detail.id, {
                 limits: {
                   max_rows_ceiling: Number(maxRows),
+                  max_bytes: Number(maxKiB) * 1024,
                   statement_timeout: Number(timeout) * 1e6,
                   scan_sample: Number(scanSample),
                 },
@@ -244,7 +250,8 @@ export function LimitsForm({
       </div>
       <p className="text-meta text-muted-foreground">
         The row ceiling is a privacy control, not a performance one: every row returned is a row sent to a third
-        party. An agent can ask for fewer and never for more.
+        party. An agent can ask for fewer and never for more. The size cap stops one wide column from filling an
+        agent's context under the row ceiling; a result it cuts says so.
       </p>
     </section>
   )

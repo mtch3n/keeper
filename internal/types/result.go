@@ -68,12 +68,14 @@ type QueryResult struct {
 	Rows     [][]any      `json:"rows"`
 	Columns  []ColumnMeta `json:"columns"`
 	RowCount int          `json:"row_count"`
-	// Truncated reports that the operator ceiling cut the result. SPEC §4.5.
-	Truncated  bool                 `json:"truncated,omitzero"`
-	Transforms map[string]Transform `json:"transforms"`
-	Tier       Tier                 `json:"tier"`
-	AuditID    string               `json:"audit_id"`
-	Mode       Mode                 `json:"mode"`
+	// Truncated reports that an operator limit cut the result. SPEC §4.5.
+	Truncated bool `json:"truncated,omitzero"`
+	// TruncatedBy says which limit: the row ceiling or the size cap.
+	TruncatedBy Cut                  `json:"truncated_by,omitzero"`
+	Transforms  map[string]Transform `json:"transforms"`
+	Tier        Tier                 `json:"tier"`
+	AuditID     string               `json:"audit_id"`
+	Mode        Mode                 `json:"mode"`
 	// Authorization names what let this run: "tier0", "grant:<id>", "ticket:<id>",
 	// "delegation:<id>". SPEC §9.4 requires the basis to be reported.
 	Authorization string        `json:"authorization,omitzero"`
@@ -83,6 +85,14 @@ type QueryResult struct {
 	ExecutedRows  int64 `json:"executed_rows,omitzero"`
 	PreviewedRows int64 `json:"previewed_rows,omitzero"`
 }
+
+// Cut names the limit that truncated a result.
+type Cut string
+
+const (
+	CutByRows Cut = "rows"
+	CutBySize Cut = "size"
+)
 
 // ExplainResult is the dry run of SPEC §6.1: what would be masked and whether the
 // statement would escalate, without spending an approval.
