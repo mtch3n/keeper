@@ -10,7 +10,7 @@ type NotFoundError struct {
 }
 
 func (e *NotFoundError) Error() string {
-	return fmt.Sprintf("vault: connection %q not found", e.ID)
+	return fmt.Sprintf("vault: %q not found", e.ID)
 }
 
 // ConflictError reports that a request could not be honoured because it named

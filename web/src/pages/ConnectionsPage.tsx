@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
+import { HostDialog } from '@/components/wrappers/HostDialog'
 import { RegisterDialog } from '@/components/wrappers/RegisterDialog'
 import { Lamp } from '@/components/wrappers/Lamp'
 import {
@@ -15,45 +16,56 @@ import {
   removeConnection,
   getConnection,
   listConnections,
+  listHosts,
+  removeHost,
   type ConnectionDetail,
 } from '@/lib/api'
 import { auditedAge } from '@/lib/render'
-import type { ConnectionSummary } from '@/lib/types'
+import type { ConnectionSummary, HostView } from '@/lib/types'
 
 /**
- * Register a database (SPEC R4.1, UI.md §2.7).
+ * Hosts and the databases registered on them (SPEC R4.1, UI.md §2.7).
+ *
+ * A host is entered once; each database and role on it is its own connection,
+ * which is what an agent queries and what owns a catalog, token keys and an
+ * audit. So the page is grouped by host, and a database is added from its
+ * host's section rather than by retyping an address.
  *
  * keeper never refuses a credential, and it no longer holds one shut either. A
  * registered connection works; what its role can do beyond reading is a report
- * on `Audit`, where it can be read as a piece of database work rather than as a
- * gate standing between the operator and a connection they are trying to set
- * up. Nothing on this page asks anyone to agree to anything.
+ * on `Audit`. Nothing on this page asks anyone to agree to anything.
  */
 export function ConnectionsPage() {
-  const [list, setList] = useState<ConnectionSummary[] | null>(null)
+  const [hosts, setHosts] = useState<HostView[] | null>(null)
+  const [list, setList] = useState<ConnectionSummary[]>([])
   const [selected, setSelected] = useState<ConnectionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const load = useCallback(async () => {
+    const [hs, cs] = await Promise.all([listHosts(), listConnections()])
+    setHosts(hs)
+    setList(cs)
+  }, [])
+
   const refresh = useCallback(async () => {
     try {
-      const cs = await listConnections()
-      setList(cs)
+      await load()
       setError(null)
       if (selected) setSelected(await getConnection(selected.id))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [selected])
+  }, [load, selected])
 
   useEffect(() => {
     void (async () => {
       try {
-        setList(await listConnections())
+        await load()
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }
     })()
-  }, [])
+  }, [load])
 
   const open = async (id: string) => {
     try {
@@ -63,7 +75,7 @@ export function ConnectionsPage() {
     }
   }
 
-  if (list === null) return <Skeleton className="h-40 w-full" />
+  if (hosts === null) return <Skeleton className="h-40 w-full" />
 
   return (
     <div className="flex flex-col gap-8">
@@ -71,26 +83,99 @@ export function ConnectionsPage() {
 
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-title">Connections</h1>
-        <RegisterDialog
-          onRegistered={async (c) => {
-            await refresh()
-            await open(c.id)
-          }}
-          onError={setError}
-        />
+        <HostDialog onRegistered={refresh} onError={setError} />
       </div>
 
-      {list.length === 0 ? (
+      {hosts.length === 0 ? (
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>No connections</EmptyTitle>
+            <EmptyTitle>No hosts</EmptyTitle>
             <EmptyDescription>
-              Register one and it works straight away. keeper audits the credential in the background and
-              reports what the role can do on Audit — it does not refuse a credential, and it does not hold
-              one shut.
+              Add the database server first, then each database and role on it. A connection works straight away;
+              keeper audits the credential and reports what the role can do on Audit — it does not refuse a
+              credential, and it does not hold one shut.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
+      ) : (
+        hosts.map((h) => (
+          <HostSection
+            key={h.id}
+            host={h}
+            connections={list.filter((c) => h.connections.includes(c.id))}
+            onOpen={(id) => void open(id)}
+            onRegistered={async (c) => {
+              await refresh()
+              await open(c.id)
+            }}
+            onChanged={refresh}
+            onError={setError}
+          />
+        ))
+      )}
+
+      {selected ? (
+        <ConnectionDetailPanel
+          detail={selected}
+          onChanged={refresh}
+          onClose={() => setSelected(null)}
+          onError={setError}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** One host: where it is, the connections on it, and the way to add another. */
+function HostSection({
+  host,
+  connections,
+  onOpen,
+  onRegistered,
+  onChanged,
+  onError,
+}: {
+  host: HostView
+  connections: ConnectionSummary[]
+  onOpen: (id: string) => void
+  onRegistered: (c: { id: string }) => Promise<void>
+  onChanged: () => Promise<void>
+  onError: (e: string) => void
+}) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-label">{host.name}</h2>
+          <span className="text-meta text-muted-foreground">
+            {host.address}:{host.port} · sslmode {host.sslmode}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <RegisterDialog host={host} onRegistered={onRegistered} onError={onError} />
+          {/* A host with connections on it cannot be removed: the daemon
+              refuses, and offering a button that always fails is a lie. */}
+          {connections.length === 0 ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await removeHost(host.id)
+                  await onChanged()
+                } catch (e) {
+                  onError(e instanceof Error ? e.message : String(e))
+                }
+              }}
+            >
+              Remove host
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {connections.length === 0 ? (
+        <p className="text-meta text-muted-foreground">No databases on this host yet.</p>
       ) : (
         <Table>
           <TableHeader>
@@ -104,8 +189,8 @@ export function ConnectionsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {list.map((c) => (
-              <TableRow key={c.id} className="cursor-pointer" onClick={() => void open(c.id)}>
+            {connections.map((c) => (
+              <TableRow key={c.id} className="cursor-pointer" onClick={() => onOpen(c.id)}>
                 <TableCell>
                   <Lamp state="live" />
                 </TableCell>
@@ -119,17 +204,7 @@ export function ConnectionsPage() {
           </TableBody>
         </Table>
       )}
-
-      {selected ? (
-        <ConnectionDetailPanel
-          detail={selected}
-          onChanged={refresh}
-          onClose={() => setSelected(null)}
-          onError={setError}
-        />
-      ) : null}
-
-    </div>
+    </section>
   )
 }
 

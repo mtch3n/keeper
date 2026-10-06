@@ -26,6 +26,13 @@ const (
 	RoleWrite Role = "write"
 )
 
+// Credential is one role's login on a connection's host and database. It
+// exists between the human surface and the vault and nowhere else.
+type Credential struct {
+	User     string
+	Password string
+}
+
 // Vault is internal/vault. It is the only thing that touches the master key, the
 // age file or the OS keychain, and the only place a DSN exists at rest.
 type Vault interface {
@@ -42,16 +49,24 @@ type Vault interface {
 	// degradation to a weaker source is a defect: SPEC R4.3.
 	KeySource() string
 
+	Hosts(ctx context.Context) ([]*types.Host, error)
+	Host(ctx context.Context, id string) (*types.Host, error)
+	RegisterHost(ctx context.Context, h *types.Host) error
+	// RemoveHost refuses while a connection is registered on the host: removing
+	// it would strand credentials with nowhere to connect.
+	RemoveHost(ctx context.Context, id string) error
+
 	Connections(ctx context.Context) ([]*types.Connection, error)
 	Connection(ctx context.Context, id string) (*types.Connection, error)
-	// Register stores a connection and its credentials, with whatever the audit
-	// reported about the role. Findings gate nothing: SPEC R4.1.
-	Register(ctx context.Context, c *types.Connection, readDSN, writeDSN string) error
+	// Register stores a connection on c.HostID with its credentials. write is
+	// nil when the connection holds no write credential: SPEC §4.2.
+	Register(ctx context.Context, c *types.Connection, read Credential, write *Credential) error
 	Update(ctx context.Context, c *types.Connection) error
 	Remove(ctx context.Context, id string) error
 
-	// DSN returns the credential for a role, or an error when none exists. There
-	// is no boolean that enables writes: SPEC §4.2.
+	// DSN assembles the connection string for a role from the connection's host
+	// and the role's credential, or errors when none exists. There is no
+	// boolean that enables writes: SPEC §4.2.
 	DSN(ctx context.Context, id string, role Role) (string, error)
 
 	// TokenKey is the per-connection HMAC key and its version. It never leaves

@@ -26,9 +26,8 @@ func newTestVault(t *testing.T) (*Vault, string) {
 func TestEncryptDecryptDocumentRoundTrip(t *testing.T) {
 	key := bytes32(0x01)
 	doc := &document{Connections: []connectionRecord{{
-		Conn:     testConnection("c1"),
-		ReadDSN:  "postgres://ro@host/db",
-		WriteDSN: "",
+		Conn: testConnection("c1"),
+		Read: credential{User: "ro", Password: "pw"},
 		TokenKeys: []tokenKeyEntry{
 			{Version: 1, Key: bytes32(0xaa)},
 		},
@@ -46,8 +45,8 @@ func TestEncryptDecryptDocumentRoundTrip(t *testing.T) {
 	if len(got.Connections) != 1 || got.Connections[0].Conn.ID != "c1" {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
-	if got.Connections[0].ReadDSN != doc.Connections[0].ReadDSN {
-		t.Errorf("ReadDSN mismatch")
+	if got.Connections[0].Read != doc.Connections[0].Read {
+		t.Errorf("read credential mismatch")
 	}
 	if string(got.Connections[0].TokenKeys[0].Key) != string(bytes32(0xaa)) {
 		t.Errorf("token key mismatch")
@@ -106,7 +105,8 @@ func TestVaultRegisterPersistsAcrossInstances(t *testing.T) {
 	ctx := context.Background()
 
 	conn := testConnection("")
-	if err := v.Register(ctx, &conn, "postgres://ro@host/db", ""); err != nil {
+	conn.HostID = testHost(t, v)
+	if err := v.Register(ctx, &conn, ports.Credential{User: "ro", Password: "p@ss/word"}, nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	if conn.ID == "" {
@@ -132,7 +132,8 @@ func TestVaultRegisterPersistsAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DSN: %v", err)
 	}
-	if dsn != "postgres://ro@host/db" {
+	// The password's '@' and '/' are escaped, so they cannot move the host.
+	if dsn != "postgres://ro:p%40ss%2Fword@host:5432/app?sslmode=require" {
 		t.Errorf("DSN = %q", dsn)
 	}
 }
@@ -150,7 +151,8 @@ func TestRotateMasterKeyFileSource(t *testing.T) {
 	}
 
 	conn := testConnection("")
-	if err := v.Register(ctx, &conn, "postgres://ro@host/db", ""); err != nil {
+	conn.HostID = testHost(t, v)
+	if err := v.Register(ctx, &conn, ports.Credential{User: "ro"}, nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	oldKeyFileContents, err := os.ReadFile(keyFilePath(dir))
@@ -199,7 +201,8 @@ func TestExportReturnsPortableJSON(t *testing.T) {
 	v, _ := newTestVault(t)
 	ctx := context.Background()
 	conn := testConnection("")
-	if err := v.Register(ctx, &conn, "postgres://ro@host/db", "postgres://rw@host/db"); err != nil {
+	conn.HostID = testHost(t, v)
+	if err := v.Register(ctx, &conn, ports.Credential{User: "ro"}, &ports.Credential{User: "rw"}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -217,7 +220,54 @@ func TestExportReturnsPortableJSON(t *testing.T) {
 	if len(doc.Connections) != 1 || doc.Connections[0].Conn.ID != conn.ID {
 		t.Fatalf("exported document missing the registered connection: %+v", doc)
 	}
-	if doc.Connections[0].WriteDSN != "postgres://rw@host/db" {
-		t.Errorf("exported WriteDSN = %q", doc.Connections[0].WriteDSN)
+	if w := doc.Connections[0].Write; w == nil || w.User != "rw" {
+		t.Errorf("exported write credential = %+v", w)
+	}
+	if len(doc.Hosts) != 1 || doc.Hosts[0].ID != conn.HostID {
+		t.Errorf("exported hosts = %+v", doc.Hosts)
+	}
+}
+
+// A connection cannot be registered on a host the vault does not hold, and a
+// host cannot be removed while a connection is registered on it: either would
+// leave credentials with nowhere to connect.
+func TestHostsOwnTheirConnections(t *testing.T) {
+	v, _ := newTestVault(t)
+	ctx := context.Background()
+
+	orphan := testConnection("")
+	orphan.HostID = "missing"
+	if err := v.Register(ctx, &orphan, ports.Credential{User: "ro"}, nil); err == nil {
+		t.Fatal("registered a connection on a host that does not exist")
+	}
+
+	host := testHost(t, v)
+	a, b := testConnection(""), testConnection("")
+	a.HostID, b.HostID = host, host
+	b.Database = "other"
+	if err := v.Register(ctx, &a, ports.Credential{User: "ro"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Register(ctx, &b, ports.Credential{User: "analyst"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Two databases on one host each reach their own database as their own role.
+	if d, _ := v.DSN(ctx, b.ID, ports.RoleRead); d != "postgres://analyst@host:5432/other?sslmode=require" {
+		t.Errorf("second connection DSN = %q", d)
+	}
+
+	if err := v.RemoveHost(ctx, host); err == nil {
+		t.Fatal("removed a host with connections still on it")
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		if err := v.Remove(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := v.RemoveHost(ctx, host); err != nil {
+		t.Fatalf("RemoveHost on an empty host: %v", err)
+	}
+	if hs, _ := v.Hosts(ctx); len(hs) != 0 {
+		t.Errorf("hosts after removal = %+v", hs)
 	}
 }

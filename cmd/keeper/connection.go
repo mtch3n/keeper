@@ -56,15 +56,36 @@ func resolveConnectionID(ctx context.Context, cli *client.Client, name string) (
 func connectionAdd(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("connection add", flag.ExitOnError)
 	name := fs.String("name", "", "connection name (required)")
-	dsn := fs.String("dsn", "", "read (_ro) DSN (required)")
-	writeDSN := fs.String("write-dsn", "", "write (_rw) DSN; write mode does not exist without one (SPEC §4.2)")
+	host := fs.String("host", "", "name of the host it is on, from `keeper host add` (required)")
+	database := fs.String("database", "", "database name (required)")
+	user := fs.String("user", "", "read (_ro) role (required)")
+	writeUser := fs.String("write-user", "", "write (_rw) role; write mode does not exist without one (SPEC §4.2)")
 	catalogPath := fs.String("catalog", "", "catalog.yaml path (default .keeper/catalog.yaml, SPEC R5.2a)")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if *name == "" || *dsn == "" {
-		return fmt.Errorf("connection add: --name and --dsn are required")
+	if *name == "" || *host == "" || *database == "" || *user == "" {
+		return fmt.Errorf("connection add: --name, --host, --database and --user are required")
+	}
+
+	// Passwords are never flags: a flag is in shell history and in every
+	// process listing for as long as the command runs.
+	in := newSecretReader()
+	params := client.RegisterConnectionParams{
+		Name: *name, Database: *database, CatalogPath: *catalogPath,
+		Read: client.Credential{User: *user},
+	}
+	var err error
+	if params.Read.Password, err = in.read("password for " + *user); err != nil {
+		return err
+	}
+	if *writeUser != "" {
+		w := client.Credential{User: *writeUser}
+		if w.Password, err = in.read("password for " + *writeUser); err != nil {
+			return err
+		}
+		params.Write = &w
 	}
 
 	cli, err := connectDaemon(ctx)
@@ -73,9 +94,10 @@ func connectionAdd(ctx context.Context, args []string) error {
 	}
 	defer cli.Close()
 
-	conn, err := cli.RegisterConnection(ctx, client.RegisterConnectionParams{
-		Name: *name, DSN: *dsn, WriteDSN: *writeDSN, CatalogPath: *catalogPath,
-	})
+	if params.HostID, err = resolveHostID(ctx, cli, *host); err != nil {
+		return err
+	}
+	conn, err := cli.RegisterConnection(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -92,6 +114,11 @@ func connectionAdd(ctx context.Context, args []string) error {
 // prints is work the operator may choose to do on the database.
 func printFindingsReport(c *types.Connection, verb string) {
 	fmt.Printf("connection %q %s (id %s)\n", c.Name, verb, c.ID)
+	if c.AuditedAt.IsZero() {
+		fmt.Printf("G0 privilege audit could not run. The connection is usable; run `keeper audit %s --rerun`\n", c.Name)
+		fmt.Println("once the server is reachable to see what the role can do.")
+		return
+	}
 	if len(c.Findings) == 0 {
 		fmt.Println("G0 privilege audit found nothing. This role holds no privilege keeper would report.")
 		return

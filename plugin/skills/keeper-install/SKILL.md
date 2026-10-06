@@ -111,16 +111,20 @@ connection is unrecoverable without `keeper vault export`. Say so once, early.
 keeper connection ls
 ```
 
-Registering one needs a database connection string, which means it needs the
-user. Offer them both paths and let them pick:
+Registering one needs a password, which means it needs the user. A host (the
+server) is added once; each database and role on it is its own connection.
+Offer them both paths and let them pick:
 
-- `keeper ui` prints a local URL; registering there is the flow that was designed
-  for it.
-- `keeper connection add --name <name> --dsn '<connection string>'` if they would
-  rather stay in the terminal.
+- `keeper ui` prints a local URL; adding the host and its databases there is the
+  flow that was designed for it.
+- In the terminal, `keeper host add --name <host> --address <addr> [--sslmode require]`,
+  then `keeper connection add --name <name> --host <host> --database <db> --user <role>`,
+  which prompts for the password. They run it, not you: the prompt needs their
+  terminal.
 
-**Never ask them to paste a connection string into the conversation**, and if
-they do it anyway, do not repeat it back and do not put it in a command you echo.
+**Never ask them to paste a password or connection string into the
+conversation**, and if they do it anyway, do not repeat it back and do not put
+it in a command you echo.
 
 ## 4. What did the privilege audit find
 

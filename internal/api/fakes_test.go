@@ -14,13 +14,18 @@ import (
 
 type fakeVault struct {
 	mu         sync.Mutex
+	hosts      map[string]*types.Host
 	conns      map[string]*types.Connection
-	dsns       map[string]string
 	registered []*types.Connection
 }
 
+// newVault holds every connection given and one host, "h1", for registering
+// new ones on.
 func newVault(cs ...*types.Connection) *fakeVault {
-	v := &fakeVault{conns: map[string]*types.Connection{}, dsns: map[string]string{}}
+	v := &fakeVault{
+		hosts: map[string]*types.Host{"h1": {ID: "h1", Name: "db1", Address: "h", Port: 5432, SSLMode: "prefer"}},
+		conns: map[string]*types.Connection{},
+	}
 	for _, c := range cs {
 		v.conns[c.ID] = c
 	}
@@ -30,6 +35,40 @@ func newVault(cs ...*types.Connection) *fakeVault {
 func (v *fakeVault) Open(context.Context) error { return nil }
 
 func (v *fakeVault) KeySource() string { return "test" }
+
+func (v *fakeVault) Hosts(context.Context) ([]*types.Host, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	out := make([]*types.Host, 0, len(v.hosts))
+	for _, h := range v.hosts {
+		out = append(out, h)
+	}
+	return out, nil
+}
+
+func (v *fakeVault) Host(_ context.Context, id string) (*types.Host, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	h, ok := v.hosts[id]
+	if !ok {
+		return nil, errors.New("no such host")
+	}
+	return h, nil
+}
+
+func (v *fakeVault) RegisterHost(_ context.Context, h *types.Host) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.hosts[h.ID] = h
+	return nil
+}
+
+func (v *fakeVault) RemoveHost(_ context.Context, id string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.hosts, id)
+	return nil
+}
 
 func (v *fakeVault) Connections(context.Context) ([]*types.Connection, error) {
 	v.mu.Lock()
@@ -51,13 +90,12 @@ func (v *fakeVault) Connection(_ context.Context, id string) (*types.Connection,
 	return c, nil
 }
 
-func (v *fakeVault) Register(_ context.Context, c *types.Connection, readDSN, writeDSN string) error {
+func (v *fakeVault) Register(_ context.Context, c *types.Connection, _ ports.Credential, write *ports.Credential) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	c.HasWriteCredential = write != nil
 	v.conns[c.ID] = c
-	v.dsns[c.ID] = readDSN
 	v.registered = append(v.registered, c)
-	_ = writeDSN
 	return nil
 }
 
@@ -76,9 +114,7 @@ func (v *fakeVault) Remove(_ context.Context, id string) error {
 }
 
 func (v *fakeVault) DSN(_ context.Context, id string, _ ports.Role) (string, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return v.dsns[id], nil
+	return "postgres://" + id, nil
 }
 
 func (v *fakeVault) TokenKey(context.Context, string, int) ([]byte, int, error) {

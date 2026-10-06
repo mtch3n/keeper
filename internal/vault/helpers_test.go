@@ -1,7 +1,9 @@
 package vault
 
 import (
+	"context"
 	"encoding/json/v2"
+	"testing"
 
 	"github.com/mtchen/keeper/internal/types"
 )
@@ -10,6 +12,16 @@ import (
 // so a test can parse Export's output without duplicating that concern.
 func jsonUnmarshalForTest(data []byte, v *document) error {
 	return json.Unmarshal(data, v, jsonOptions...)
+}
+
+// testHost registers a host on v and returns its id.
+func testHost(t *testing.T, v *Vault) string {
+	t.Helper()
+	h := types.Host{Name: "db1", Address: "host", Port: 5432, SSLMode: "require"}
+	if err := v.RegisterHost(context.Background(), &h); err != nil {
+		t.Fatalf("RegisterHost: %v", err)
+	}
+	return h.ID
 }
 
 // testConnection returns a minimal, valid connection for use as test fixture

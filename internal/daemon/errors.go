@@ -14,6 +14,10 @@ var (
 		"no connection with that id is registered",
 		"run `keeper connection list`")
 
+	errUnknownHost = keeperErr(types.CodeTicketUnknown,
+		"no host with that id is registered",
+		"run `keeper host ls`")
+
 	errTicketUnknown = keeperErr(types.CodeTicketUnknown,
 		"no ticket with that id belongs to this session",
 		"re-run the query that produced the ticket")

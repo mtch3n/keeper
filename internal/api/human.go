@@ -11,26 +11,66 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
+type credentialRequest struct {
+	User     string `json:"user"`
+	Password string `json:"password,omitzero"`
+}
+
 type registerRequest struct {
-	Name string `json:"name"`
-	DSN  string `json:"dsn"`
-	// WriteDSN is the separate _rw credential. There is no boolean that enables
+	Name     string            `json:"name"`
+	HostID   string            `json:"host_id"`
+	Database string            `json:"database"`
+	Read     credentialRequest `json:"read"`
+	// Write is the separate _rw credential. There is no boolean that enables
 	// writes; if this is absent, write mode does not exist (§4.2).
-	WriteDSN    string `json:"write_dsn,omitzero"`
-	CatalogPath string `json:"catalog_path,omitzero"`
+	Write       *credentialRequest `json:"write,omitzero"`
+	CatalogPath string             `json:"catalog_path,omitzero"`
 }
 
 // registerConnection stores the connection and reports what G0 found about its
 // role. The connection is usable either way, including when the audit could not
-// run at all (R4.1). Nothing here logs or echoes the DSN.
+// run at all (R4.1). Nothing here logs or echoes a credential.
 func (s *Server) registerConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
 	var req registerRequest
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	return s.d.Register(ctx, daemon.RegisterSpec{
-		Name: req.Name, DSN: req.DSN, WriteDSN: req.WriteDSN, CatalogPath: req.CatalogPath,
-	})
+	spec := daemon.RegisterSpec{
+		Name: req.Name, HostID: req.HostID, Database: req.Database,
+		Read:        ports.Credential(req.Read),
+		CatalogPath: req.CatalogPath,
+	}
+	if req.Write != nil {
+		w := ports.Credential(*req.Write)
+		spec.Write = &w
+	}
+	return s.d.Register(ctx, spec)
+}
+
+func (s *Server) listHosts(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
+	return s.d.Hosts(ctx)
+}
+
+type hostRequest struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	Port    int    `json:"port,omitzero"`
+	SSLMode string `json:"sslmode,omitzero"`
+}
+
+func (s *Server) registerHost(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
+	var req hostRequest
+	if err := s.readJSON(w, r, &req); err != nil {
+		return nil, err
+	}
+	return s.d.RegisterHost(ctx, daemon.HostSpec(req))
+}
+
+func (s *Server) removeHost(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
+	if err := s.d.RemoveHost(ctx, r.PathValue("id")); err != nil {
+		return nil, err
+	}
+	return map[string]string{"state": "removed"}, nil
 }
 
 func (s *Server) auditConnection(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
