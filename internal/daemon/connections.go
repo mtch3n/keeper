@@ -76,6 +76,7 @@ type ConnectionDetail struct {
 	Mode              types.Mode           `json:"mode"`
 	Detection         []types.Stage        `json:"detection"`
 	Limits            types.Limits         `json:"limits"`
+	PersistentTokens  bool                 `json:"persistent_tokens"`
 	Denylist          []types.RelationRef  `json:"denylist,omitzero"`
 	Degradations      []types.Degradation  `json:"degradations,omitzero"`
 }
@@ -125,6 +126,7 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 		Mode:              c.Mode,
 		Detection:         c.Detection,
 		Limits:            c.Limits,
+		PersistentTokens:  c.PersistentTokens,
 		Denylist:          c.Denylist,
 	}
 
@@ -393,8 +395,9 @@ type Patch struct {
 	Limits *types.Limits
 	// Detection replaces the connection's pipeline; an empty list turns
 	// detection off.
-	Detection *[]types.Stage
-	Writes    *types.Writes
+	Detection        *[]types.Stage
+	Writes           *types.Writes
+	PersistentTokens *bool
 }
 
 // validWrites accepts off and approve; empty is off.
@@ -426,6 +429,9 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 			return nil, err
 		}
 		c.Writes = w
+	}
+	if p.PersistentTokens != nil {
+		c.PersistentTokens = *p.PersistentTokens
 	}
 	if p.Detection != nil {
 		if err := validStages(*p.Detection); err != nil {

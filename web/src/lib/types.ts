@@ -94,6 +94,7 @@ export interface Connection {
   findings?: Finding[]
   audited_at: string
   writes: Writes
+  persistent_tokens?: boolean
 }
 
 /** A profile's write setting: off makes its sessions read-only; approve lets
@@ -233,6 +234,7 @@ export interface AuditRecord {
   error_code?: Code
   /** How an escalated statement was settled; absent when it never waited. */
   decision?: 'approved' | 'refused' | 'expired' | 'cancelled'
+  token_scope?: TokenScope
 }
 
 /**
@@ -250,8 +252,12 @@ export interface Session {
   id: string
   client: ClientInfo
   intent?: string
+  /** How long the agent declared its tokens live. */
+  token_scope?: TokenScope
   connected_at: string
 }
+
+export type TokenScope = 'session' | 'persistent'
 
 export type RequestKind = 'input' | 'authorization'
 

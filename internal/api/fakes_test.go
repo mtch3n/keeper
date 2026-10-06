@@ -317,7 +317,7 @@ func (r *fakeRedactor) Apply(context.Context, string, []types.ColumnMeta, [][]an
 	return nil, nil
 }
 
-func (r *fakeRedactor) Mint(_ context.Context, sessionID, _, namespace, value string) (string, error) {
+func (r *fakeRedactor) Mint(_ context.Context, sessionID, _, namespace, value string, _ bool) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.n++
@@ -326,7 +326,7 @@ func (r *fakeRedactor) Mint(_ context.Context, sessionID, _, namespace, value st
 	return tok, nil
 }
 
-func (r *fakeRedactor) Resolve(_ context.Context, sessionID, token string) (string, types.Policy, error) {
+func (r *fakeRedactor) Resolve(_ context.Context, sessionID, _, token string) (string, types.Policy, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	v, ok := r.minted[sessionID+"|"+token]

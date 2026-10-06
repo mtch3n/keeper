@@ -100,10 +100,14 @@ type fakeRedactor struct {
 	applyCalls int
 	// unexamined reports every column's free text as not examined.
 	unexamined bool
+	// statements is what each Apply was told about its statement.
+	statements []ports.Statement
 }
 
-func (r *fakeRedactor) Apply(_ context.Context, _ string, cols []types.ColumnMeta, rows [][]any) (map[string]types.Transform, error) {
+func (r *fakeRedactor) Apply(ctx context.Context, _ string, cols []types.ColumnMeta, rows [][]any) (map[string]types.Transform, error) {
 	r.applyCalls++
+	st, _ := ports.StatementFrom(ctx)
+	r.statements = append(r.statements, st)
 	out := map[string]types.Transform{}
 	for i, c := range cols {
 		out[c.Name] = types.Transform{Policy: c.Policy}
@@ -122,11 +126,11 @@ func (r *fakeRedactor) Apply(_ context.Context, _ string, cols []types.ColumnMet
 	return out, nil
 }
 
-func (r *fakeRedactor) Mint(context.Context, string, string, string, string) (string, error) {
+func (r *fakeRedactor) Mint(context.Context, string, string, string, string, bool) (string, error) {
 	return "⟨e1:000000⟩", nil
 }
 
-func (r *fakeRedactor) Resolve(context.Context, string, string) (string, types.Policy, error) {
+func (r *fakeRedactor) Resolve(context.Context, string, string, string) (string, types.Policy, error) {
 	return "", types.PolicyAllow, errors.New("no token")
 }
 

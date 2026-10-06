@@ -557,6 +557,7 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		Collisions:    st.collisions,
 		Duration:      p.now().Sub(st.started),
 		ErrorCode:     st.errCode,
+		TokenScope:    req.Session.TokenScope,
 	}
 	if st.plan != nil {
 		rec.StatementType = st.plan.StatementType
