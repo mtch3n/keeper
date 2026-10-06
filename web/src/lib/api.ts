@@ -365,10 +365,13 @@ export interface DoctorReport {
 interface ConnectionHealth {
   id: string
   name: string
+  /** Whether doctor could reach the database; unknown when its probe ran out of time. */
+  state: 'reachable' | 'unreachable' | 'unknown'
+  /** Absent when doctor did not read the catalog: unknown, never zero. */
+  unclassified_columns?: number
   /** How many the last privilege audit reported. A pointer at `Audit`, not a
    * state: none of them stop this connection (SPEC R4.1). */
   findings: number
-  unclassified_columns: number
   catalog_fresh: boolean
   catalog_freshness_known: boolean
   mode: Mode

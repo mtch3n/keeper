@@ -116,6 +116,7 @@ const (
 	CodeTimeout           Code = "timeout"
 	CodeRowCap            Code = "row_cap"
 	CodeStaleToken        Code = "stale_token" // the daemon restarted; SPEC R3.4d
+	CodeUnreachable       Code = "unreachable" // keeper could not connect to the database
 	CodeInternal          Code = "internal"
 )
 

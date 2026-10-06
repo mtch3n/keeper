@@ -186,6 +186,7 @@ type Code =
   | 'timeout'
   | 'row_cap'
   | 'stale_token'
+  | 'unreachable'
   | 'internal'
 
 /** The only error shape that reaches the UI (SPEC R6.4a). No field here ever

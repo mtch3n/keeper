@@ -610,15 +610,23 @@ func runDoctor(args []string) error {
 		fmt.Printf("detector      %s %s, network %s\n", rep.Detector.Name, rep.Detector.Version, rep.Detector.NetworkPosture)
 	}
 	for _, c := range rep.Connections {
-		state := "ok"
-		if c.FreshKnown && !c.CatalogFresh {
-			state += " · catalog is stale"
-		} else if !c.FreshKnown {
-			state += " · catalog freshness unknown"
+		var state string
+		switch c.State {
+		case "reachable":
+			state = "reachable"
+			if c.FreshKnown && !c.CatalogFresh {
+				state += " · catalog is stale"
+			} else if !c.FreshKnown {
+				state += " · catalog freshness unknown"
+			}
+		case "unreachable":
+			state = "UNREACHABLE — keeper could not connect; check the server is running and reachable from here"
+		default:
+			state = "unknown — no answer within doctor's time budget"
 		}
 		fmt.Printf("connection    %-20s %s\n", c.Name, state)
-		if c.Unclassified > 0 {
-			fmt.Printf("              %d unclassified column(s) — `keeper catalog ls %s --unclassified`\n", c.Unclassified, c.Name)
+		if c.Unclassified != nil && *c.Unclassified > 0 {
+			fmt.Printf("              %d unclassified column(s) — `keeper catalog ls %s --unclassified`\n", *c.Unclassified, c.Name)
 		}
 		if c.Findings > 0 {
 			// A pointer, not a verdict: the findings do not stop this

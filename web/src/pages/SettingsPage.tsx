@@ -17,6 +17,13 @@ import { age } from '@/lib/render'
  * it reports rather than configures, and it carries `doctor`'s output rather
  * than a preferences form.
  */
+/** How each reach state reads: unreachable is the one that needs a person. */
+const REACH = {
+  reachable: { lamp: 'live', label: 'reachable' },
+  unreachable: { lamp: 'blocked', label: 'unreachable' },
+  unknown: { lamp: 'waiting', label: 'no answer yet' },
+} as const
+
 export function SettingsPage() {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -111,6 +118,7 @@ export function SettingsPage() {
               <TableRow>
                 <TableHead className="w-8" />
                 <TableHead>Name</TableHead>
+                <TableHead>Reach</TableHead>
                 <TableHead>Mode</TableHead>
                 <TableHead className="text-right">Findings</TableHead>
                 <TableHead className="text-right">Unclassified</TableHead>
@@ -118,12 +126,15 @@ export function SettingsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {report.connections.map((c) => (
+              {report.connections.map((c) => {
+                const reach = REACH[c.state] ?? REACH.unknown
+                return (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Lamp state="live" />
+                    <Lamp state={reach.lamp} label={reach.label} />
                   </TableCell>
                   <TableCell className="text-meta">{c.name}</TableCell>
+                  <TableCell className="text-meta">{reach.label}</TableCell>
                   <TableCell className="text-meta">{c.mode}</TableCell>
                   {/* A count and a link, never a state: a finding does not stop
                       this connection, and doctor calling it a fault would be the
@@ -131,14 +142,22 @@ export function SettingsPage() {
                   <TableCell className="text-right text-meta">
                     {c.findings > 0 ? <Link to={`/connections/${c.id}/privileges`} className="underline underline-offset-4">{c.findings}</Link> : '—'}
                   </TableCell>
-                  <TableCell className="text-right text-meta">{c.unclassified_columns}</TableCell>
+                  {/* A count doctor never obtained is unknown, not zero. */}
+                  <TableCell className="text-right text-meta">{c.unclassified_columns ?? '—'}</TableCell>
                   <TableCell className="text-meta">
                     {/* R5.6b: a false answer is uncertainty, not permission — and
                         so is no answer. They are shown as different things. */}
-                    {!c.catalog_freshness_known ? 'freshness unknown' : c.catalog_fresh ? 'fresh' : 'stale'}
+                    {c.state !== 'reachable'
+                      ? '—'
+                      : !c.catalog_freshness_known
+                        ? 'freshness unknown'
+                        : c.catalog_fresh
+                          ? 'fresh'
+                          : 'stale'}
                   </TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         ) : (
