@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
@@ -126,34 +126,35 @@ export function ApprovalsPage() {
         </TableHeader>
         <TableBody>
           {scoped.map((item) => (
-            <TableRow
-              key={item.ticket_id}
-              onClick={() => setOpen(open === item.ticket_id ? null : item.ticket_id)}
-              className="cursor-pointer"
-            >
-              <TableCell>
-                <Lamp state="waiting" label="waiting for you" />
-              </TableCell>
-              <TableCell className="text-meta">{item.session.client.name}</TableCell>
-              <TableCell className="text-meta">{item.session.client.workspace ?? '—'}</TableCell>
-              <TableCell className="text-sm">{item.session.intent ?? '—'}</TableCell>
-              <TableCell className="text-meta">{item.connection}</TableCell>
-              <TableCell className="text-right text-meta">{item.tier}</TableCell>
-              <TableCell className="text-right text-meta">{age(item.created_at)}</TableCell>
-            </TableRow>
+            <Fragment key={item.ticket_id}>
+              <TableRow
+                onClick={() => setOpen(open === item.ticket_id ? null : item.ticket_id)}
+                aria-expanded={open === item.ticket_id}
+                className="cursor-pointer"
+              >
+                <TableCell>
+                  <Lamp state="waiting" label="waiting for you" />
+                </TableCell>
+                <TableCell className="text-meta">{item.session.client.name}</TableCell>
+                <TableCell className="text-meta">{item.session.client.workspace ?? '—'}</TableCell>
+                <TableCell className="text-sm">{item.session.intent ?? '—'}</TableCell>
+                <TableCell className="text-meta">{item.connection}</TableCell>
+                <TableCell className="text-right text-meta">{item.tier}</TableCell>
+                <TableCell className="text-right text-meta">{age(item.created_at)}</TableCell>
+              </TableRow>
+              {open === item.ticket_id ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0 whitespace-normal">
+                    <ApprovalDetail item={item} busy={busy} onDecide={(d) => void decide(item.ticket_id, d)} />
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </Fragment>
           ))}
         </TableBody>
       </Table>
 
-      {open ? (
-        <ApprovalDetail
-          item={items.find((i) => i.ticket_id === open)!}
-          busy={busy}
-          onDecide={(d) => void decide(open, d)}
-        />
-      ) : (
-        <p className="text-meta text-muted-foreground">Select a row to see what it would do.</p>
-      )}
+      <p className="text-meta text-muted-foreground">Select a row to see what it would do.</p>
     </div>
   )
 }
@@ -177,7 +178,7 @@ function ApprovalDetail({
   const homoglyph = (f.relations ?? []).some((r) => suspectHomoglyph(r.relation) || suspectHomoglyph(r.schema))
 
   return (
-    <div className="flex flex-col gap-4 border border-border p-6">
+    <div className="flex flex-col gap-4 bg-muted/30 p-6">
       <Facts>
         <Fact label="intent">{f.intent || '—'}</Fact>
         <Fact label="agent">

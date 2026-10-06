@@ -97,6 +97,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	case err != nil:
 		return nil, nil, err
 	case res != nil:
+		d.results.keep(res)
 		return res, nil, nil
 	case tmpl == nil:
 		return nil, nil, errInternal
@@ -122,6 +123,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 			// human set is not covered by it, and goes to the queue instead.
 			if gerr == nil && granted != nil && granted.RowCount <= m.RowCeiling {
 				d.noteGrantUse(m.IDs)
+				d.results.keep(granted)
 				return granted, nil, nil
 			}
 			// A grant that did not lower the tier is not an error. The statement

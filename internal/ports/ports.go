@@ -340,7 +340,10 @@ type AuditFilter struct {
 	ConnectionID string
 	Tier         *types.Tier
 	Since        time.Time
-	Limit        int
+	// Before is an audit id: only records written before it are returned. It
+	// is how the Activity screen pages back through a log longer than Limit.
+	Before string
+	Limit  int
 }
 
 // Judge is the local model of SPEC §7.8. keeperd calls it directly, against a

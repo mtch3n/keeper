@@ -185,10 +185,15 @@ func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 	return nil
 }
 
-// Query reads the log back for the Activity screen, most recent first.
+// Query reads the log back for the Activity screen, most recent first. The log
+// is in write order, so f.Before ends the read at that record: everything
+// collected so far is older than it.
 func (l *Log) Query(ctx context.Context, f ports.AuditFilter) ([]types.AuditRecord, error) {
 	var out []types.AuditRecord
 	err := l.each(ctx, func(r types.AuditRecord) bool {
+		if f.Before != "" && r.ID == f.Before {
+			return false
+		}
 		if matches(r, f) {
 			out = append(out, r)
 		}

@@ -215,6 +215,15 @@ export interface AuditRecord {
   error_code?: Code
 }
 
+/**
+ * Mirrors daemon.ActivityDetail: one record and, while the daemon still holds
+ * it, the masked result the agent received. Memory only (R10b), so it is absent
+ * for anything older than the daemon's most recent results or its last restart.
+ */
+export interface ActivityDetail extends AuditRecord {
+  result?: QueryResult
+}
+
 // ── session.go ──────────────────────────────────────────────────────────────
 
 export interface Session {

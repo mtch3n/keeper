@@ -183,6 +183,11 @@ func TestQueryAndGet(t *testing.T) {
 	if len(limited) != 2 || limited[0].ID != ids[2] {
 		t.Errorf("limit returned %v", limited)
 	}
+	// The next page starts after the last record of this one.
+	older, _ := l.Query(t.Context(), ports.AuditFilter{Limit: 2, Before: limited[1].ID})
+	if len(older) != 1 || older[0].ID != ids[0] {
+		t.Errorf("before returned %v", older)
+	}
 
 	got, err := l.Get(t.Context(), ids[1])
 	if err != nil {
