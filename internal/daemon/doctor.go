@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/mtchen/keeper/internal/ports"
@@ -35,13 +36,27 @@ type ConnectionHealth struct {
 	Name string `json:"name"`
 	// Findings is how many the last privilege audit reported. It is a pointer
 	// at `keeper audit`, not a state: none of them stop this connection.
-	Findings     int          `json:"findings"`
-	Unclassified int          `json:"unclassified_columns"`
+	Findings int `json:"findings"`
+	// State is whether doctor could reach the database: reachable,
+	// unreachable, or unknown when the probe ran out of time.
+	State ReachState `json:"state"`
+	// Unclassified is absent unless the probe read the catalog: a count it
+	// never obtained is unknown, not zero.
+	Unclassified *int         `json:"unclassified_columns,omitzero"`
 	CatalogFresh bool         `json:"catalog_fresh"`
 	FreshKnown   bool         `json:"catalog_freshness_known"`
 	Mode         types.Mode   `json:"mode"`
 	Limits       types.Limits `json:"limits"`
 }
+
+// ReachState is what doctor learned about reaching one connection.
+type ReachState string
+
+const (
+	Reachable    ReachState = "reachable"
+	Unreachable  ReachState = "unreachable"
+	ReachUnknown ReachState = "unknown"
+)
 
 // doctorProbeTimeout bounds the catalog half of the report. It is short on
 // purpose: doctor is a status read, and a status read that waits on a database
@@ -101,7 +116,7 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 	for i, c := range cs {
 		rep.Connections[i] = ConnectionHealth{
 			ID: c.ID, Name: c.Name, Findings: len(c.Findings),
-			Mode: c.Mode, Limits: c.Limits,
+			State: ReachUnknown, Mode: c.Mode, Limits: c.Limits,
 		}
 		ch := make(chan ConnectionHealth, 1)
 		probes[i] = ch
@@ -111,9 +126,15 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 			// connect timeout twice. Opening takes no context, so an abandoned
 			// probe runs on until pgx's connect timeout fires; the buffered
 			// channel means it never blocks on a reader that has gone.
-			if cat, err := d.deps.Catalogs(h.ID); err == nil {
+			cat, err := d.deps.Catalogs(h.ID)
+			if ke, ok := errors.AsType[*types.Error](err); ok && ke.Code == types.CodeUnreachable {
+				h.State = Unreachable
+			}
+			if err == nil {
+				h.State = Reachable
 				if un, err := d.deps.CatalogStore.Unclassified(pctx, h.ID); err == nil {
-					h.Unclassified = len(un)
+					n := len(un)
+					h.Unclassified = &n
 				}
 				if fresh, err := cat.Fresh(pctx, nil); err == nil {
 					h.CatalogFresh, h.FreshKnown = fresh, true

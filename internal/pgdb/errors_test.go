@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mtchen/keeper/internal/types"
 )
@@ -97,7 +99,7 @@ var closedCodes = map[types.Code]bool{
 	types.CodeOutOfWriteScope: true, types.CodeNoWriteCredential: true,
 	types.CodeApprovalRequired: true, types.CodeApprovalRefused: true,
 	types.CodeTicketUnknown: true, types.CodeTimeout: true, types.CodeRowCap: true,
-	types.CodeStaleToken: true, types.CodeInternal: true,
+	types.CodeStaleToken: true, types.CodeUnreachable: true, types.CodeInternal: true,
 }
 
 func TestConvertSQLStateMapping(t *testing.T) {
@@ -181,5 +183,31 @@ func TestEveryKeeperCodeHasASummaryAndAction(t *testing.T) {
 		if !closedCodes[code] {
 			t.Errorf("%s is not in the closed set", code)
 		}
+	}
+}
+
+func Test_HLT_C1_ARefusedConnectionIsUnreachable(t *testing.T) {
+	_, err := pgx.Connect(t.Context(), "postgres://u@127.0.0.1:1/db?sslmode=disable&connect_timeout=2")
+	if err == nil {
+		t.Skip("something is listening on port 1")
+	}
+	ke, ok := errors.AsType[*types.Error](convert(err))
+	if !ok || ke.Code != types.CodeUnreachable || !strings.Contains(ke.Action, "reachable") {
+		t.Errorf("convert(refused) = %+v, want unreachable with the reachability action", ke)
+	}
+}
+
+func Test_HLT_C2_AConnectTimeoutIsUnreachableNotATimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	// 10.255.255.1 is a private address nothing answers on, so the dial waits
+	// until the context gives up — the shape kaidu's Azure server produced.
+	_, err := pgx.Connect(ctx, "postgres://u@10.255.255.1:5432/db?sslmode=disable")
+	if err == nil {
+		t.Skip("10.255.255.1 answered")
+	}
+	ke, ok := errors.AsType[*types.Error](convert(err))
+	if !ok || ke.Code != types.CodeUnreachable {
+		t.Errorf("convert(connect timeout) = %+v, want unreachable", ke)
 	}
 }
