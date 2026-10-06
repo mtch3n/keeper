@@ -73,11 +73,11 @@
   /* keeper semantics. A lamp is the whole state vocabulary; nothing else in
      the application is permitted a semantic colour (UI.md §2.1). These four
      are the only declarations on this page with a non-zero chroma. */
-  --waiting: oklch(0.79 0.155 72);
+  --waiting: oklch(0.60 0.135 65);
   --blocked: oklch(0.545 0.212 27);
-  --live: oklch(0.72 0.17 155);
+  --live: oklch(0.56 0.15 152);
   /* The one exception: an unclassified cell's hatched edge (UI.md §2.2). */
-  --unclassified-edge: oklch(0.79 0.155 72);
+  --unclassified-edge: oklch(0.60 0.135 65);
   --rule-strong: oklch(0.680 0 0);
 
   /* Shadow colours. Ink, thinned. */
