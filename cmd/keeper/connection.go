@@ -231,7 +231,7 @@ func connectionShow(ctx context.Context, args []string) error {
 
 func connectionSet(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("connection set", flag.ExitOnError)
-	mode := fs.String("mode", "", "strict | assisted | permissive (SPEC §9.4)")
+	mode := fs.String("mode", "", "strict | assisted (SPEC §9.4)")
 	maxRows := fs.Int("max-rows", 0, "operator ceiling for query(max_rows); the agent cannot raise it")
 	timeout := fs.Duration("timeout", 0, "SET LOCAL statement_timeout for every statement")
 	scanSample := fs.Int("scan-sample", 0, "sample size catalog init examines per column")
@@ -245,7 +245,7 @@ func connectionSet(ctx context.Context, args []string) error {
 		return fmt.Errorf("connection set: expected a connection name")
 	}
 	if *mode != "" && !types.Mode(*mode).Valid() {
-		return fmt.Errorf("connection set: --mode must be strict, assisted or permissive")
+		return fmt.Errorf("connection set: --mode must be strict or assisted")
 	}
 
 	cli, err := connectDaemon(ctx)

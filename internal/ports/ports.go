@@ -392,34 +392,3 @@ type AuditFilter struct {
 	Before string
 	Limit  int
 }
-
-// Judge is the local model of SPEC §7.8. keeperd calls it directly, against a
-// local endpoint or a sidecar, never through the harness: R7.8c.
-type Judge interface {
-	// Assess returns a structured verdict. Its explanations are model suggestions
-	// and are labelled as such wherever they are shown: R7.8d.
-	Assess(ctx context.Context, req JudgeRequest) (*JudgeVerdict, error)
-	Available(ctx context.Context) bool
-	Identity() string
-}
-
-// JudgeRequest is the judge's whole context: the statement, plan facts, output
-// columns and session intent. No conversation history: R7.8b.
-type JudgeRequest struct {
-	SQL           string
-	Intent        string
-	Plan          *PlanFacts
-	OutputColumns []types.ColumnMeta
-	Mode          types.Mode
-}
-
-// JudgeVerdict is a validated structured answer. A configured-but-failing judge
-// never counts as a favourable verdict: SPEC R7.7b.
-type JudgeVerdict struct {
-	Tier        types.Tier `json:"tier"`
-	ReasonCodes []string   `json:"reason_codes"`
-	Uncertainty float64    `json:"uncertainty"`
-	// Release is honoured only inside an explicit permissive delegation. §9.4.
-	Release     bool   `json:"release,omitzero"`
-	Explanation string `json:"explanation,omitzero"`
-}

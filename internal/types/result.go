@@ -7,11 +7,11 @@ import "time"
 type Tier int
 
 const (
-	Tier0Run     Tier = 0 // read, under caps, all output allow
-	Tier1Record  Tier = 1 // runs, recorded prominently: anything was masked
-	Tier2Judge   Tier = 2 // near a cap, or a changed view in assisted/permissive
-	Tier3Approve Tier = 3 // any write, or mode-dependent uncertainty
-	Tier4Refuse  Tier = 4 // denylisted, DDL, out of write scope, multi-statement
+	Tier0Run       Tier = 0 // read, under caps, all output allow
+	Tier1Record    Tier = 1 // runs, recorded prominently: anything was masked
+	Tier2Uncertain Tier = 2 // near a cap, or a changed view: runs in assisted, waits in strict
+	Tier3Approve   Tier = 3 // any write, or mode-dependent uncertainty
+	Tier4Refuse    Tier = 4 // denylisted, DDL, out of write scope, multi-statement
 )
 
 // Basis says which layer decided a transform, so the agent can tell what it may
@@ -21,7 +21,6 @@ type Basis string
 const (
 	BasisCatalog   Basis = "catalog"   // a human or catalog init classified it
 	BasisRules     Basis = "rules"     // the connection's detection stages, over every row
-	BasisSampled   Basis = "sampled"   // the model layer, over a sample
 	BasisInherited Basis = "inherited" // a computed column, from R7.6
 	BasisParameter Basis = "parameter" // from a token-resolved parameter, R8.4b
 	BasisUnknown   Basis = "unknown"   // an unresolved column redacted under R5.4a
@@ -60,7 +59,7 @@ type ColumnMeta struct {
 // Degradation records a layer that was configured but did not run, so a narrower
 // result is never mistaken for a clean one. SPEC §7.10.
 type Degradation struct {
-	Layer  string `json:"layer"` // "detector", "judge", "catalog"
+	Layer  string `json:"layer"` // "detector", "catalog"
 	Reason string `json:"reason"`
 }
 

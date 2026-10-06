@@ -185,7 +185,6 @@ func newRig(t *testing.T) *rig {
 		Executor:     r.exec,
 		Redactor:     r.red,
 		Audit:        r.alog,
-		Judge:        fakeJudge{},
 		Detector:     fakeDetector{},
 		Pipeline:     r.pipe,
 	})

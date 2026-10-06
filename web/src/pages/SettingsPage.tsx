@@ -96,15 +96,8 @@ export function SettingsPage() {
               </Fact>
             </>
           ) : (
-            <Fact label="detector">none configured — rules coverage only</Fact>
+            <Fact label="detector">none reported</Fact>
           )}
-          <Fact label="judge">
-            {!report.judge.configured
-              ? 'not configured — uncertain output is masked rather than judged'
-              : report.judge.available
-                ? `${report.judge.identity ?? 'local model'}, available`
-                : `${report.judge.identity ?? 'local model'}, unreachable — masked fallback in use`}
-          </Fact>
         </Facts>
       </section>
 

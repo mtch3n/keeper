@@ -203,7 +203,7 @@ func TestQueryResultVsTicket(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, types.Ticket{
 			ID:      "tik-1",
 			State:   types.TicketPending,
-			Tier:    types.Tier2Judge,
+			Tier:    types.Tier2Uncertain,
 			AuditID: "a2",
 		})
 	})

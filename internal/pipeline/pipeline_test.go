@@ -288,8 +288,8 @@ func TestHideNameIsSuppressedInColumnsAndTransforms(t *testing.T) {
 
 // --- R4.2c: DDL is refused at every tier, in every mode, with any approval ----
 
-func TestDDLIsRefusedEvenWithAnApprovalAndInPermissiveMode(t *testing.T) {
-	for _, mode := range []types.Mode{types.ModeStrict, types.ModeAssisted, types.ModePermissive} {
+func TestDDLIsRefusedEvenWithAnApprovalInEveryMode(t *testing.T) {
+	for _, mode := range []types.Mode{types.ModeStrict, types.ModeAssisted} {
 		h := newHarness(t, func(h *harness) {
 			h.authority.conn.Mode = mode
 			h.exec.cols = nil
@@ -365,7 +365,7 @@ func TestWriteWithoutACredentialIsRefused(t *testing.T) {
 
 func TestWriteEscalatesToTierThreeWithAPreviewAndCommitsOnlyOnApproval(t *testing.T) {
 	setup := func(h *harness) {
-		h.authority.conn.Mode = types.ModePermissive
+		h.authority.conn.Mode = types.ModeAssisted
 		h.authority.conn.HasWriteCredential = true
 		h.authority.conn.WriteScope = []types.WriteScopeEntry{
 			{Relation: ordersRef, Operations: []types.WriteOp{types.WriteUpdate}},
@@ -442,7 +442,7 @@ func TestWriteEscalatesToTierThreeWithAPreviewAndCommitsOnlyOnApproval(t *testin
 func TestDenylistedRelationReachedThroughAViewIsRefused(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.authority.conn.Denylist = []types.RelationRef{usersRef}
-		h.authority.conn.Mode = types.ModePermissive
+		h.authority.conn.Mode = types.ModeAssisted
 		h.exec.cols = []types.ColumnMeta{computed("n", "int8")}
 		// The statement names public.user_stats. EXPLAIN expands the view, so
 		// the plan names the base table — which is the point of R7.4c.
@@ -489,7 +489,7 @@ func TestGrantForOneRelationDoesNotCoverAJoinToAnother(t *testing.T) {
 		h.authority.grants[grantPath(ordersRef)] = &types.Grant{ID: "g-orders", RowCeiling: 5000}
 	})
 	dec := partial.query(t, Request{SQL: "SELECT o.id FROM orders o JOIN clean_ids c ON c.id = o.id"})
-	if dec.Tier != types.Tier2Judge {
+	if dec.Tier != types.Tier2Uncertain {
 		t.Errorf("tier = %d, want 2: one unlisted relation sends the statement back to its normal tier", dec.Tier)
 	}
 	if strings.HasPrefix(dec.Result.Authorization, "grant:") {
@@ -517,7 +517,7 @@ func TestGrantForOneRelationDoesNotCoverAJoinToAnother(t *testing.T) {
 		h.authority.grants[grantPath(cleanRef)] = &types.Grant{ID: "g-clean", RowCeiling: 5000}
 	})
 	dec = suspended.query(t, Request{SQL: "SELECT o.id FROM orders o JOIN clean_ids c ON c.id = o.id"})
-	if dec.Tier != types.Tier2Judge {
+	if dec.Tier != types.Tier2Uncertain {
 		t.Errorf("tier = %d, want 2: a schema change suspends the rule pending review", dec.Tier)
 	}
 }
@@ -535,128 +535,7 @@ func TestGrantRowCeilingBoundsTheRequest(t *testing.T) {
 	}
 }
 
-// --- G6 tiers and the judge -------------------------------------------------
-
-func TestJudgeFailureNeverCountsAsAFavourableVerdict(t *testing.T) {
-	base := func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
-		h.exec.rows = [][]any{{int64(1)}}
-		h.exec.plan = readPlan(9000, cleanRef)
-	}
-
-	// Assisted: deterministic masking continues, and the degradation is recorded.
-	assisted := newHarness(t, func(h *harness) {
-		base(h)
-		h.judge = &fakeJudge{available: true, err: errors.New("endpoint down")}
-	})
-	dec := assisted.query(t, Request{SQL: "SELECT id FROM clean_ids"})
-	if dec.Result == nil {
-		t.Fatalf("an unreachable judge must not block an ordinary read: %v", dec.Error)
-	}
-	if dec.Tier != types.Tier2Judge {
-		t.Errorf("tier = %d, want 2", dec.Tier)
-	}
-	if len(dec.Result.Degradations) == 0 || dec.Result.Degradations[0].Layer != "judge" {
-		t.Errorf("degradations = %v, want the judge recorded as configured-but-down", dec.Result.Degradations)
-	}
-
-	// Strict: the same uncertainty is a human decision.
-	strict := newHarness(t, func(h *harness) {
-		base(h)
-		h.authority.conn.Mode = types.ModeStrict
-		h.judge = &fakeJudge{available: false}
-	})
-	dec = strict.query(t, Request{SQL: "SELECT id FROM clean_ids"})
-	if dec.Escalation == nil || dec.Tier != types.Tier3Approve {
-		t.Errorf("strict mode: tier = %d esc = %v, want an escalation", dec.Tier, dec.Escalation)
-	}
-}
-
-func TestJudgeMayRaiseTheTierButNotRefuse(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
-		h.exec.rows = [][]any{{int64(1)}}
-		h.exec.plan = readPlan(9000, cleanRef)
-		h.judge = &fakeJudge{available: true, verdict: &ports.JudgeVerdict{
-			Tier: types.Tier4Refuse, ReasonCodes: []string{"intent_mismatch"}, Uncertainty: 0.9,
-		}}
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
-
-	if dec.Tier != types.Tier3Approve {
-		t.Errorf("tier = %d, want 3: tier 4 belongs to the denylist, DDL and the write scope", dec.Tier)
-	}
-	if dec.Escalation == nil {
-		t.Fatal("a raised tier should escalate")
-	}
-	if !hasReason(dec.Escalation.Facts.Reasons, "intent_mismatch") {
-		t.Errorf("the judge's reason codes are missing from the approval facts: %v", dec.Escalation.Facts.Reasons)
-	}
-}
-
-func TestJudgeReleaseNeedsPermissiveModeAndADelegation(t *testing.T) {
-	build := func(mode types.Mode) *harness {
-		return newHarness(t, func(h *harness) {
-			h.authority.conn.Mode = mode
-			h.exec.cols = []types.ColumnMeta{computed("total", "int8")}
-			h.exec.rows = [][]any{{int64(5)}}
-			h.exec.plan = readPlan(9000, usersRef) // near the cap → tier 2
-			h.judge = &fakeJudge{available: true, verdict: &ports.JudgeVerdict{
-				Tier: types.Tier1Record, Release: true, Uncertainty: 0.1,
-			}}
-		})
-	}
-	del := &Delegation{ID: "d-1", Relations: []types.RelationRef{usersRef}, ExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
-
-	// Assisted mode: the verdict cannot release anything.
-	h := build(types.ModeAssisted)
-	dec := h.query(t, Request{SQL: "SELECT sum(salary) FROM users", Delegation: del})
-	if got := transformFor(t, dec, "total").Policy; got != types.PolicyRedact {
-		t.Errorf("assisted mode released uncertain output: %q", got)
-	}
-
-	// Permissive mode with no delegation: still masked. Model absence and model
-	// presence are both short of authorization.
-	h = build(types.ModePermissive)
-	dec = h.query(t, Request{SQL: "SELECT sum(salary) FROM users"})
-	if got := transformFor(t, dec, "total").Policy; got != types.PolicyRedact {
-		t.Errorf("permissive mode released without a delegation: %q", got)
-	}
-
-	// Permissive mode inside an explicit delegation: released, and the basis is
-	// recorded.
-	h = build(types.ModePermissive)
-	dec = h.query(t, Request{SQL: "SELECT sum(salary) FROM users", Delegation: del})
-	if got := transformFor(t, dec, "total").Policy; got != types.PolicyAllow {
-		t.Errorf("a delegated release did not happen: %q", got)
-	}
-	if dec.Result.Authorization != "delegation:d-1" {
-		t.Errorf("authorization = %q, want delegation:d-1", dec.Result.Authorization)
-	}
-}
-
-func TestPinnedCatalogPolicyIsNeverReleasedByTheJudge(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.authority.conn.Mode = types.ModePermissive
-		h.exec.cols = []types.ColumnMeta{fromColumn("email", "text", usersOID, 2)}
-		h.exec.rows = [][]any{{"ada@example.com"}}
-		h.exec.plan = readPlan(9000, usersRef)
-		h.judge = &fakeJudge{available: true, verdict: &ports.JudgeVerdict{Tier: types.Tier1Record, Release: true}}
-	})
-
-	dec := h.query(t, Request{
-		SQL:        "SELECT email FROM users",
-		Delegation: &Delegation{ID: "d-1", Relations: []types.RelationRef{usersRef}},
-	})
-
-	if got := transformFor(t, dec, "email").Policy; got != types.PolicyToken {
-		t.Errorf("a pinned catalog policy was lowered to %q", got)
-	}
-	if dec.Result.Rows[0][0] != maskMarker {
-		t.Error("a token column's value was released")
-	}
-}
+// --- G6 tiers -----------------------------------------------------------------
 
 func TestStaleCatalogIsUncertaintyNotPermission(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
@@ -887,5 +766,72 @@ func Test_DET_C7_AnUnexaminedScanColumnIsReportedAsADegradation(t *testing.T) {
 	}
 	if !slices.ContainsFunc(dec.Result.Degradations, func(d types.Degradation) bool { return d.Layer == "detector" }) {
 		t.Errorf("degradations = %v, want the detector named", dec.Result.Degradations)
+	}
+}
+
+// nearCeiling is an ordinary read whose plan expects close to the row ceiling.
+func nearCeiling(h *harness) {
+	h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
+	h.exec.rows = [][]any{{int64(1)}}
+	h.exec.plan = readPlan(9000, cleanRef)
+}
+
+func hasLayer(ds []types.Degradation, layer string) bool {
+	return slices.ContainsFunc(ds, func(d types.Degradation) bool { return d.Layer == layer })
+}
+
+func Test_JDG_C1_AssistedRunsAnUncertainReadMasked(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		nearCeiling(h)
+		h.authority.conn.Mode = types.ModeAssisted
+	})
+	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
+	if dec.Result == nil {
+		t.Fatalf("an uncertain read did not run in assisted mode: %v", dec.Error)
+	}
+	if dec.Tier != types.Tier2Uncertain {
+		t.Errorf("tier = %d, want 2", dec.Tier)
+	}
+	if hasLayer(dec.Result.Degradations, "judge") {
+		t.Errorf("degradations = %v name a judge", dec.Result.Degradations)
+	}
+}
+
+func Test_JDG_C2_StrictSendsAnUncertainReadToApproval(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		nearCeiling(h)
+		h.authority.conn.Mode = types.ModeStrict
+	})
+	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
+	if dec.Tier != types.Tier3Approve || dec.Result != nil {
+		t.Errorf("tier = %d, result = %v; want it waiting for approval at tier 3", dec.Tier, dec.Result)
+	}
+}
+
+func Test_JDG_C3_AChangedViewInAssistedReportsOnlyTheCatalog(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
+		h.exec.rows = [][]any{{int64(1)}}
+		h.exec.plan = readPlan(10, cleanRef)
+		h.catalog.fresh = false
+		h.authority.conn.Mode = types.ModeAssisted
+	})
+	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
+	if dec.Result == nil {
+		t.Fatalf("a read over a changed view did not run in assisted mode: %v", dec.Error)
+	}
+	if !hasLayer(dec.Result.Degradations, "catalog") || hasLayer(dec.Result.Degradations, "judge") {
+		t.Errorf("degradations = %v, want the catalog and nothing about a judge", dec.Result.Degradations)
+	}
+}
+
+func Test_JDG_C5_AStoredPermissiveModeBehavesAsStrict(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		nearCeiling(h)
+		h.authority.conn.Mode = types.Mode("permissive")
+	})
+	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
+	if dec.Tier != types.Tier3Approve || dec.Result != nil {
+		t.Errorf("tier = %d, result = %v; want it waiting for approval as strict would", dec.Tier, dec.Result)
 	}
 }

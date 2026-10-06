@@ -360,7 +360,6 @@ export interface DoctorReport {
   connections?: ConnectionHealth[]
   /** What was examining the data, and whether it could reach the network. */
   detector?: { name: string; version?: string; network_posture: string }
-  judge: { configured: boolean; available: boolean; identity?: string }
 }
 
 interface ConnectionHealth {

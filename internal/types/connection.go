@@ -7,15 +7,12 @@ import "time"
 type Mode string
 
 const (
-	// ModeStrict runs known-safe reads and requires approval for unresolved
-	// execution decisions. A model advises and never releases.
+	// ModeStrict runs known-safe reads and puts every uncertain one in front of
+	// a human.
 	ModeStrict Mode = "strict"
-	// ModeAssisted is the default. Ordinary reads run, a local model helps with
-	// intent and scope, and unresolved values are masked rather than released.
+	// ModeAssisted is the default. Ordinary reads run, and an uncertain one runs
+	// too, under the same deterministic masking.
 	ModeAssisted Mode = "assisted"
-	// ModePermissive lets a local model authorize release of unpinned uncertain
-	// output inside an explicitly delegated scope.
-	ModePermissive Mode = "permissive"
 )
 
 // StageKind names a detection adapter a stage runs.
@@ -42,7 +39,7 @@ type Stage struct {
 }
 
 // Valid reports whether m is a mode keeper knows.
-func (m Mode) Valid() bool { return m == ModeStrict || m == ModeAssisted || m == ModePermissive }
+func (m Mode) Valid() bool { return m == ModeStrict || m == ModeAssisted }
 
 // FindingKind groups what a G0 audit can report. SPEC §4.1.
 type FindingKind string

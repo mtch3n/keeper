@@ -16,7 +16,6 @@ import (
 	"github.com/mtchen/keeper/internal/catalog"
 	"github.com/mtchen/keeper/internal/daemon"
 	"github.com/mtchen/keeper/internal/detect"
-	"github.com/mtchen/keeper/internal/judge"
 	"github.com/mtchen/keeper/internal/pgaudit"
 	"github.com/mtchen/keeper/internal/pgdb"
 	"github.com/mtchen/keeper/internal/pipeline"
@@ -74,14 +73,6 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		return daemon.Deps{}, nil, nil, fmt.Errorf("redaction: %w", err)
 	}
 
-	// The judge is optional and local. keeperd calls it directly, never through
-	// the harness (R7.8c). Unconfigured it stays nil, and the pipeline records
-	// the degradation rather than treating silence as approval.
-	var jd ports.Judge
-	if base := os.Getenv("KEEPER_JUDGE_URL"); base != "" {
-		jd = judge.New(judge.Config{BaseURL: base, Model: os.Getenv("KEEPER_JUDGE_MODEL")})
-	}
-
 	// The pipeline asks the daemon for connections and grants, and the daemon
 	// asks the pipeline to run statements. Neither can be constructed first, so
 	// the authority is a box the daemon drops itself into once it exists. It is
@@ -95,7 +86,6 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		Redactor:  red,
 		Executor:  exec,
 		Audit:     alog,
-		Judge:     jd,
 		Authority: auth,
 	})
 	if err != nil {
@@ -111,7 +101,6 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		Executor:     exec,
 		Redactor:     red,
 		Audit:        alog,
-		Judge:        jd,
 		Detector:     patterns,
 		Pipeline:     &pipelineAdapter{p: pipe},
 	}
