@@ -136,7 +136,7 @@ export function SettingsPage() {
                       this connection, and doctor calling it a fault would be the
                       acceptance gate under another name (SPEC R4.1). */}
                   <TableCell className="text-right text-meta">
-                    {c.findings > 0 ? <Link to="/audit" className="underline underline-offset-4">{c.findings}</Link> : '—'}
+                    {c.findings > 0 ? <Link to={`/policy?connection=${c.id}`} className="underline underline-offset-4">{c.findings}</Link> : '—'}
                   </TableCell>
                   <TableCell className="text-right text-meta">{c.unclassified_columns}</TableCell>
                   <TableCell className="text-meta">

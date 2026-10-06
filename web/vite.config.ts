@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import react from '@vitejs/plugin-react'
 import { defineConfig, type ProxyOptions } from 'vite'
 import path from 'path'
@@ -30,6 +31,11 @@ export default defineConfig({
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
     },
+  },
+  test: {
+    environment: 'jsdom',
+    include: ['test/**/*.test.tsx'],
+    setupFiles: ['test/setup.ts'],
   },
   server: {
     proxy: {

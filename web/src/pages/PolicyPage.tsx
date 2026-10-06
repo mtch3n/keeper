@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
@@ -12,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import {
+  auditConnection,
   getConnection,
   listConnections,
   setDenylist,
@@ -20,11 +22,12 @@ import {
   type ConnectionDetail,
   type Pattern,
 } from '@/lib/api'
-import type { ConnectionSummary, Mode, RelationRef, Stage, StageKind } from '@/lib/types'
+import { auditedAge } from '@/lib/render'
+import type { ConnectionSummary, Finding, Mode, RelationRef, Stage, StageKind } from '@/lib/types'
 
 /**
- * Per-connection limits (SPEC §4.5), the mode selector (§9.4) and the
- * detection passes free text runs through.
+ * One connection's posture: what its role can do (SPEC R4.1), its mode (§9.4),
+ * the detection pipeline its free text runs through, and its limits (§4.5).
  *
  * `Policy` answers *what may this connection do*; `Settings` answers *what is
  * this daemon doing*. Keeping them apart is why neither screen is a bag of
@@ -34,18 +37,23 @@ export function PolicyPage() {
   const [list, setList] = useState<ConnectionSummary[] | null>(null)
   const [detail, setDetail] = useState<ConnectionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [params, setParams] = useSearchParams()
+  const wanted = params.get('connection')
 
   useEffect(() => {
     void (async () => {
       try {
         const cs = await listConnections()
         setList(cs)
-        if (cs.length > 0) setDetail(await getConnection(cs[0].id))
+        // A link names the connection it is about; one naming nothing that
+        // exists opens the first rather than an empty page.
+        const open = cs.find((c) => c.id === wanted) ?? cs[0]
+        if (open) setDetail(await getConnection(open.id))
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }
     })()
-  }, [])
+  }, [wanted])
 
   const reload = useCallback(async (id: string) => {
     try {
@@ -55,6 +63,11 @@ export function PolicyPage() {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [])
+
+  const select = (id: string) => {
+    setParams({ connection: id }, { replace: true })
+    void reload(id)
+  }
 
   if (list === null) return <Skeleton className="h-40 w-full" />
   if (list.length === 0) {
@@ -77,7 +90,7 @@ export function PolicyPage() {
           <Button
             key={c.id}
             variant={detail?.id === c.id ? 'default' : 'outline'}
-            onClick={() => void reload(c.id)}
+            onClick={() => select(c.id)}
           >
             {c.name}
           </Button>
@@ -86,6 +99,8 @@ export function PolicyPage() {
 
       {detail ? (
         <>
+          <Privileges detail={detail} onChanged={() => reload(detail.id)} onError={setError} />
+          <Separator />
           <ModeSelector detail={detail} onChanged={() => void reload(detail.id)} onError={setError} />
           <Separator />
           <DetectionEditor
@@ -102,6 +117,96 @@ export function PolicyPage() {
           <WriteScope detail={detail} />
         </>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * What this connection's role can do beyond reading (SPEC R4.1), read where
+ * the connection's other controls are set. None of it stops the connection:
+ * each finding carries the statement that would narrow it, and keeper never
+ * runs that statement — it holds the credential the report is about, and a
+ * tool that can narrow its own grants is a tool that can widen them.
+ */
+function Privileges({
+  detail,
+  onChanged,
+  onError,
+}: {
+  detail: ConnectionDetail
+  onChanged: () => Promise<void>
+  onError: (e: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const audited = detail.audited_privileges
+  const findings = audited.findings ?? []
+  const never = auditedAge(audited.audited_at) === 'never'
+
+  const rerun = async () => {
+    setBusy(true)
+    try {
+      await auditConnection(detail.id)
+      await onChanged()
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section aria-labelledby="privileges-heading" className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 id="privileges-heading" className="text-heading">
+            Privileges
+          </h2>
+          <span className="text-meta text-muted-foreground">
+            {detail.role} on {detail.database} · audited {auditedAge(audited.audited_at)}
+          </span>
+        </div>
+        <Button variant="outline" disabled={busy} onClick={() => void rerun()}>
+          {busy ? 'Re-auditing…' : 'Re-audit'}
+        </Button>
+      </div>
+      {never ? (
+        <p className="text-sm">
+          No report yet: the audit has not run against this role. That says nothing about what it can do.
+        </p>
+      ) : findings.length === 0 ? (
+        <p className="text-sm">This role holds nothing keeper would report.</p>
+      ) : (
+        <div className="flex flex-col gap-5">
+          {findings.map((f) => (
+            <FindingRow key={f.id} finding={f} />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** One finding: what it is, what it means in a sentence, and the fix. The fix
+ * is shown in full rather than behind a disclosure — a statement you have to
+ * click to see is one you will not paste. */
+function FindingRow({ finding }: { finding: Finding }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex items-baseline gap-3">
+        <span className="text-meta">{finding.id}</span>
+        <span className="text-label text-muted-foreground">{finding.kind}</span>
+      </div>
+      <span className="text-sm">{finding.detail}</span>
+      {finding.narrower ? (
+        <>
+          <span className="text-label text-muted-foreground">suggested fix</span>
+          <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{finding.narrower}</pre>
+        </>
+      ) : (
+        <span className="text-meta text-muted-foreground">
+          No single statement removes this one — it may be a vendor-owned object you cannot revoke on.
+        </span>
+      )}
     </div>
   )
 }

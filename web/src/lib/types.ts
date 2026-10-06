@@ -113,17 +113,6 @@ export interface ConnectionSummary {
   mode: Mode
 }
 
-/** One connection's entry in `GET /v1/audit` — the privilege audit as its own
- * surface, read separately from the connection it describes (SPEC R4.1). */
-export interface AuditReport {
-  connection_id: string
-  name: string
-  database: string
-  role: string
-  audited_at: string
-  findings?: Finding[]
-}
-
 // ── policy.go ───────────────────────────────────────────────────────────────
 
 export type Policy = 'allow' | 'scan' | 'partial' | 'token' | 'redact' | 'drop'

@@ -266,8 +266,8 @@ function ConnectionDetailPanel({
         <p className="text-sm">
           The privilege audit found {findings.length} thing{findings.length === 1 ? '' : 's'} this role can do
           beyond reading.{' '}
-          <Link to="/audit" className="underline underline-offset-4">
-            Read them on Audit
+          <Link to={`/policy?connection=${detail.id}`} className="underline underline-offset-4">
+            Read them on Policy
           </Link>
           , with the statement that would narrow each one. The connection works either way.
         </p>

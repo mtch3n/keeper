@@ -13,7 +13,6 @@ import { useLiveStatus } from '@/lib/live-status'
 
 export type Section =
   | 'connections'
-  | 'audit'
   | 'approvals'
   | 'permissions'
   | 'activity'
@@ -29,7 +28,6 @@ export type Section =
  * being its own screen. */
 const SCOPE: Record<Section, Scope> = {
   connections: null,
-  audit: null,
   approvals: 'session',
   permissions: 'session',
   activity: 'session',
@@ -40,7 +38,6 @@ const SCOPE: Record<Section, Scope> = {
 
 const SECTIONS: { section: Section; label: string; to: string }[] = [
   { section: 'connections', label: 'Connections', to: '/connections' },
-  { section: 'audit', label: 'Audit', to: '/audit' },
   { section: 'approvals', label: 'Approvals', to: '/approvals' },
   { section: 'permissions', label: 'Permissions', to: '/permissions' },
   { section: 'activity', label: 'Activity', to: '/activity' },
