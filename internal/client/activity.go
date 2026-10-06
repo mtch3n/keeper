@@ -75,6 +75,8 @@ type DoctorReport struct {
 	OpenRequests     int                     `json:"open_requests"`
 	Grants           int                     `json:"grants"`
 	SuspendedGrants  int                     `json:"suspended_grants"`
+	LogRetentionDays int                     `json:"log_retention_days"`
+	LegacyAuditLog   string                  `json:"legacy_audit_log,omitzero"`
 }
 
 // ConnectionHealth is one connection's line in a doctor report.

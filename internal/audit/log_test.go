@@ -18,8 +18,8 @@ import (
 
 func newLog(t *testing.T) *Log {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "keeper", "audit.log")
-	l, err := New(Config{Path: path, Detector: detect.NewPatterns()})
+	path := filepath.Join(t.TempDir(), "keeper", "activity")
+	l, err := New(Config{Key: testKey, Dir: path, Detector: detect.NewPatterns()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,12 @@ func TestWriteAppendsOneLinePerRecord(t *testing.T) {
 			t.Fatalf("Write did not fill in id and timestamp: %+v", r)
 		}
 	}
-	data, err := os.ReadFile(l.Path())
+	names, err := l.days()
+	if err != nil || len(names) != 1 {
+		t.Fatalf("day files = %v, %v", names, err)
+	}
+	file := filepath.Join(l.dir, names[0])
+	data, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +59,8 @@ func TestWriteAppendsOneLinePerRecord(t *testing.T) {
 		t.Fatalf("got %d lines, want 3", len(lines))
 	}
 	for _, line := range lines {
-		if !strings.HasPrefix(line, "{") || !strings.HasSuffix(line, "}") {
-			t.Errorf("line is not one JSON object: %q", line)
+		if strings.HasPrefix(line, "{") {
+			t.Errorf("line is plaintext JSON: %q", line)
 		}
 	}
 	// Ids are UUIDv7, so the log sorts by time by its own content.
@@ -69,7 +74,7 @@ func TestWriteAppendsOneLinePerRecord(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fi, err := os.Stat(l.Path())
+	fi, err := os.Stat(file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,10 +96,13 @@ func TestWriteReNormalizesDefensively(t *testing.T) {
 	if strings.Contains(r.Statement, "Jane Doe") || strings.Contains(r.Statement, "jane@example.com") {
 		t.Fatalf("statement still carries PII: %q", r.Statement)
 	}
-	data, _ := os.ReadFile(l.Path())
+	stored, err := l.Get(t.Context(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, needle := range []string{"Jane Doe", "jane@example.com", "patient"} {
-		if strings.Contains(string(data), needle) {
-			t.Errorf("log file contains %q", needle)
+		if strings.Contains(stored.Statement, needle) {
+			t.Errorf("stored record contains %q", needle)
 		}
 	}
 	// Already-normalized text, with a catalogued identifier, survives untouched.
@@ -210,7 +218,8 @@ func TestQueryToleratesATruncatedLine(t *testing.T) {
 	if err := l.Write(t.Context(), &types.AuditRecord{Statement: "SELECT 1"}); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(l.Path(), os.O_APPEND|os.O_WRONLY, 0o600)
+	names, _ := l.days()
+	f, err := os.OpenFile(filepath.Join(l.dir, names[0]), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +236,7 @@ func TestQueryToleratesATruncatedLine(t *testing.T) {
 
 func TestQueryOnAMissingFile(t *testing.T) {
 	l := newLog(t)
-	os.Remove(l.Path())
+	os.RemoveAll(l.dir)
 	got, err := l.Query(t.Context(), ports.AuditFilter{})
 	if err != nil || len(got) != 0 {
 		t.Errorf("Query on a missing log = %v, %v", got, err)
@@ -276,8 +285,8 @@ func TestScreenIntent(t *testing.T) {
 }
 
 func TestScreenIntentFailsClosedOnADetectorError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audit.log")
-	l, err := New(Config{Path: path, Detector: brokenDetector{}})
+	path := filepath.Join(t.TempDir(), "activity")
+	l, err := New(Config{Key: testKey, Dir: path, Detector: brokenDetector{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +328,7 @@ func TestConcurrentWrites(t *testing.T) {
 }
 
 func TestNewRequiresADetector(t *testing.T) {
-	if _, err := New(Config{Path: filepath.Join(t.TempDir(), "a.log")}); err == nil {
+	if _, err := New(Config{Key: testKey, Dir: filepath.Join(t.TempDir(), "activity")}); err == nil {
 		t.Error("New accepted a nil detector")
 	}
 }
@@ -328,8 +337,8 @@ func TestNewRequiresADetector(t *testing.T) {
 // connection runs, the intent is screened in process by the patterns pass and
 // never leaves the machine.
 func Test_DET_C18_AnIntentIsScreenedByThePatternsPass(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audit.log")
-	l, err := New(Config{Path: path, Detector: detect.NewPatterns()})
+	path := filepath.Join(t.TempDir(), "activity")
+	l, err := New(Config{Key: testKey, Dir: path, Detector: detect.NewPatterns()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,8 +351,8 @@ func Test_DET_C18_AnIntentIsScreenedByThePatternsPass(t *testing.T) {
 }
 
 func Test_DET_C19_AnUnscreenedIntentIsRejectedAndNotRecorded(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audit.log")
-	l, err := New(Config{Path: path, Detector: brokenDetector{}})
+	path := filepath.Join(t.TempDir(), "activity")
+	l, err := New(Config{Key: testKey, Dir: path, Detector: brokenDetector{}})
 	if err != nil {
 		t.Fatal(err)
 	}
