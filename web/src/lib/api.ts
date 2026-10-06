@@ -22,7 +22,6 @@ import type {
   ApprovalItem,
   ActivityDetail,
   AuditRecord,
-  AuditReport,
   ColumnPolicy,
   Connection,
   ConnectionSummary,
@@ -259,11 +258,6 @@ export function removeConnection(id: string) {
 
 export function auditConnection(id: string) {
   return post<Connection>(`/v1/connections/${id}/audit`)
-}
-
-/** The privilege audit for every connection. */
-export function listAudits() {
-  return get<AuditReport[]>('/v1/audit')
 }
 
 export function updateConnection(id: string, body: { mode?: Mode; limits?: Limits; detection?: Stage[] }) {

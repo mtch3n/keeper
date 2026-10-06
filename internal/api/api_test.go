@@ -1179,3 +1179,16 @@ func Test_DET_C42_AnEmptyMatchOrABadLabelIsRefused(t *testing.T) {
 		t.Errorf("something was stored: %+v", got)
 	}
 }
+
+// `keeper audit` with no name reads every connection's report from here; the
+// UI's Audit page going away takes nothing from the CLI.
+func Test_PRIV_C9_TheCLIsAuditReportStillAnswers(t *testing.T) {
+	r := newRig(t)
+	var reports []struct {
+		ConnectionID string `json:"connection_id"`
+	}
+	r.socket().mustJSON("GET", "/v1/audit", nil, &reports)
+	if len(reports) == 0 || reports[0].ConnectionID != "c1" {
+		t.Errorf("reports = %+v, want the registered connection's", reports)
+	}
+}

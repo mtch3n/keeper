@@ -30,7 +30,7 @@ ui:
 	cp -R web/dist/. internal/api/dist/
 
 ui-audit:
-	cd web && $(PNPM) lint && $(PNPM) ui-audit
+	cd web && $(PNPM) lint && $(PNPM) test && $(PNPM) ui-audit
 
 ## check — everything that must pass before work is called done
 check: fmt vet staticcheck lint-explain test-race ui-audit
