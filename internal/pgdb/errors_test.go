@@ -96,7 +96,7 @@ func TestConvertDiscardsEveryPostgresField(t *testing.T) {
 var closedCodes = map[types.Code]bool{
 	types.CodeSyntax: true, types.CodeMultiStatement: true, types.CodePermissionDenied: true,
 	types.CodeUnclassified: true, types.CodeDenylisted: true, types.CodeDDLRefused: true,
-	types.CodeOutOfWriteScope: true, types.CodeNoWriteCredential: true,
+	types.CodeWritesOff:        true,
 	types.CodeApprovalRequired: true, types.CodeApprovalRefused: true,
 	types.CodeTicketUnknown: true, types.CodeTimeout: true, types.CodeRowCap: true,
 	types.CodeStaleToken: true, types.CodeUnreachable: true, types.CodeInternal: true,

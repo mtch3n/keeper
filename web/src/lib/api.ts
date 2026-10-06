@@ -16,7 +16,6 @@
 
 import type {
   ApprovalFacts,
-  WriteScopeEntry,
   Finding,
   Degradation,
   ApprovalItem,
@@ -35,6 +34,8 @@ import type {
   KeeperEventKind,
   Limits,
   Mode,
+  Profile,
+  Writes,
   Stage,
   Session,
   PathRef,
@@ -124,14 +125,12 @@ export function listConnections() {
 /** Mirrors daemon.ConnectionDetail. Deliberately not `Connection`:
  * describe_connection returns what SPEC §6.1 lists and no more, so host,
  * password and connection string have nowhere to appear. */
-export interface ConnectionDetail {
+export interface ConnectionDetail extends Profile {
   id: string
   name: string
   engine: string
   version?: string
-  database: string
   schemas?: string[]
-  role: string
   audited_privileges: AuditedPrivileges
   catalog_status: CatalogStatus
   policy_summary?: Record<string, number>
@@ -140,8 +139,6 @@ export interface ConnectionDetail {
   detection: Stage[]
   limits: Limits
   denylist?: RelationRef[]
-  write_scope?: WriteScopeEntry[]
-  has_write_credential: boolean
   degradations?: Degradation[]
 }
 
@@ -240,10 +237,8 @@ export function registerConnection(body: {
   name: string
   host_id: string
   database: string
-  read: Credential
-  /** A separate credential for writes. Without one, write mode does not exist
-   * for this connection — there is no flag that turns it on (SPEC §4.2). */
-  write?: Credential
+  credential: Credential
+  writes?: Writes
   catalog_path?: string
 }) {
   return post<Connection>('/v1/connections', body)
@@ -260,7 +255,10 @@ export function auditConnection(id: string) {
   return post<Connection>(`/v1/connections/${id}/audit`)
 }
 
-export function updateConnection(id: string, body: { mode?: Mode; limits?: Limits; detection?: Stage[] }) {
+export function updateConnection(
+  id: string,
+  body: { mode?: Mode; limits?: Limits; detection?: Stage[]; writes?: Writes },
+) {
   return patch<Connection>(`/v1/connections/${id}`, body)
 }
 

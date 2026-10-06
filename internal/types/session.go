@@ -157,6 +157,49 @@ type ApprovalFacts struct {
 	Egress []string `json:"egress,omitzero"`
 	// Reasons is why this escalated, from a closed set of reason codes.
 	Reasons []string `json:"reasons,omitzero"`
+
+	// Risk is how much the statement can change, at a glance.
+	Risk Risk `json:"risk"`
+	// Unreadable is set when keeper could not classify the statement, whose
+	// risk is then destructive.
+	Unreadable bool `json:"unreadable,omitzero"`
+	// Targets are the relations a write changes.
+	Targets []RelationRef `json:"targets,omitzero"`
+	// Protection is what would stop a write on this profile.
+	Protection Protection `json:"protection"`
+	// Columns are the output columns by name, with SELECT * expanded.
+	Columns []string `json:"columns,omitzero"`
+	// Filters are the sensitive or uncatalogued columns the statement filters
+	// or joins on: a filter on an SSN discloses as much as selecting it.
+	Filters []FilterColumn `json:"filters,omitzero"`
+}
+
+// Risk classes a statement: a read, a write that adds or changes rows, or one
+// that removes them. A statement keeper cannot classify is destructive.
+type Risk string
+
+const (
+	RiskRead        Risk = "read"
+	RiskWrite       Risk = "write"
+	RiskDestructive Risk = "destructive"
+)
+
+// Protection is the profile's writes setting and whether its role can change
+// data at all.
+type Protection struct {
+	Writes Writes `json:"writes"`
+	// RoleWrites is yes, no, or unknown when the audit cannot say.
+	RoleWrites string `json:"role_writes"`
+}
+
+// FilterColumn is one column a statement filters or joins on that an
+// approver should notice.
+type FilterColumn struct {
+	Relation RelationRef `json:"relation"`
+	Column   string      `json:"column"`
+	// Flag is sensitive (catalogued, not allow) or unclassified (no entry).
+	Flag   string `json:"flag"`
+	Policy Policy `json:"policy,omitzero"`
 }
 
 // WritePreview is the result of SPEC R4.2d's first execution. The count is exact
@@ -169,4 +212,28 @@ type WritePreview struct {
 	// Returning is the transform summary for a RETURNING clause, which passes
 	// through G7 like any other output. SPEC R4.2e.
 	Returning map[string]Transform `json:"returning,omitzero"`
+	// Changes is what the write changes, for the approver. Nil when the
+	// server could not report rows; RowCount still holds.
+	Changes *WriteChanges `json:"changes,omitzero"`
+}
+
+// PreviewRows is how many changed rows an approval shows.
+const PreviewRows = 50
+
+// WriteChanges is a write's effect, shown to the approver in cleartext. It is
+// held with the ticket in memory: nothing logs it and no response to an agent
+// carries it.
+type WriteChanges struct {
+	Columns []string     `json:"columns"`
+	Rows    []ChangedRow `json:"rows"`
+	// Omitted counts affected rows beyond the ones shown.
+	Omitted int64 `json:"omitted,omitzero"`
+}
+
+// ChangedRow is one row a write touches: its values before the change, where
+// the server reports them, and after. An INSERT has no old values and a
+// DELETE no new ones.
+type ChangedRow struct {
+	Old []string `json:"old,omitzero"`
+	New []string `json:"new,omitzero"`
 }

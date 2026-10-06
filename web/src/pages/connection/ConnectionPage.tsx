@@ -17,7 +17,7 @@ import {
   LimitsForm,
   ModeSelector,
   Privileges,
-  WriteScope,
+  WritesSelector,
 } from '@/pages/connection/sections'
 
 /**
@@ -83,7 +83,7 @@ export function ConnectionPage() {
         <div className="flex flex-col gap-1">
           <h1 className="text-title">{detail.name}</h1>
           <span className="text-meta text-muted-foreground">
-            {detail.role} on {detail.database}
+            {detail.username} on {detail.database} · {detail.host}
           </span>
         </div>
         {/* Switching connection keeps the tab open, so comparing one setting
@@ -123,11 +123,11 @@ export function ConnectionPage() {
           <>
             <ModeSelector detail={detail} onChanged={changed} onError={setError} />
             <Separator />
+            <WritesSelector detail={detail} onChanged={changed} onError={setError} />
+            <Separator />
             <LimitsForm detail={detail} onChanged={changed} onError={setError} />
             <Separator />
             <DenylistEditor detail={detail} onChanged={changed} onError={setError} />
-            <Separator />
-            <WriteScope detail={detail} />
           </>
         ) : null}
         {tab === 'privileges' ? <Privileges detail={detail} onChanged={reload} onError={setError} /> : null}

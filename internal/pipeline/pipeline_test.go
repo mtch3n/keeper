@@ -1,8 +1,10 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -313,63 +315,12 @@ func TestDDLIsRefusedEvenWithAnApprovalInEveryMode(t *testing.T) {
 	}
 }
 
-// --- R4.2b: a write outside the recorded scope ------------------------------
-
-func TestWriteOutsideTheRecordedScopeIsRefusedNamingTheRelation(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.authority.conn.HasWriteCredential = true
-		h.authority.conn.WriteScope = []types.WriteScopeEntry{
-			{Relation: usersRef, Operations: []types.WriteOp{types.WriteUpdate}},
-		}
-		h.exec.cols = nil
-		h.exec.plan = &ports.PlanFacts{
-			StatementType: pgdb.StmtUpdate,
-			Writes:        true,
-			RelationNames: []types.RelationRef{ordersRef},
-			Relations:     []uint32{ordersOID},
-			EstimatedRows: 3,
-		}
-	})
-
-	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
-
-	if dec.Error == nil || dec.Error.Code != types.CodeOutOfWriteScope {
-		t.Fatalf("got %v, want out_of_write_scope", dec.Error)
-	}
-	if !strings.Contains(dec.Error.Summary, ordersRef.String()) {
-		t.Errorf("the refusal must name the relation; got %q", dec.Error.Summary)
-	}
-	if dec.Tier != types.Tier4Refuse {
-		t.Errorf("tier = %d, want 4", dec.Tier)
-	}
-	// Refused before the database would refuse it.
-	if h.exec.called("PreviewWrite") || h.exec.called("CommitWrite") {
-		t.Errorf("the write reached the database: %v", h.exec.calls)
-	}
-}
-
-func TestWriteWithoutACredentialIsRefused(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.plan = &ports.PlanFacts{
-			StatementType: pgdb.StmtUpdate, Writes: true,
-			RelationNames: []types.RelationRef{usersRef}, Relations: []uint32{usersOID},
-		}
-	})
-	dec := h.query(t, Request{SQL: "UPDATE users SET status = 'x'"})
-	if dec.Error == nil || dec.Error.Code != types.CodeNoWriteCredential {
-		t.Fatalf("got %v, want no_write_credential", dec.Error)
-	}
-}
-
 // --- R4.2d–f: the write path ------------------------------------------------
 
 func TestWriteEscalatesToTierThreeWithAPreviewAndCommitsOnlyOnApproval(t *testing.T) {
 	setup := func(h *harness) {
 		h.authority.conn.Mode = types.ModeAssisted
-		h.authority.conn.HasWriteCredential = true
-		h.authority.conn.WriteScope = []types.WriteScopeEntry{
-			{Relation: ordersRef, Operations: []types.WriteOp{types.WriteUpdate}},
-		}
+		h.authority.conn.Writes = types.WritesApprove
 		// UPDATE ... RETURNING user_email: rows exist, and they are output in
 		// exactly the sense §8 means.
 		h.exec.cols = []types.ColumnMeta{fromColumn("user_email", "text", ordersOID, 3)}
@@ -833,5 +784,213 @@ func Test_JDG_C5_AStoredPermissiveModeBehavesAsStrict(t *testing.T) {
 	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
 	if dec.Tier != types.Tier3Approve || dec.Result != nil {
 		t.Errorf("tier = %d, result = %v; want it waiting for approval as strict would", dec.Tier, dec.Result)
+	}
+}
+
+func Test_WRITE_C1_AnAllowedWriteWaitsThenRunsOnApproval(t *testing.T) {
+	setup := func(h *harness) {
+		h.authority.conn.Writes = types.WritesApprove
+		h.exec.previewTag, h.exec.commitTag = 2, 2
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtUpdate, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID}, EstimatedRows: 2,
+		}
+	}
+	h := newHarness(t, setup)
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Escalation == nil || dec.Tier != types.Tier3Approve {
+		t.Fatalf("an allowed write did not wait for approval: tier %d, err %v", dec.Tier, dec.Error)
+	}
+	if h.exec.called("CommitWrite") {
+		t.Fatal("the write ran before its approval")
+	}
+	h2 := newHarness(t, setup)
+	dec2 := h2.query(t, Request{SQL: "UPDATE orders SET status = 'x'", Approval: &Approval{TicketID: "tk", Approver: "ming"}})
+	if dec2.Result == nil || !h2.exec.called("CommitWrite") {
+		t.Fatalf("an approved write did not run: %v", dec2.Error)
+	}
+}
+
+func Test_WRITE_C2_AWriteOnAReadOnlyProfileIsRefusedAtOnce(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.authority.conn.Writes = types.WritesOff
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtUpdate, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID},
+		}
+	})
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Error == nil || dec.Error.Code != types.CodeWritesOff || dec.Escalation != nil {
+		t.Fatalf("decision = %+v, want an immediate writes_off refusal with nothing waiting", dec)
+	}
+	if h.exec.called("PreviewWrite") || h.exec.called("CommitWrite") {
+		t.Error("a write on a read-only profile reached the database")
+	}
+}
+
+func changedRows(n int) *types.WriteChanges {
+	c := &types.WriteChanges{Columns: []string{"id", "user_email"}}
+	for i := range n {
+		c.Rows = append(c.Rows, types.ChangedRow{New: []string{strconv.Itoa(i + 1), "ada@example.com"}})
+	}
+	return c
+}
+
+func writeHarness(t *testing.T, rows int) *harness {
+	return newHarness(t, func(h *harness) {
+		h.authority.conn.Writes = types.WritesApprove
+		h.exec.previewTag = int64(rows)
+		h.exec.changes = changedRows(rows)
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtUpdate, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID}, EstimatedRows: int64(rows),
+		}
+	})
+}
+
+func Test_WRITE_C4_AWaitingWriteCarriesItsChangedRowsInCleartext(t *testing.T) {
+	h := writeHarness(t, 3)
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Escalation == nil || dec.Escalation.Write == nil {
+		t.Fatalf("no write preview: %+v", dec)
+	}
+	w := dec.Escalation.Write
+	if w.RowCount != 3 || w.Changes == nil || len(w.Changes.Rows) != 3 || w.Changes.Omitted != 0 {
+		t.Fatalf("preview = %+v, want 3 affected and 3 changed rows", w)
+	}
+	// user_email is a token column for an agent; the approver sees the value.
+	if got := w.Changes.Rows[0].New[1]; got != "ada@example.com" {
+		t.Errorf("changed value = %q, want the cleartext", got)
+	}
+}
+
+func Test_WRITE_C5_ALargeWriteShowsTheFirstFiftyRows(t *testing.T) {
+	h := writeHarness(t, 500)
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Escalation == nil || dec.Escalation.Write == nil || dec.Escalation.Write.Changes == nil {
+		t.Fatalf("no write preview: %+v", dec)
+	}
+	w := dec.Escalation.Write
+	if w.RowCount != 500 || len(w.Changes.Rows) != types.PreviewRows || w.Changes.Omitted != 450 {
+		t.Errorf("preview = %d affected, %d shown, %d omitted; want 500, 50, 450", w.RowCount, len(w.Changes.Rows), w.Changes.Omitted)
+	}
+}
+
+func Test_WRITE_C7_ADeleteIsMarkedDestructiveWithItsTargetAndProtection(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.authority.conn.Writes = types.WritesApprove
+		h.exec.previewTag = 1
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtDelete, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID}, EstimatedRows: 1,
+		}
+	})
+	dec := h.query(t, Request{SQL: "DELETE FROM orders WHERE id = 1"})
+	if dec.Escalation == nil {
+		t.Fatalf("not escalated: %v", dec.Error)
+	}
+	f := dec.Escalation.Facts
+	if f.Risk != types.RiskDestructive || f.StatementType != "DELETE" || !slices.Equal(f.Targets, []types.RelationRef{ordersRef}) {
+		t.Errorf("facts = risk %q, verb %q, targets %v; want destructive DELETE on orders", f.Risk, f.StatementType, f.Targets)
+	}
+	if f.Protection.Writes != types.WritesApprove || f.Protection.RoleWrites != "yes" {
+		t.Errorf("protection = %+v, want writes approve and a role that can write", f.Protection)
+	}
+}
+
+func Test_WRITE_C12_AStatementKeeperCannotClassifyIsDestructive(t *testing.T) {
+	for _, stmt := range []string{"", "COPY", "CALL"} {
+		risk, unreadable := riskOf(stmt)
+		if risk != types.RiskDestructive || !unreadable {
+			t.Errorf("riskOf(%q) = %q, unreadable %v; want destructive and unreadable", stmt, risk, unreadable)
+		}
+	}
+	if risk, unreadable := riskOf(pgdb.StmtSelect); risk != types.RiskRead || unreadable {
+		t.Errorf("a SELECT is %q, unreadable %v", risk, unreadable)
+	}
+}
+
+func filterHarness(t *testing.T, filters ...ports.ColumnRef) *harness {
+	return newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{
+			fromColumn("id", "int8", usersOID, 1), fromColumn("email", "text", usersOID, 2), fromColumn("status", "text", usersOID, 5),
+		}
+		h.exec.plan = readPlan(1, usersRef)
+		h.exec.plan.Filters = filters
+	})
+}
+
+func Test_WRITE_C8_TheCardListsExpandedColumnsAndFlagsASensitiveFilter(t *testing.T) {
+	h := filterHarness(t, ports.ColumnRef{TableOID: usersOID, AttNum: 3, Relation: usersRef, Column: "ssn"})
+	f, kerr, err := h.pipe.Facts(t.Context(), Request{ConnID: "acme_prod", Session: testSession(), SQL: "SELECT * FROM users WHERE ssn = $1"})
+	if err != nil || kerr != nil {
+		t.Fatalf("facts: %v %v", kerr, err)
+	}
+	if !slices.Equal(f.Columns, []string{"id", "email", "status"}) {
+		t.Errorf("columns = %v, want SELECT * expanded", f.Columns)
+	}
+	want := []types.FilterColumn{{Relation: usersRef, Column: "ssn", Flag: "sensitive", Policy: types.PolicyDrop}}
+	if !slices.Equal(f.Filters, want) {
+		t.Errorf("filters = %+v, want ssn flagged sensitive", f.Filters)
+	}
+}
+
+func Test_WRITE_C13_AFilterOnAnUncataloguedColumnIsFlaggedUnclassified(t *testing.T) {
+	h := filterHarness(t,
+		ports.ColumnRef{TableOID: usersOID, AttNum: 9, Relation: usersRef, Column: "dob"},
+		ports.ColumnRef{TableOID: usersOID, AttNum: 1, Relation: usersRef, Column: "id"},
+	)
+	f, kerr, err := h.pipe.Facts(t.Context(), Request{ConnID: "acme_prod", Session: testSession(), SQL: "SELECT id FROM users WHERE dob > $1 AND id > 1"})
+	if err != nil || kerr != nil {
+		t.Fatalf("facts: %v %v", kerr, err)
+	}
+	want := []types.FilterColumn{{Relation: usersRef, Column: "dob", Flag: "unclassified"}}
+	if !slices.Equal(f.Filters, want) {
+		t.Errorf("filters = %+v, want only dob flagged unclassified (id is allow)", f.Filters)
+	}
+}
+
+func sizedRows(n, size int) [][]any {
+	rows := make([][]any, n)
+	for i := range rows {
+		rows[i] = []any{int64(i), strings.Repeat("x", size)}
+	}
+	return rows
+}
+
+func sizeHarness(t *testing.T, rows [][]any) *harness {
+	return newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1), fromColumn("label", "text", cleanOID, 2)}
+		h.exec.rows = rows
+		h.exec.plan = readPlan(int64(len(rows)), cleanRef)
+	})
+}
+
+func Test_WRITE_C11_AResultIsCutBySizeUnderTheCap(t *testing.T) {
+	h := sizeHarness(t, sizedRows(30, 100<<10)) // 3 MiB
+	if h.authority.conn.Limits.MaxBytes != 1<<20 {
+		t.Fatalf("default size cap = %d, want 1 MiB", h.authority.conn.Limits.MaxBytes)
+	}
+	dec := h.query(t, Request{SQL: "SELECT id, label FROM clean_ids"})
+	if dec.Result == nil {
+		t.Fatalf("no result: %v", dec.Error)
+	}
+	body, _ := json.Marshal(dec.Result.Rows)
+	if len(body) > 1<<20 || len(dec.Result.Rows) == 0 || len(dec.Result.Rows) == 30 {
+		t.Errorf("rows = %d, %d bytes; want some rows, under 1 MiB", len(dec.Result.Rows), len(body))
+	}
+	if !dec.Result.Truncated || dec.Result.TruncatedBy != types.CutBySize || dec.Result.RowCount != len(dec.Result.Rows) {
+		t.Errorf("result says truncated %v by %q with row_count %d; want cut by size", dec.Result.Truncated, dec.Result.TruncatedBy, dec.Result.RowCount)
+	}
+}
+
+func Test_WRITE_C14_ARowLargerThanTheCapLeavesNoRows(t *testing.T) {
+	h := sizeHarness(t, sizedRows(1, 2<<20))
+	dec := h.query(t, Request{SQL: "SELECT id, label FROM clean_ids"})
+	if dec.Result == nil {
+		t.Fatalf("no result: %v", dec.Error)
+	}
+	if len(dec.Result.Rows) != 0 || !dec.Result.Truncated || dec.Result.TruncatedBy != types.CutBySize {
+		t.Errorf("rows = %d, truncated %v by %q; want none, cut by size", len(dec.Result.Rows), dec.Result.Truncated, dec.Result.TruncatedBy)
 	}
 }

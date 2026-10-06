@@ -80,27 +80,14 @@ type RelationRef struct {
 
 func (r RelationRef) String() string { return r.Schema + "." + r.Relation }
 
-// WriteOp is one operation a write credential may perform on a relation.
-type WriteOp string
-
-const (
-	WriteInsert WriteOp = "INSERT"
-	WriteUpdate WriteOp = "UPDATE"
-	WriteDelete WriteOp = "DELETE"
-)
-
-// WriteScopeEntry is one relation a write credential may change, with the
-// operations it holds. Enumerated at registration and re-audited. SPEC R4.2b.
-type WriteScopeEntry struct {
-	Relation   RelationRef `json:"relation"`
-	Operations []WriteOp   `json:"operations"`
-}
-
 // Limits are the per-connection operator settings of SPEC §4.5. Every one of them
 // is set through the CLI or the UI and is unreachable from MCP.
 type Limits struct {
 	// MaxRowsCeiling bounds query(max_rows); the agent cannot raise it.
 	MaxRowsCeiling int `json:"max_rows_ceiling"`
+	// MaxBytes bounds a result's row data, so one wide column cannot flood
+	// the agent's context under the row ceiling.
+	MaxBytes int `json:"max_bytes"`
 	// StatementTimeout is the SET LOCAL value for every statement.
 	StatementTimeout time.Duration `json:"statement_timeout"`
 	// ScanSample is how many rows the model layer of a scan column sees.
@@ -112,6 +99,7 @@ type Limits struct {
 func DefaultLimits() Limits {
 	return Limits{
 		MaxRowsCeiling:   1000,
+		MaxBytes:         1 << 20,
 		StatementTimeout: 30 * time.Second,
 		ScanSample:       300, // ~299 rows finds a 1% rate at 95% confidence, SPEC R8.5b
 	}
@@ -155,9 +143,8 @@ type Connection struct {
 	Limits Limits `json:"limits"`
 	// Detection is the ordered pipeline a scan column's free text runs through.
 	// Empty is off: free text is redacted whole.
-	Detection  []Stage           `json:"detection,omitzero"`
-	Denylist   []RelationRef     `json:"denylist,omitzero"`
-	WriteScope []WriteScopeEntry `json:"write_scope,omitzero"`
+	Detection []Stage       `json:"detection,omitzero"`
+	Denylist  []RelationRef `json:"denylist,omitzero"`
 
 	// Findings is what the last audit reported. It does not gate anything: a
 	// registered connection is usable, and the audit is a separate report the
@@ -165,10 +152,19 @@ type Connection struct {
 	Findings  []Finding `json:"findings,omitzero"`
 	AuditedAt time.Time `json:"audited_at"`
 
-	// HasWriteCredential reports whether a _rw credential exists. Without one,
-	// write mode does not exist; there is no boolean that enables it. SPEC §4.2.
-	HasWriteCredential bool `json:"has_write_credential"`
+	// Writes is whether this profile's sessions may write at all. Every write
+	// still waits for approval; there is no standing approval of a write.
+	Writes Writes `json:"writes"`
 }
+
+// Writes is a profile's write setting. Off is the default: its sessions are
+// read-only, and a write is refused rather than run as some other profile.
+type Writes string
+
+const (
+	WritesOff     Writes = "off"
+	WritesApprove Writes = "approve"
+)
 
 // Settings are the daemon-wide choices an operator makes in Settings. They live
 // in the vault beside the connections and are unreachable from MCP.

@@ -22,7 +22,7 @@ const (
 	ReasonWrite             = "write"
 	ReasonDenylisted        = "denylisted_relation"
 	ReasonDDL               = "ddl"
-	ReasonOutOfScope        = "out_of_write_scope"
+	ReasonWritesOff         = "writes_off"
 	ReasonNoGrant           = "no_grant"
 	ReasonStrictUncertainty = "strict_mode_uncertainty"
 	ReasonMultiStatement    = "multi_statement"
@@ -362,22 +362,6 @@ func (p *Pipeline) denylistedOutput(cat ports.Catalog, conn *types.Connection, c
 	return types.RelationRef{}, false
 }
 
-// inWriteScope is R4.2b: the scope recorded at registration, relation by
-// relation and operation by operation.
-func inWriteScope(scope []types.WriteScopeEntry, rel types.RelationRef, op types.WriteOp) bool {
-	for _, e := range scope {
-		if e.Relation != rel {
-			continue
-		}
-		for _, have := range e.Operations {
-			if have == op {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // permissionError is R5.5's middle rule. R6.4a discards every PostgreSQL error
 // field, so without this the agent learns only that something was denied and
 // retries blindly. The readable column list is composed by keeper from the
@@ -422,10 +406,17 @@ func egressSummary(cols []column) []string {
 			counts[c.entry.Policy]++
 		}
 	}
+	phrase := map[types.Policy]string{
+		types.PolicyDrop:    "dropped",
+		types.PolicyRedact:  "redacted",
+		types.PolicyToken:   "tokenized",
+		types.PolicyPartial: "partially masked",
+		types.PolicyScan:    "scanned for PII spans",
+	}
 	var out []string
 	for _, pol := range []types.Policy{types.PolicyDrop, types.PolicyRedact, types.PolicyToken, types.PolicyPartial, types.PolicyScan} {
 		if n := counts[pol]; n > 0 {
-			out = append(out, strconv.Itoa(n)+" "+string(pol))
+			out = append(out, strconv.Itoa(n)+" column(s) "+phrase[pol])
 		}
 	}
 	return out

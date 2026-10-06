@@ -40,26 +40,26 @@ import (
 // messages — SELECT ssn::integer FROM users puts the SSN in the error text, and
 // there is no result row, so redaction never runs.
 var summaries = map[types.Code]string{
-	types.CodeSyntax:            "the statement did not parse, or it names a relation, column or function this connection cannot use",
-	types.CodeMultiStatement:    "the input contained more than one statement; keeper runs exactly one",
-	types.CodePermissionDenied:  "the database refused this statement for this connection's role",
-	types.CodeTimeout:           "the statement exceeded this connection's statement timeout",
-	types.CodeApprovalRequired:  "the statement modifies data; writes are approved before they run",
-	types.CodeNoWriteCredential: "this connection has no write credential, so it cannot modify data",
-	types.CodeUnreachable:       "keeper could not connect to this database",
-	types.CodeInternal:          "the database did not complete this statement",
+	types.CodeSyntax:           "the statement did not parse, or it names a relation, column or function this connection cannot use",
+	types.CodeMultiStatement:   "the input contained more than one statement; keeper runs exactly one",
+	types.CodePermissionDenied: "the database refused this statement for this connection's role",
+	types.CodeTimeout:          "the statement exceeded this connection's statement timeout",
+	types.CodeApprovalRequired: "the statement modifies data; writes are approved before they run",
+	types.CodeWritesOff:        "writes are off for this profile, so its sessions are read-only",
+	types.CodeUnreachable:      "keeper could not connect to this database",
+	types.CodeInternal:         "the database did not complete this statement",
 }
 
 // actions are operator instructions from a closed set. SPEC §6.4.
 var actions = map[types.Code]string{
-	types.CodeSyntax:            "correct the statement, or run get_schema to see what this connection may name",
-	types.CodeMultiStatement:    "send one statement per call",
-	types.CodePermissionDenied:  "ask an operator to widen this connection's grants",
-	types.CodeTimeout:           "narrow the statement, or ask an operator to raise statement_timeout",
-	types.CodeApprovalRequired:  "resubmit the statement so it can be previewed and approved",
-	types.CodeNoWriteCredential: "ask an operator to register a write credential for this connection",
-	types.CodeUnreachable:       "check that the server is running and reachable from this machine",
-	types.CodeInternal:          "retry; tell an operator if it persists",
+	types.CodeSyntax:           "correct the statement, or run get_schema to see what this connection may name",
+	types.CodeMultiStatement:   "send one statement per call",
+	types.CodePermissionDenied: "ask an operator to widen this connection's grants",
+	types.CodeTimeout:          "narrow the statement, or ask an operator to raise statement_timeout",
+	types.CodeApprovalRequired: "resubmit the statement so it can be previewed and approved",
+	types.CodeWritesOff:        "use a profile on this database that allows writes, or ask an operator to allow them on this one",
+	types.CodeUnreachable:      "check that the server is running and reachable from this machine",
+	types.CodeInternal:         "retry; tell an operator if it persists",
 }
 
 // keeperError builds the only error shape that leaves this package.

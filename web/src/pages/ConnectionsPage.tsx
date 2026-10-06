@@ -173,7 +173,7 @@ function HostSection({
                 </TableCell>
                 <TableCell className="text-meta">{c.engine}</TableCell>
                 <TableCell className="text-meta">{c.database}</TableCell>
-                <TableCell className="text-meta">{c.role}</TableCell>
+                <TableCell className="text-meta">{c.username}</TableCell>
                 <TableCell className="text-meta">{c.mode}</TableCell>
               </TableRow>
             ))}

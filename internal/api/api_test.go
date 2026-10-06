@@ -265,7 +265,7 @@ func TestLoopbackRequiresCSRFToken(t *testing.T) {
 	b := r.browser()
 	b.header.Del("X-Keeper-CSRF")
 
-	register := map[string]any{"name": "x", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"}}
+	register := map[string]any{"name": "x", "host_id": "h1", "database": "db", "credential": map[string]any{"user": "u"}}
 
 	resp, raw := b.do("POST", "/v1/connections", register)
 	if resp.StatusCode != http.StatusForbidden {
@@ -294,7 +294,7 @@ func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 		method, path string
 		body         any
 	}{
-		{"POST", "/v1/connections", map[string]any{"name": "x", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"}}},
+		{"POST", "/v1/connections", map[string]any{"name": "x", "host_id": "h1", "database": "db", "credential": map[string]any{"user": "u"}}},
 		{"GET", "/v1/hosts", nil},
 		{"POST", "/v1/hosts", map[string]any{"name": "x", "address": "h"}},
 		{"DELETE", "/v1/hosts/h1", nil},
@@ -571,7 +571,7 @@ func TestRegisterSurvivesAnAuditThatCannotRun(t *testing.T) {
 		AuditedAt time.Time `json:"audited_at"`
 	}
 	b.mustJSON("POST", "/v1/connections", map[string]any{
-		"name": "managed", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"},
+		"name": "managed", "host_id": "h1", "database": "db", "credential": map[string]any{"user": "u"},
 	}, &got)
 	if got.ID == "" || got.Name != "managed" {
 		t.Fatalf("an unauditable connection was refused registration: %+v", got)
@@ -977,7 +977,7 @@ func TestHostCarriesSeveralConnections(t *testing.T) {
 		}
 		b.mustJSON("POST", "/v1/connections", map[string]any{
 			"name": p.name, "host_id": h.ID, "database": p.database,
-			"read": map[string]any{"user": p.user, "password": "pw"},
+			"credential": map[string]any{"user": p.user, "password": "pw"},
 		}, &c)
 		if c.HostID != h.ID || c.Database != p.database || c.Role != p.user {
 			t.Fatalf("connection %s registered as %+v", p.name, c)
@@ -1003,7 +1003,7 @@ func TestHostCarriesSeveralConnections(t *testing.T) {
 		t.Fatal("removed a host with connections still registered on it")
 	}
 	if resp, raw := b.do("POST", "/v1/connections", map[string]any{
-		"name": "x", "host_id": "nope", "database": "db", "read": map[string]any{"user": "u"},
+		"name": "x", "host_id": "nope", "database": "db", "credential": map[string]any{"user": "u"},
 	}); resp.StatusCode == http.StatusOK {
 		t.Fatalf("registered a connection on a host that does not exist: %s", raw)
 	}
@@ -1074,7 +1074,7 @@ func Test_DET_C26_ANewConnectionStartsWithPatterns(t *testing.T) {
 		ID string `json:"id"`
 	}
 	b.mustJSON("POST", "/v1/connections", map[string]any{
-		"name": "new", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"},
+		"name": "new", "host_id": "h1", "database": "db", "credential": map[string]any{"user": "u"},
 	}, &c)
 	var d struct {
 		Detection []types.Stage `json:"detection"`
@@ -1313,5 +1313,128 @@ func Test_SHELL_C12_ANonPositiveRetentionIsRefused(t *testing.T) {
 	b.mustJSON("GET", "/v1/settings", nil, &s)
 	if s.LogRetentionDays != 30 {
 		t.Errorf("stored retention = %d, want 30 unchanged", s.LogRetentionDays)
+	}
+}
+
+func Test_WRITE_C2_TheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
+	r := newRig(t)
+	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Database = "h1", "app"
+	r.vault.conns["c9"] = &types.Connection{ID: "c9", Name: "prod_rw", HostID: "h1", Database: "app", Writes: types.WritesApprove, Mode: types.ModeAssisted, Limits: types.DefaultLimits()}
+	r.vault.conns["c8"] = &types.Connection{ID: "c8", Name: "other_db", HostID: "h1", Database: "other", Writes: types.WritesApprove, Mode: types.ModeAssisted, Limits: types.DefaultLimits()}
+	r.pipe.err = &types.Error{Code: types.CodeWritesOff, Summary: "writes are off for this profile"}
+	a := r.agent("fix a status")
+	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "UPDATE orders SET status = 'x'"})
+	if resp.StatusCode == http.StatusOK && !strings.Contains(string(raw), "writes_off") {
+		t.Fatalf("not refused: %s", raw)
+	}
+	if !strings.Contains(string(raw), "prod_rw") || strings.Contains(string(raw), "other_db") {
+		t.Errorf("refusal should name prod_rw (same host and database) and not other_db: %s", raw)
+	}
+	var queue []any
+	r.socket().mustJSON("GET", "/v1/approvals", nil, &queue)
+	if len(queue) != 0 {
+		t.Errorf("a refused write is waiting in the Inbox: %v", queue)
+	}
+}
+
+func Test_WRITE_C3_AgentsSeeProfileDetailsButNeverAPassword(t *testing.T) {
+	r := newRig(t)
+	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Writes = "h1", types.WritesApprove
+	r.vault.terms["c1"] = ports.Terms{}
+	a := r.agent("look around")
+	var conns []struct {
+		Name     string `json:"name"`
+		Host     string `json:"host"`
+		Address  string `json:"address"`
+		Port     int    `json:"port"`
+		Database string `json:"database"`
+		Username string `json:"username"`
+		Writes   string `json:"writes"`
+	}
+	a.mustJSON("GET", "/v1/connections", nil, &conns)
+	if len(conns) != 1 {
+		t.Fatalf("connections = %+v", conns)
+	}
+	c := conns[0]
+	if c.Host != "db1" || c.Address != "h" || c.Port != 5432 || c.Database != "app" || c.Username != "app_ro" || c.Writes != "approve" {
+		t.Errorf("profile = %+v, want host db1 at h:5432, database app, username app_ro, writes approve", c)
+	}
+	for _, path := range []string{"/v1/connections", "/v1/connections/c1"} {
+		_, raw := a.do("GET", path, nil)
+		if strings.Contains(strings.ToLower(string(raw)), "password") {
+			t.Errorf("%s mentions a password: %s", path, raw)
+		}
+	}
+}
+
+func Test_WRITE_C6_PreviewedValuesReachOnlyTheApprover(t *testing.T) {
+	const secret = "ada@secret.example"
+	r := escalatingRig(t)
+	r.pipe.facts.StatementType = "UPDATE"
+	r.pipe.preview = &types.WritePreview{
+		Operation: "UPDATE", RowCount: 1, PreviewedAt: time.Now(),
+		Changes: &types.WriteChanges{Columns: []string{"email"}, Rows: []types.ChangedRow{{Old: []string{"old@x"}, New: []string{secret}}}},
+	}
+	a := r.agent("fix an address")
+	cli := r.socket()
+
+	_, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "UPDATE users SET email = 'x'"})
+	var tk types.Ticket
+	if err := json.Unmarshal(raw, &tk); err != nil || tk.ID == "" {
+		t.Fatalf("no ticket: %s", raw)
+	}
+	_, approvals := cli.do("GET", "/v1/approvals", nil)
+	if !strings.Contains(string(approvals), secret) {
+		t.Fatalf("the approver does not see the changed value: %s", approvals)
+	}
+	cli.mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "approve", "actor": "ming"}, nil)
+	_, result := a.do("GET", "/v1/tickets/"+tk.ID+"?wait_ms=2000", nil)
+
+	logged, _ := json.Marshal(r.alog.records)
+	for name, body := range map[string][]byte{"query response": raw, "ticket result": result, "activity log": logged} {
+		if strings.Contains(string(body), secret) || strings.Contains(string(body), "old@x") {
+			t.Errorf("the %s carries a previewed value: %s", name, body)
+		}
+	}
+}
+
+func Test_WRITE_C9_AnAgentCancelsItsOwnPendingRequest(t *testing.T) {
+	r := escalatingRig(t)
+	a := r.agent("look at last week's orders")
+	var tk types.Ticket
+	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
+
+	var got struct {
+		State string `json:"state"`
+	}
+	a.mustJSON("POST", "/v1/tickets/"+tk.ID+"/cancel", nil, &got)
+	if got.State != string(types.TicketCancelled) {
+		t.Errorf("cancel answered %q, want cancelled", got.State)
+	}
+	if q := r.d.Approvals(); len(q) != 0 {
+		t.Errorf("a cancelled request is still in the Inbox: %+v", q)
+	}
+	var recorded bool
+	for _, rec := range r.alog.records {
+		recorded = recorded || rec.Decision == types.DecisionCancelled
+	}
+	if !recorded {
+		t.Errorf("Activity has no cancelled record: %+v", r.alog.records)
+	}
+}
+
+func Test_WRITE_C10_AnAgentCannotCancelAnotherSessionsRequest(t *testing.T) {
+	r := escalatingRig(t)
+	owner := r.agent("look at last week's orders")
+	var tk types.Ticket
+	owner.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
+
+	other := r.agent("something else")
+	resp, raw := other.do("POST", "/v1/tickets/"+tk.ID+"/cancel", nil)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("another session cancelled the request: %s", raw)
+	}
+	if q := r.d.Approvals(); len(q) != 1 {
+		t.Errorf("the request left the Inbox: %+v", q)
 	}
 }
