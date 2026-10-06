@@ -118,19 +118,19 @@ export function ConnectionPage() {
 
       <div className="flex flex-col gap-8 pt-6">
         {tab === 'overview' ? <OverviewTab detail={detail} onError={setError} /> : null}
-        {tab === 'detection' ? <DetectionEditor key={id} detail={detail} onChanged={changed} onError={setError} /> : null}
+        {tab === 'detection' ? <DetectionEditor key={id} detail={detail} onChanged={changed} /> : null}
         {tab === 'catalog' ? <CatalogTab key={id} connId={id} /> : null}
         {tab === 'limits' ? (
           <>
-            <ModeSelector detail={detail} onChanged={changed} onError={setError} />
+            <ModeSelector detail={detail} onChanged={changed} />
             <Separator />
-            <WritesSelector detail={detail} onChanged={changed} onError={setError} />
+            <WritesSelector detail={detail} onChanged={changed} />
             <Separator />
-            <TokensSetting detail={detail} onChanged={changed} onError={setError} />
+            <TokensSetting detail={detail} onChanged={changed} />
             <Separator />
-            <LimitsForm detail={detail} onChanged={changed} onError={setError} />
+            <LimitsForm detail={detail} onChanged={changed} />
             <Separator />
-            <DenylistEditor detail={detail} onChanged={changed} onError={setError} />
+            <DenylistEditor detail={detail} onChanged={changed} />
           </>
         ) : null}
         {tab === 'privileges' ? <Privileges detail={detail} onChanged={reload} onError={setError} /> : null}

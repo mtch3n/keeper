@@ -6,11 +6,13 @@ import { KeeperMark } from '@/components/wrappers/KeeperMark'
 export function Brand({ className }: { className?: string }) {
   return (
     <Link
-      to="/connections"
+      to="/inbox"
+      aria-label="keeper"
       className={cn('flex items-center gap-2 text-sm font-semibold text-foreground', className)}
     >
       <KeeperMark />
-      keeper
+      {/* On a phone the bar needs the room for its sections; the mark stays. */}
+      <span className="max-sm:hidden">keeper</span>
     </Link>
   )
 }
