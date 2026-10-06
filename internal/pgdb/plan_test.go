@@ -2,6 +2,7 @@ package pgdb
 
 import (
 	"encoding/json/v2"
+	"slices"
 	"strings"
 	"testing"
 
@@ -212,5 +213,16 @@ func TestEffectiveMaxRowsRespectsTheOperatorCeiling(t *testing.T) {
 		if got != c.want {
 			t.Errorf("effectiveMaxRows(%d, ceiling %d) = %d, want %d", c.requested, c.ceiling, got, c.want)
 		}
+	}
+}
+
+// A filter column is read from the plan's conditions by the alias VERBOSE
+// qualifies it with. A literal that looks like a name, and a schema-qualified
+// function, are not columns.
+func TestQualifiedNamesReadsColumnsNotLiteralsOrFunctions(t *testing.T) {
+	got := qualifiedNames(`((u.ssn = '123'::text) AND (lower(u."E mail") = 'users.ssn'::text) AND (pg_catalog.lower(o.status) = u.status))`)
+	want := [][2]string{{"u", "ssn"}, {"u", "E mail"}, {"o", "status"}, {"u", "status"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("qualifiedNames = %v, want %v", got, want)
 	}
 }

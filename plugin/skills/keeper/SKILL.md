@@ -28,6 +28,14 @@ beside the SQL and decides on that; "reconcile duplicate accounts OPS-441" gets
 approved and "" does not. Keep credentials and personal data out of it: keeper
 screens the text and rejects it if it finds any.
 
+## Pick the profile yourself
+
+`list_connections` shows every profile: its name, host, address and port,
+database, username, and whether it allows writes. Each profile is one login. When
+the user names one — "use orders_rw on prod-db" — find it there and send the
+statement on it. keeper never switches profiles for you, and never shows you a
+password.
+
 ## The shape of a query
 
 ```
@@ -64,6 +72,17 @@ you do not, roll the 25-second waits.
 A human may take minutes. That is normal and it is the design: keeper escalates
 only where a person can actually change the outcome.
 
+If you no longer need the statement, withdraw it with `cancel(ticket)` rather
+than leaving it in the human's Inbox. It is recorded as cancelled.
+
+## Writes
+
+A write runs only on a profile that allows writes, and every write waits for a
+human, who sees the rows it will change before deciding. On a read-only profile
+it is refused at once with `writes_off`, and the refusal names the profiles on
+the same database that allow writes. Resubmit on one of those only if the user
+meant that login; do not pick one to get past the refusal.
+
 ## Reading what came back
 
 `transforms` tells you what you are allowed to conclude. Read it; do not assume
@@ -86,8 +105,8 @@ there is an SSN there, not that the row lacks one, and a summary that says
 count over a masked column is still a real count — masking changes what you can
 read, not what is there.
 
-If `transforms` says `basis: "sampled"`, the detection layer looked at a sample
-rather than every row. Say so if it matters to the conclusion.
+If `transforms` says `basis: "unexamined"`, no detection ran over that free
+text and it was redacted whole. Say so if it matters to the conclusion.
 
 ## Querying by a value you cannot see
 
@@ -142,6 +161,7 @@ and one ungranted one still stops.
 | `denylisted` | that relation is off-limits on this connection. No approval overrides it; ask the user to change the list if they meant to allow it |
 | `permission_denied` | the database refused. The message names the columns you *may* read — use them |
 | `ddl_refused` | keeper does not run DDL, at any tier. Schema changes belong to the project's migration tooling |
+| `writes_off` | this profile is read-only. The refusal names profiles on the same database that allow writes; use one only if the user meant it |
 
 Errors never carry the database's own message. keeper composes them, because
 PostgreSQL puts the offending value into its error text and that is an egress

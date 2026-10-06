@@ -13,9 +13,12 @@
 package pipeline
 
 import (
+	"cmp"
 	"context"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"uuid"
 
@@ -29,8 +32,7 @@ import (
 // internal/daemon satisfies it. It is declared here because it is consumed here.
 type Authority interface {
 	// Connection returns the registered connection. Mode, Limits, Denylist and
-	// WriteScope all come from it, so R4.5's denylist and R4.2b's write scope
-	// have exactly one source and cannot drift apart.
+	// the writes setting all come from it, so each has exactly one source.
 	Connection(ctx context.Context, connID string) (*types.Connection, error)
 
 	// Grant returns the live grant covering exactly path, or false. SPEC R9.3c:
@@ -279,7 +281,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	// A statement is a write because the plan says so, not because the agent
 	// said so.
 	if plan.Writes {
-		if dec := p.checkWrite(st, conn, plan); dec != nil {
+		if dec := p.checkWrite(st, conn); dec != nil {
 			return dec
 		}
 	}
@@ -345,6 +347,14 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		return refuse(st, st.tier, asKeeperError(err))
 	}
 
+	var cut types.Cut
+	if raw.Truncated {
+		cut = types.CutByRows
+	}
+	if kept := withinBytes(rows, conn.Limits.MaxBytes); kept < len(rows) {
+		rows, cut = rows[:kept], types.CutBySize
+	}
+
 	st.rowCount = len(rows)
 	st.outputColumns = cols
 
@@ -352,7 +362,8 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		Rows:          rows,
 		Columns:       cols,
 		RowCount:      len(rows),
-		Truncated:     raw.Truncated,
+		Truncated:     cut != "",
+		TruncatedBy:   cut,
 		Transforms:    st.transforms,
 		Tier:          st.tier,
 		AuditID:       st.auditID,
@@ -369,34 +380,17 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	return &Decision{Result: result}
 }
 
-// checkWrite is R4.2a–f. It returns a Decision when the write is refused.
-func (p *Pipeline) checkWrite(st *state, conn *types.Connection, plan *ports.PlanFacts) *Decision {
+// checkWrite is R4.2a–f. It returns a Decision when the write is refused. A
+// write is bounded by the profile's writes setting, its approval and the
+// database's own grants; keeper never runs it as another profile.
+func (p *Pipeline) checkWrite(st *state, conn *types.Connection) *Decision {
 	st.reason(ReasonWrite)
 
-	if !conn.HasWriteCredential {
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeNoWriteCredential,
-			"this connection has no write credential, so it cannot modify data",
-			"ask an operator to register a write credential for this connection"))
-	}
-
-	// internal/pgdb puts the plan's ModifyTable target first and refuses a plan
-	// with more than one, so index 0 is the relation R4.2b names.
-	if len(plan.RelationNames) == 0 {
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeOutOfWriteScope,
-			"keeper could not identify the relation this statement writes",
-			"rewrite the statement so it names one relation to modify"))
-	}
-	target := plan.RelationNames[0]
-	op := types.WriteOp(plan.StatementType)
-
-	if !inWriteScope(conn.WriteScope, target, op) {
-		// Refused before G3 would refuse it, so the agent receives a keeper code
-		// naming the relation rather than a sanitised permission error it cannot
-		// act on (SPEC R4.2b, the trap R5.5 describes).
-		st.reason(ReasonOutOfScope)
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeOutOfWriteScope,
-			string(op)+" on "+target.String()+" is outside the scope recorded for this connection's write credential",
-			"ask an operator to re-audit the connection if the credential's privileges changed"))
+	if conn.Writes != types.WritesApprove {
+		st.reason(ReasonWritesOff)
+		return refuse(st, types.Tier4Refuse, keeperError(types.CodeWritesOff,
+			"writes are off for this profile, so its sessions are read-only",
+			"use a profile on this database that allows writes, or ask an operator to allow them on this one"))
 	}
 
 	// R4.2f: no mode and no allow rule authorizes a write. Tier 3, always.
@@ -406,17 +400,9 @@ func (p *Pipeline) checkWrite(st *state, conn *types.Connection, plan *ports.Pla
 
 // escalate produces the approval facts, and for a write the preview of R4.2d.
 func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decision {
-	facts := types.ApprovalFacts{
-		Intent:        req.Session.Intent,
-		StatementType: st.plan.StatementType,
-		Relations:     st.plan.RelationNames,
-		EstimatedRows: st.plan.EstimatedRows,
-		EstimatedCost: st.plan.EstimatedCost,
-		Egress:        egressSummary(st.cols),
-		Reasons:       st.reasons,
-	}
-	esc := &Escalation{Facts: facts, SQL: req.SQL}
+	esc := &Escalation{SQL: req.SQL}
 	st.outputColumns = publicColumns(st.cols)
+	facts := p.approvalFacts(req, st, false)
 
 	if st.plan.Writes {
 		// R4.2d step 1: the statement runs and the transaction rolls back. The
@@ -443,9 +429,15 @@ func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decisi
 			PreviewedAt: p.now(),
 			Scope:       st.plan.RelationNames,
 			Returning:   st.transforms,
+			// The changed rows are for the approver alone. They are not output
+			// in §8's sense: nothing here passes them to G7, the audit record or
+			// the agent.
+			Changes: shownChanges(raw.Changes, raw.CommandTag),
 		}
+		facts.Protection = protection(st.conn, true)
 	}
 
+	esc.Facts = facts
 	return &Decision{Escalation: esc, Error: keeperError(types.CodeApprovalRequired,
 		"this statement needs a human decision before it runs",
 		"a keeper approval is waiting; poll the ticket for the outcome")}
@@ -524,9 +516,9 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 	if plan.Writes {
 		st.reason(ReasonWrite)
 		st.raise(types.Tier3Approve)
-		if len(plan.RelationNames) > 0 && !inWriteScope(conn.WriteScope, plan.RelationNames[0], types.WriteOp(plan.StatementType)) {
+		if conn.Writes != types.WritesApprove {
 			st.tier = types.Tier4Refuse
-			st.reason(ReasonOutOfScope)
+			st.reason(ReasonWritesOff)
 		}
 	}
 
@@ -616,3 +608,135 @@ func asKeeperError(err error) *types.Error {
 }
 
 func newAuditID() string { return uuid.NewV7().String() }
+
+// shownChanges keeps the first types.PreviewRows changed rows and counts the
+// rest of the affected rows as omitted.
+func shownChanges(c *types.WriteChanges, affected int64) *types.WriteChanges {
+	if c == nil {
+		return nil
+	}
+	out := &types.WriteChanges{Columns: c.Columns, Rows: c.Rows[:min(len(c.Rows), types.PreviewRows)]}
+	out.Omitted = max(affected-int64(len(out.Rows)), 0)
+	return out
+}
+
+// Facts is §9.2's approval payload for a statement, from the dry run: nothing is
+// read and no write is previewed. Like Explain, it is audited.
+func (p *Pipeline) Facts(ctx context.Context, req Request) (*types.ApprovalFacts, *types.Error, error) {
+	st := &state{auditID: newAuditID(), started: p.now(), transforms: map[string]types.Transform{}}
+	_, ke := p.explain(ctx, req, st)
+	if ke != nil {
+		ke.AuditID = st.auditID
+		st.errCode = ke.Code
+	}
+	if err := p.writeAudit(ctx, req, st); err != nil {
+		return nil, nil, err
+	}
+	if ke != nil {
+		return nil, ke, nil
+	}
+	f := p.approvalFacts(req, st, false)
+	return &f, nil, nil
+}
+
+// approvalFacts describes the statement st planned. previewed is set once a
+// write's preview ran, which the server only allows a role that can write.
+func (p *Pipeline) approvalFacts(req Request, st *state, previewed bool) types.ApprovalFacts {
+	f := types.ApprovalFacts{
+		Intent:     req.Session.Intent,
+		Egress:     egressSummary(st.cols),
+		Reasons:    st.reasons,
+		Protection: protection(st.conn, previewed),
+	}
+	if st.plan != nil {
+		f.StatementType = st.plan.StatementType
+		f.Relations = st.plan.RelationNames
+		f.EstimatedRows = st.plan.EstimatedRows
+		f.EstimatedCost = st.plan.EstimatedCost
+		if st.plan.Writes && len(st.plan.RelationNames) > 0 {
+			// internal/pgdb puts the one ModifyTable target first.
+			f.Targets = st.plan.RelationNames[:1]
+		}
+		if st.cat != nil {
+			f.Filters = flaggedFilters(st.cat, st.plan.Filters)
+		}
+	}
+	f.Risk, f.Unreadable = riskOf(f.StatementType)
+	for _, c := range publicColumns(st.cols) {
+		f.Columns = append(f.Columns, c.Name)
+	}
+	return f
+}
+
+// riskOf classes a statement type. MERGE can delete, so it is destructive; a
+// type keeper does not know is destructive and unreadable.
+func riskOf(stmt string) (types.Risk, bool) {
+	switch stmt {
+	case pgdb.StmtSelect:
+		return types.RiskRead, false
+	case pgdb.StmtInsert, pgdb.StmtUpdate:
+		return types.RiskWrite, false
+	case pgdb.StmtDelete, pgdb.StmtMerge:
+		return types.RiskDestructive, false
+	}
+	return types.RiskDestructive, true
+}
+
+// protection is what would stop a write on c. A role that holds a write grant
+// shows it in a read-only profile's audit; a writer's audit does not report its
+// own write grants, so there only a preview that ran can say.
+func protection(c *types.Connection, previewed bool) types.Protection {
+	pr := types.Protection{Writes: cmp.Or(c.Writes, types.WritesOff), RoleWrites: "unknown"}
+	switch {
+	case previewed:
+		pr.RoleWrites = "yes"
+	case c.AuditedAt.IsZero() || c.Writes == types.WritesApprove:
+	default:
+		pr.RoleWrites = "no"
+		for _, f := range c.Findings {
+			if f.Kind == types.FindingRelationWrite || f.ID == "rolsuper" {
+				pr.RoleWrites = "yes"
+			}
+		}
+	}
+	return pr
+}
+
+// flaggedFilters is the filter columns an approver should notice: catalogued
+// ones that are not allow, and ones with no catalog entry.
+func flaggedFilters(cat ports.Catalog, refs []ports.ColumnRef) []types.FilterColumn {
+	var out []types.FilterColumn
+	for _, r := range refs {
+		fc := types.FilterColumn{Relation: r.Relation, Column: r.Column}
+		entry, ok := cat.Lookup(r.TableOID, r.AttNum)
+		switch {
+		case !ok:
+			fc.Flag = "unclassified"
+		case entry.Policy != types.PolicyAllow:
+			fc.Flag, fc.Policy = "sensitive", entry.Policy
+		default:
+			continue
+		}
+		if !slices.Contains(out, fc) {
+			out = append(out, fc)
+		}
+	}
+	return out
+}
+
+// withinBytes is how many leading rows fit in limit bytes of row data, measured
+// as the agent receives them: after redaction, encoded as JSON.
+func withinBytes(rows [][]any, limit int) int {
+	total := 0
+	for i, row := range rows {
+		b, err := json.Marshal(row)
+		if err != nil {
+			return i
+		}
+		total += len(b) + 1
+		if total > limit {
+			return i
+		}
+	}
+	return len(rows)
+}

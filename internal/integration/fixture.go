@@ -136,6 +136,12 @@ GRANT SELECT ON orders, clean_ids TO app_cols;
 // DSNs for each role. The container is terminated through t.Cleanup.
 func New(t *testing.T) *Fixture {
 	t.Helper()
+	return NewOn(t, image)
+}
+
+// NewOn is New on another server image, for behaviour that differs by version.
+func NewOn(t *testing.T, image string) *Fixture {
+	t.Helper()
 	ctx := t.Context()
 
 	container, err := postgres.Run(ctx, image,

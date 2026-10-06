@@ -9,7 +9,6 @@ import (
 
 	"github.com/mtchen/keeper/internal/catalog"
 	"github.com/mtchen/keeper/internal/pgdb"
-	"github.com/mtchen/keeper/internal/ports"
 )
 
 // Opening a catalog introspects the database and fingerprints every relation
@@ -21,7 +20,7 @@ import (
 func TestCatalogOpensAgainstARealServer(t *testing.T) {
 	f := New(t)
 	exec, err := pgdb.New(pgdb.Config{
-		DSN: func(context.Context, string, ports.Role) (string, error) { return f.ReadDSN, nil },
+		DSN: func(context.Context, string) (string, error) { return f.ReadDSN, nil },
 	})
 	if err != nil {
 		t.Fatalf("pgdb.New: %v", err)

@@ -19,7 +19,7 @@ func status(c types.Code) int {
 	case types.CodeSyntax, types.CodeMultiStatement:
 		return http.StatusBadRequest
 	case types.CodePermissionDenied, types.CodeUnclassified, types.CodeDenylisted,
-		types.CodeDDLRefused, types.CodeOutOfWriteScope, types.CodeNoWriteCredential,
+		types.CodeDDLRefused, types.CodeWritesOff,
 		types.CodeApprovalRefused, types.CodeRowCap:
 		return http.StatusForbidden
 	case types.CodeTicketUnknown:

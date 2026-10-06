@@ -13,16 +13,25 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// ConnectionSummary is GET /v1/connections. Host, password and connection string
-// are absent by construction: §6.1 returns the fields marked exposed and nothing
-// assembles the others.
+// Profile is what an agent may know about where a connection logs in: enough to
+// find the profile a person names ("orders_rw on prod-db"), never the password,
+// which nothing outside the vault assembles.
+type Profile struct {
+	Host     string       `json:"host"`
+	Address  string       `json:"address"`
+	Port     int          `json:"port"`
+	Database string       `json:"database"`
+	Username string       `json:"username"`
+	Writes   types.Writes `json:"writes"`
+}
+
+// ConnectionSummary is GET /v1/connections.
 type ConnectionSummary struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Engine   string     `json:"engine"`
-	Database string     `json:"database"`
-	Role     string     `json:"role"`
-	Mode     types.Mode `json:"mode"`
+	ID     string     `json:"id"`
+	Name   string     `json:"name"`
+	Engine string     `json:"engine"`
+	Mode   types.Mode `json:"mode"`
+	Profile
 }
 
 // AuditedPrivileges is what G0 found on one connection, and when. It is a
@@ -55,23 +64,20 @@ type CatalogStatus struct {
 
 // ConnectionDetail is GET /v1/connections/{id}.
 type ConnectionDetail struct {
-	ID                 string                  `json:"id"`
-	Name               string                  `json:"name"`
-	Engine             string                  `json:"engine"`
-	Version            string                  `json:"version,omitzero"`
-	Database           string                  `json:"database"`
-	Schemas            []string                `json:"schemas,omitzero"`
-	Role               string                  `json:"role"`
-	AuditedPrivileges  AuditedPrivileges       `json:"audited_privileges"`
-	CatalogStatus      CatalogStatus           `json:"catalog_status"`
-	PolicySummary      map[types.Policy]int    `json:"policy_summary,omitzero"`
-	Mode               types.Mode              `json:"mode"`
-	Detection          []types.Stage           `json:"detection"`
-	Limits             types.Limits            `json:"limits"`
-	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
-	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
-	HasWriteCredential bool                    `json:"has_write_credential"`
-	Degradations       []types.Degradation     `json:"degradations,omitzero"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Engine  string `json:"engine"`
+	Version string `json:"version,omitzero"`
+	Profile
+	Schemas           []string             `json:"schemas,omitzero"`
+	AuditedPrivileges AuditedPrivileges    `json:"audited_privileges"`
+	CatalogStatus     CatalogStatus        `json:"catalog_status"`
+	PolicySummary     map[types.Policy]int `json:"policy_summary,omitzero"`
+	Mode              types.Mode           `json:"mode"`
+	Detection         []types.Stage        `json:"detection"`
+	Limits            types.Limits         `json:"limits"`
+	Denylist          []types.RelationRef  `json:"denylist,omitzero"`
+	Degradations      []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // Connections lists what is registered.
@@ -83,12 +89,25 @@ func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
 	out := make([]ConnectionSummary, 0, len(cs))
 	for _, c := range cs {
 		out = append(out, ConnectionSummary{
-			ID: c.ID, Name: c.Name, Engine: c.Engine, Database: c.Database,
-			Role: c.Role, Mode: c.Mode,
+			ID: c.ID, Name: c.Name, Engine: c.Engine, Mode: c.Mode,
+			Profile: d.profile(ctx, c),
 		})
 	}
 	slices.SortStableFunc(out, func(a, b ConnectionSummary) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
+}
+
+// profile is c's login without its password. A host the vault cannot find
+// leaves the host fields empty rather than failing the listing.
+func (d *Daemon) profile(ctx context.Context, c *types.Connection) Profile {
+	p := Profile{Database: c.Database, Username: c.Role, Writes: c.Writes}
+	if p.Writes == "" {
+		p.Writes = types.WritesOff
+	}
+	if h, err := d.deps.Vault.Host(ctx, c.HostID); err == nil && h != nil {
+		p.Host, p.Address, p.Port = h.Name, h.Address, h.Port
+	}
+	return p
 }
 
 // Describe is describe_connection. Every layer that could not be consulted is
@@ -100,15 +119,13 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 	}
 	det := &ConnectionDetail{
 		ID: c.ID, Name: c.Name, Engine: c.Engine, Version: c.Version,
-		Database: c.Database, Role: c.Role,
-		AuditedPrivileges:  AuditedPrivileges{AuditedAt: c.AuditedAt, Findings: c.Findings},
-		CatalogStatus:      CatalogStatus{Path: c.CatalogPath},
-		Mode:               c.Mode,
-		Detection:          c.Detection,
-		Limits:             c.Limits,
-		Denylist:           c.Denylist,
-		WriteScope:         c.WriteScope,
-		HasWriteCredential: c.HasWriteCredential,
+		Profile:           d.profile(ctx, c),
+		AuditedPrivileges: AuditedPrivileges{AuditedAt: c.AuditedAt, Findings: c.Findings},
+		CatalogStatus:     CatalogStatus{Path: c.CatalogPath},
+		Mode:              c.Mode,
+		Detection:         c.Detection,
+		Limits:            c.Limits,
+		Denylist:          c.Denylist,
 	}
 
 	// Every catalog layer needs the catalog open, and opening is what an
@@ -251,13 +268,13 @@ func matchRelation(name, pattern string) bool {
 // RegisterSpec is POST /v1/connections: one database and role on a host the
 // operator registered before.
 type RegisterSpec struct {
-	Name     string
-	HostID   string
-	Database string
-	Read     ports.Credential
-	// Write is nil when no _rw credential is being registered. There is no
-	// boolean that enables writes: SPEC §4.2.
-	Write       *ports.Credential
+	Name       string
+	HostID     string
+	Database   string
+	Credential ports.Credential
+	// Writes is off unless the operator allows this profile's sessions to
+	// write; every write still waits for approval.
+	Writes      types.Writes
 	CatalogPath string
 }
 
@@ -270,11 +287,12 @@ type RegisterSpec struct {
 // It stores before it audits so the audit reads its DSN from the vault, the
 // one place a DSN is assembled, exactly as a later re-audit does.
 func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connection, error) {
-	if spec.Name == "" || spec.HostID == "" || spec.Database == "" || spec.Read.User == "" {
+	if spec.Name == "" || spec.HostID == "" || spec.Database == "" || spec.Credential.User == "" {
 		return nil, errValidation("name, host, database and user", "are required")
 	}
-	if spec.Write != nil && spec.Write.User == "" {
-		return nil, errValidation("write user", "is required with a write credential")
+	writes, err := validWrites(spec.Writes)
+	if err != nil {
+		return nil, err
 	}
 	if h, err := d.deps.Vault.Host(ctx, spec.HostID); err != nil || h == nil {
 		return nil, errUnknownHost
@@ -285,13 +303,14 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 		Name:        spec.Name,
 		Engine:      "postgres",
 		Database:    spec.Database,
-		Role:        spec.Read.User,
+		Role:        spec.Credential.User,
+		Writes:      writes,
 		CatalogPath: spec.CatalogPath,
 		Mode:        types.ModeAssisted,
 		Detection:   []types.Stage{{Kind: types.KindPatterns}},
 		Limits:      types.DefaultLimits(),
 	}
-	if err := d.deps.Vault.Register(ctx, c, spec.Read, spec.Write); err != nil {
+	if err := d.deps.Vault.Register(ctx, c, spec.Credential); err != nil {
 		return nil, err
 	}
 	// An audit that cannot run is not a connection keeper refuses to hold. G0
@@ -312,32 +331,19 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 	return c, nil
 }
 
-// auditRoles runs G0 over every credential the connection holds.
-//
-// It is all-or-nothing on purpose: a half-collected report rendered beside a
-// timestamp claims a completeness it does not have, and the question the audit
-// surface answers is "what can this role do", which no partial answer answers.
+// auditRoles runs G0 over the profile's credential. A profile that allows
+// writes is audited as a writer, so its INSERT, UPDATE and DELETE grants are
+// expected rather than reported.
 func (d *Daemon) auditRoles(ctx context.Context, c *types.Connection) ([]types.Finding, error) {
-	dsn, err := d.deps.Vault.DSN(ctx, c.ID, ports.RoleRead)
+	dsn, err := d.deps.Vault.DSN(ctx, c.ID)
 	if err != nil {
 		return nil, err
 	}
-	findings, err := d.deps.Auditor.Audit(ctx, dsn, ports.RoleRead)
-	if err != nil {
-		return nil, err
+	role := ports.RoleRead
+	if c.Writes == types.WritesApprove {
+		role = ports.RoleWrite
 	}
-	if c.HasWriteCredential {
-		wdsn, err := d.deps.Vault.DSN(ctx, c.ID, ports.RoleWrite)
-		if err != nil {
-			return nil, err
-		}
-		wf, err := d.deps.Auditor.Audit(ctx, wdsn, ports.RoleWrite)
-		if err != nil {
-			return nil, err
-		}
-		findings = append(findings, wf...)
-	}
-	return findings, nil
+	return d.deps.Auditor.Audit(ctx, dsn, role)
 }
 
 // Audit re-runs G0 and replaces the stored report. R4.1e: it neither disables
@@ -388,6 +394,18 @@ type Patch struct {
 	// Detection replaces the connection's pipeline; an empty list turns
 	// detection off.
 	Detection *[]types.Stage
+	Writes    *types.Writes
+}
+
+// validWrites accepts off and approve; empty is off.
+func validWrites(w types.Writes) (types.Writes, error) {
+	switch w {
+	case "", types.WritesOff:
+		return types.WritesOff, nil
+	case types.WritesApprove:
+		return w, nil
+	}
+	return "", errValidation("writes", "must be off or approve")
 }
 
 // Update applies a patch.
@@ -402,6 +420,13 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 		}
 		c.Mode = *p.Mode
 	}
+	if p.Writes != nil {
+		w, err := validWrites(*p.Writes)
+		if err != nil {
+			return nil, err
+		}
+		c.Writes = w
+	}
 	if p.Detection != nil {
 		if err := validStages(*p.Detection); err != nil {
 			return nil, err
@@ -414,6 +439,9 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 		}
 		if p.Limits.StatementTimeout <= 0 {
 			return nil, errValidation("limits.statement_timeout", "must be positive")
+		}
+		if p.Limits.MaxBytes <= 0 {
+			return nil, errValidation("limits.max_bytes", "must be positive")
 		}
 		c.Limits = *p.Limits
 	}

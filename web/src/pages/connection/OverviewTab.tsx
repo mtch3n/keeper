@@ -42,7 +42,7 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
       <Facts>
         <Fact label="host">{host ? `${host.name} · ${host.address}:${host.port} · sslmode ${host.sslmode}` : '—'}</Fact>
         <Fact label="database">{detail.database}</Fact>
-        <Fact label="role">{detail.role}</Fact>
+        <Fact label="username">{detail.username}</Fact>
         <Fact label="mode">
           <Link to={tabPath(id, 'limits')} className={link}>
             {detail.mode}
@@ -75,7 +75,11 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
             </Link>
           )}
         </Fact>
-        <Fact label="write credential">{detail.has_write_credential ? 'present' : 'none — this connection cannot write'}</Fact>
+        <Fact label="writes">
+          <Link to={tabPath(id, 'limits')} className={link}>
+            {detail.writes === 'approve' ? 'allowed, each one approved in the Inbox' : 'off — read-only'}
+          </Link>
+        </Fact>
       </Facts>
 
       <Separator />

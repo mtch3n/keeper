@@ -11,7 +11,7 @@ const (
 	Tier1Record    Tier = 1 // runs, recorded prominently: anything was masked
 	Tier2Uncertain Tier = 2 // near a cap, or a changed view: runs in assisted, waits in strict
 	Tier3Approve   Tier = 3 // any write, or mode-dependent uncertainty
-	Tier4Refuse    Tier = 4 // denylisted, DDL, out of write scope, multi-statement
+	Tier4Refuse    Tier = 4 // denylisted, DDL, writes off, multi-statement
 )
 
 // Basis says which layer decided a transform, so the agent can tell what it may
@@ -68,12 +68,14 @@ type QueryResult struct {
 	Rows     [][]any      `json:"rows"`
 	Columns  []ColumnMeta `json:"columns"`
 	RowCount int          `json:"row_count"`
-	// Truncated reports that the operator ceiling cut the result. SPEC §4.5.
-	Truncated  bool                 `json:"truncated,omitzero"`
-	Transforms map[string]Transform `json:"transforms"`
-	Tier       Tier                 `json:"tier"`
-	AuditID    string               `json:"audit_id"`
-	Mode       Mode                 `json:"mode"`
+	// Truncated reports that an operator limit cut the result. SPEC §4.5.
+	Truncated bool `json:"truncated,omitzero"`
+	// TruncatedBy says which limit: the row ceiling or the size cap.
+	TruncatedBy Cut                  `json:"truncated_by,omitzero"`
+	Transforms  map[string]Transform `json:"transforms"`
+	Tier        Tier                 `json:"tier"`
+	AuditID     string               `json:"audit_id"`
+	Mode        Mode                 `json:"mode"`
 	// Authorization names what let this run: "tier0", "grant:<id>", "ticket:<id>",
 	// "delegation:<id>". SPEC §9.4 requires the basis to be reported.
 	Authorization string        `json:"authorization,omitzero"`
@@ -83,6 +85,14 @@ type QueryResult struct {
 	ExecutedRows  int64 `json:"executed_rows,omitzero"`
 	PreviewedRows int64 `json:"previewed_rows,omitzero"`
 }
+
+// Cut names the limit that truncated a result.
+type Cut string
+
+const (
+	CutByRows Cut = "rows"
+	CutBySize Cut = "size"
+)
 
 // ExplainResult is the dry run of SPEC §6.1: what would be masked and whether the
 // statement would escalate, without spending an approval.
@@ -102,22 +112,21 @@ type ExplainResult struct {
 type Code string
 
 const (
-	CodeSyntax            Code = "syntax"             // the agent's statement did not parse
-	CodeMultiStatement    Code = "multi_statement"    // more than one statement
-	CodePermissionDenied  Code = "permission_denied"  // G3 refused; Invariant A working
-	CodeUnclassified      Code = "unclassified"       // a column needs a catalog entry
-	CodeDenylisted        Code = "denylisted"         // SPEC R4.5
-	CodeDDLRefused        Code = "ddl_refused"        // SPEC R4.2c
-	CodeOutOfWriteScope   Code = "out_of_write_scope" // SPEC R4.2b
-	CodeNoWriteCredential Code = "no_write_credential"
-	CodeApprovalRequired  Code = "approval_required"
-	CodeApprovalRefused   Code = "approval_refused"
-	CodeTicketUnknown     Code = "ticket_unknown"
-	CodeTimeout           Code = "timeout"
-	CodeRowCap            Code = "row_cap"
-	CodeStaleToken        Code = "stale_token" // the daemon restarted; SPEC R3.4d
-	CodeUnreachable       Code = "unreachable" // keeper could not connect to the database
-	CodeInternal          Code = "internal"
+	CodeSyntax           Code = "syntax"            // the agent's statement did not parse
+	CodeMultiStatement   Code = "multi_statement"   // more than one statement
+	CodePermissionDenied Code = "permission_denied" // G3 refused; Invariant A working
+	CodeUnclassified     Code = "unclassified"      // a column needs a catalog entry
+	CodeDenylisted       Code = "denylisted"        // SPEC R4.5
+	CodeDDLRefused       Code = "ddl_refused"       // SPEC R4.2c
+	CodeWritesOff        Code = "writes_off"        // the profile's sessions are read-only
+	CodeApprovalRequired Code = "approval_required"
+	CodeApprovalRefused  Code = "approval_refused"
+	CodeTicketUnknown    Code = "ticket_unknown"
+	CodeTimeout          Code = "timeout"
+	CodeRowCap           Code = "row_cap"
+	CodeStaleToken       Code = "stale_token" // the daemon restarted; SPEC R3.4d
+	CodeUnreachable      Code = "unreachable" // keeper could not connect to the database
+	CodeInternal         Code = "internal"
 )
 
 // Error is the only error shape that reaches an agent. Every field PostgreSQL

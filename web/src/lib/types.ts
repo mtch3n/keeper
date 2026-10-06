@@ -38,15 +38,10 @@ export interface RelationRef {
   relation: string
 }
 
-type WriteOp = 'INSERT' | 'UPDATE' | 'DELETE'
-
-export interface WriteScopeEntry {
-  relation: RelationRef
-  operations: WriteOp[]
-}
-
 export interface Limits {
   max_rows_ceiling: number
+  /** bytes of row data per result */
+  max_bytes: number
   /** nanoseconds */
   statement_timeout: number
   scan_sample: number
@@ -96,20 +91,31 @@ export interface Connection {
   detection?: Stage[]
   limits: Limits
   denylist?: RelationRef[]
-  write_scope?: WriteScopeEntry[]
   findings?: Finding[]
   audited_at: string
-  has_write_credential: boolean
+  writes: Writes
+}
+
+/** A profile's write setting: off makes its sessions read-only; approve lets
+ * an agent send writes, each of which waits for a human. */
+export type Writes = 'off' | 'approve'
+
+/** Where a profile logs in and as whom. Never a password. */
+export interface Profile {
+  host: string
+  address: string
+  port: number
+  database: string
+  username: string
+  writes: Writes
 }
 
 /** The list-view shape `GET /v1/connections` returns — a narrower projection
  * than `Connection`, per CONTRACT.md §3. */
-export interface ConnectionSummary {
+export interface ConnectionSummary extends Profile {
   id: string
   name: string
   engine: string
-  database: string
-  role: string
   mode: Mode
 }
 
@@ -178,8 +184,7 @@ type Code =
   | 'unclassified'
   | 'denylisted'
   | 'ddl_refused'
-  | 'out_of_write_scope'
-  | 'no_write_credential'
+  | 'writes_off'
   | 'approval_required'
   | 'approval_refused'
   | 'ticket_unknown'
@@ -279,6 +284,30 @@ export interface ApprovalFacts {
   estimated_cost: number
   egress?: string[]
   reasons?: string[]
+  /** How much the statement can change; one keeper could not read is destructive. */
+  risk?: Risk
+  unreadable?: boolean
+  /** The relations a write changes. */
+  targets?: RelationRef[]
+  protection?: Protection
+  /** Output columns, SELECT * expanded. */
+  columns?: string[]
+  /** Sensitive or uncatalogued columns the statement filters or joins on. */
+  filters?: FilterColumn[]
+}
+
+export type Risk = 'read' | 'write' | 'destructive'
+
+export interface Protection {
+  writes: Writes
+  role_writes: 'yes' | 'no' | 'unknown'
+}
+
+export interface FilterColumn {
+  relation: RelationRef
+  column: string
+  flag: 'sensitive' | 'unclassified'
+  policy?: Policy
 }
 
 interface WritePreview {
@@ -287,6 +316,17 @@ interface WritePreview {
   previewed_at: string
   scope: RelationRef[]
   returning?: Record<string, Transform>
+  /** What the write changes, for the approver only. Absent when the server
+   * could not report rows; row_count still holds. */
+  changes?: WriteChanges
+}
+
+/** A write's changed rows, in cleartext. Never logged, never sent to an agent. */
+export interface WriteChanges {
+  columns: string[]
+  rows: { old?: string[]; new?: string[] }[]
+  /** Affected rows beyond the ones shown. */
+  omitted?: number
 }
 
 export interface ApprovalItem {

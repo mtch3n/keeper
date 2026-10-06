@@ -49,7 +49,18 @@ export function renderApp(path: string) {
 export const NEVER = '0001-01-01T00:00:00Z'
 
 export function summary(id: string, name: string) {
-  return { id, name, engine: 'postgres', database: `${name}_db`, role: `${name}_ro`, mode: 'assisted' }
+  return {
+    id,
+    name,
+    engine: 'postgres',
+    mode: 'assisted',
+    host: 'db1',
+    address: 'db1.internal',
+    port: 5432,
+    database: `${name}_db`,
+    username: `${name}_ro`,
+    writes: 'off',
+  }
 }
 
 export function detail(id: string, name: string, auditedAt: string, findings: Finding[]) {
@@ -58,8 +69,7 @@ export function detail(id: string, name: string, auditedAt: string, findings: Fi
     audited_privileges: { audited_at: auditedAt, findings },
     catalog_status: { path: '.keeper/catalog.yaml', fresh: true, freshness_known: true, unclassified: 0 },
     detection: [{ kind: 'patterns' }],
-    limits: { max_rows_ceiling: 1000, statement_timeout: 30000000000, scan_sample: 300 },
-    has_write_credential: false,
+    limits: { max_rows_ceiling: 1000, max_bytes: 1048576, statement_timeout: 30000000000, scan_sample: 300 },
   }
 }
 

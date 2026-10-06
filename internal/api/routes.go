@@ -11,6 +11,7 @@ func (s *Server) routes() {
 	s.handle("POST /v1/connections/{id}/explain", accessAgent, s.explain)
 	s.handle("POST /v1/connections/{id}/query", accessAgent, s.query)
 	s.handle("GET /v1/tickets/{id}", accessAgent, s.ticket)
+	s.handle("POST /v1/tickets/{id}/cancel", accessAgent, s.cancelTicket)
 	s.handle("POST /v1/requests", accessAgent, s.openRequest)
 	s.handle("GET /v1/requests/{id}", accessShared, s.requestState)
 

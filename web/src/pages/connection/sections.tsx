@@ -7,7 +7,6 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { Fact, Facts } from '@/components/wrappers/Facts'
 import {
   auditConnection,
   setDenylist,
@@ -17,7 +16,7 @@ import {
   type Pattern,
 } from '@/lib/api'
 import { auditedAge } from '@/lib/render'
-import type { Finding, Mode, RelationRef, Stage, StageKind } from '@/lib/types'
+import type { Finding, Mode, RelationRef, Stage, StageKind, Writes } from '@/lib/types'
 
 /**
  * What this connection's role can do beyond reading (SPEC R4.1), read where
@@ -60,7 +59,7 @@ export function Privileges({
             Privileges
           </h2>
           <span className="text-meta text-muted-foreground">
-            {detail.role} on {detail.database} · audited {auditedAge(audited.audited_at)}
+            {detail.username} on {detail.database} · audited {auditedAge(audited.audited_at)}
           </span>
         </div>
         <Button variant="outline" disabled={busy} onClick={() => void rerun()}>
@@ -124,6 +123,19 @@ const MODES: { value: Mode; title: string; consequence: string }[] = [
   },
 ]
 
+const WRITES: { value: Writes; title: string; consequence: string }[] = [
+  {
+    value: 'off',
+    title: 'Read-only',
+    consequence: 'Its sessions are read-only at the server. A write is refused at once.',
+  },
+  {
+    value: 'approve',
+    title: 'Writes with approval',
+    consequence: 'An agent may send INSERT, UPDATE and DELETE. Each waits in the Inbox showing the rows it changes.',
+  },
+]
+
 /**
  * Mode is text with a sentence of consequence under each option, never a
  * coloured pill or a slider. The two differ in who decides an uncertain read —
@@ -170,8 +182,8 @@ export function ModeSelector({
         ))}
       </RadioGroup>
       <p className="text-meta text-muted-foreground">
-        A mode never provisions a write credential and never authorizes a disclosure. Executing a query,
-        disclosing cleartext and modifying the database are three separate grants.
+        A mode never allows a write and never authorizes a disclosure. Executing a query, disclosing cleartext and
+        modifying the database are three separate grants.
       </p>
     </section>
   )
@@ -187,6 +199,7 @@ export function LimitsForm({
   onError: (e: string) => void
 }) {
   const [maxRows, setMaxRows] = useState(String(detail.limits.max_rows_ceiling))
+  const [maxKiB, setMaxKiB] = useState(String(Math.round(detail.limits.max_bytes / 1024)))
   const [timeout, setTimeoutMs] = useState(String(Math.round(detail.limits.statement_timeout / 1e6)))
   const [scanSample, setScanSample] = useState(String(detail.limits.scan_sample))
   const [busy, setBusy] = useState(false)
@@ -198,6 +211,10 @@ export function LimitsForm({
         <label className="flex flex-col gap-1">
           <span className="text-label text-muted-foreground">row ceiling</span>
           <Input value={maxRows} onChange={(e) => setMaxRows(e.target.value)} className="w-32" />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-label text-muted-foreground">size cap (KiB)</span>
+          <Input value={maxKiB} onChange={(e) => setMaxKiB(e.target.value)} className="w-32" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-label text-muted-foreground">statement timeout (ms)</span>
@@ -215,6 +232,7 @@ export function LimitsForm({
               await updateConnection(detail.id, {
                 limits: {
                   max_rows_ceiling: Number(maxRows),
+                  max_bytes: Number(maxKiB) * 1024,
                   statement_timeout: Number(timeout) * 1e6,
                   scan_sample: Number(scanSample),
                 },
@@ -232,7 +250,8 @@ export function LimitsForm({
       </div>
       <p className="text-meta text-muted-foreground">
         The row ceiling is a privacy control, not a performance one: every row returned is a row sent to a third
-        party. An agent can ask for fewer and never for more.
+        party. An agent can ask for fewer and never for more. The size cap stops one wide column from filling an
+        agent's context under the row ceiling; a result it cuts says so.
       </p>
     </section>
   )
@@ -511,47 +530,54 @@ export function DenylistEditor({
   )
 }
 
-export function WriteScope({ detail }: { detail: ConnectionDetail }) {
+/**
+ * Whether this profile's sessions may write, as text with a sentence of
+ * consequence under each option, like Mode. Allowing writes never approves
+ * one: each still waits in the Inbox.
+ */
+export function WritesSelector({
+  detail,
+  onChanged,
+  onError,
+}: {
+  detail: ConnectionDetail
+  onChanged: () => void
+  onError: (e: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-heading">Write scope</h2>
-      {!detail.has_write_credential ? (
-        <p className="text-sm">
-          No write credential. Write mode does not exist for this connection — there is no setting here that
-          creates it.
-        </p>
-      ) : detail.write_scope?.length ? (
-        <>
-          <Facts>
-            <Fact label="recorded">at registration, and re-audited on schedule</Fact>
-          </Facts>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Relation</TableHead>
-                <TableHead>Operations</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {detail.write_scope.map((w) => (
-                <TableRow key={`${w.relation.schema}.${w.relation.relation}`}>
-                  <TableCell className="text-meta">
-                    {w.relation.schema}.{w.relation.relation}
-                  </TableCell>
-                  <TableCell className="text-meta">{w.operations.join(', ')}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <p className="text-meta text-muted-foreground">
-            Read-only here: the scope is what the credential actually holds, discovered by the audit. A statement
-            writing outside it is refused before the database sees it, so the agent gets a message naming the
-            relation instead of a sanitised permission error.
-          </p>
-        </>
-      ) : (
-        <p className="text-meta text-muted-foreground">the write credential holds no recorded relations</p>
-      )}
+      <h2 className="text-heading">Writes</h2>
+      <RadioGroup
+        value={detail.writes}
+        onValueChange={async (value) => {
+          setBusy(true)
+          try {
+            await updateConnection(detail.id, { writes: value as Writes })
+            onChanged()
+          } catch (e) {
+            onError(e instanceof Error ? e.message : String(e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+        className="flex flex-col gap-4"
+      >
+        {WRITES.map((w) => (
+          <label key={w.value} className="flex gap-4">
+            <RadioGroupItem value={w.value} disabled={busy} className="mt-1" />
+            <span className="flex flex-col">
+              <span className="text-sm">{w.title}</span>
+              <span className="text-meta text-muted-foreground">{w.consequence}</span>
+            </span>
+          </label>
+        ))}
+      </RadioGroup>
+      <p className="text-meta text-muted-foreground">
+        keeper never switches profiles. A write sent on a read-only profile is refused, naming the profiles on this
+        database that allow writes, and the agent resubmits on one of them.
+      </p>
     </section>
   )
 }

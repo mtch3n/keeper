@@ -102,3 +102,13 @@ func (c *Client) GetResult(ctx context.Context, ticket string, waitMillis int) (
 	}
 	return &out, nil
 }
+
+// CancelTicket withdraws this session's own pending request: it leaves the
+// Inbox, and Activity records it cancelled.
+func (c *Client) CancelTicket(ctx context.Context, ticket string) (*TicketResult, error) {
+	var out TicketResult
+	if err := c.do(ctx, http.MethodPost, "/v1/tickets/"+url.PathEscape(ticket)+"/cancel", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
