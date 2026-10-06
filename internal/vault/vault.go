@@ -338,6 +338,35 @@ func (v *Vault) Remove(ctx context.Context, id string) error {
 	return v.persist()
 }
 
+// Settings returns the daemon-wide settings, or the defaults if none were saved.
+func (v *Vault) Settings(ctx context.Context) (types.Settings, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return types.Settings{}, errNotOpen()
+	}
+	if v.doc.Settings == nil {
+		return types.DefaultSettings(), nil
+	}
+	return *v.doc.Settings, nil
+}
+
+// SetSettings replaces the daemon-wide settings.
+func (v *Vault) SetSettings(ctx context.Context, s types.Settings) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return errNotOpen()
+	}
+	prev := v.doc.Settings
+	v.doc.Settings = &s
+	if err := v.persist(); err != nil {
+		v.doc.Settings = prev
+		return err
+	}
+	return nil
+}
+
 // Terms returns a connection's list-pass terms.
 func (v *Vault) Terms(ctx context.Context, id string) (ports.Terms, error) {
 	v.mu.Lock()

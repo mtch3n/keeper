@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { buttonVariants } from '@/components/ui/button'
-import { getConnection, type ConnectionDetail } from '@/lib/api'
+import { getConnection, listConnections, type ConnectionDetail } from '@/lib/api'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type { ConnectionSummary } from '@/lib/types'
 import { CatalogTab } from '@/pages/connection/CatalogTab'
 import { OverviewTab } from '@/pages/connection/OverviewTab'
-import { TABS, tabPath } from '@/pages/connection/tabs'
+import { TABS, tabPath, type Tab } from '@/pages/connection/tabs'
 import {
   DenylistEditor,
   DetectionEditor,
@@ -29,6 +31,12 @@ export function ConnectionPage() {
   const [detail, setDetail] = useState<ConnectionDetail | null>(null)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [all, setAll] = useState<ConnectionSummary[]>([])
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    listConnections().then(setAll).catch(() => {})
+  }, [])
 
   const reload = useCallback(async () => {
     try {
@@ -71,11 +79,27 @@ export function ConnectionPage() {
   return (
     <div className="flex flex-col gap-6">
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
-      <div className="flex flex-col gap-1">
-        <h1 className="text-title">{detail.name}</h1>
-        <span className="text-meta text-muted-foreground">
-          {detail.role} on {detail.database}
-        </span>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-title">{detail.name}</h1>
+          <span className="text-meta text-muted-foreground">
+            {detail.role} on {detail.database}
+          </span>
+        </div>
+        {/* Switching connection keeps the tab open, so comparing one setting
+            across databases is one choice per database, not two. */}
+        <Select value={id} onValueChange={(next) => next && navigate(tabPath(next, tab as Tab))}>
+          <SelectTrigger aria-label="Connection" className="w-64">
+            <SelectValue>{(v: string) => all.find((c) => c.id === v)?.name ?? detail.name}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {all.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <nav aria-label="Connection sections" className="-mb-6 flex overflow-x-auto border-b border-border">

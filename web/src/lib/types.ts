@@ -226,6 +226,8 @@ export interface AuditRecord {
   /** nanoseconds */
   duration: number
   error_code?: Code
+  /** How an escalated statement was settled; absent when it never waited. */
+  decision?: 'approved' | 'refused' | 'expired' | 'cancelled'
 }
 
 /**

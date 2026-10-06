@@ -280,6 +280,37 @@ export function setDenylist(id: string, relations: RelationRef[]) {
   return put<Connection>(`/v1/connections/${id}/denylist`, { relations })
 }
 
+/** Every local request still waiting on a human, for the Inbox. */
+export function listRequests() {
+  return get<PendingRequest[]>('/v1/requests')
+}
+
+/** One input or authorization request waiting on a human. */
+export interface PendingRequest {
+  request_id: string
+  kind: RequestKind
+  connection_id: string
+  namespace?: string
+  purpose?: string
+  path?: PathRef
+  url: string
+  state: string
+  expires_at: string
+}
+
+/** Mirrors types.Settings: daemon-wide choices, set here and never from MCP. */
+export interface Settings {
+  log_retention_days: number
+}
+
+export function getSettings() {
+  return get<Settings>('/v1/settings')
+}
+
+export function updateSettings(body: Settings) {
+  return put<Settings>('/v1/settings', body)
+}
+
 export function listApprovals() {
   return get<ApprovalItem[]>('/v1/approvals')
 }
@@ -358,6 +389,8 @@ export interface DoctorReport {
   grants: number
   suspended_grants: number
   connections?: ConnectionHealth[]
+  /** How many days the activity log keeps a record. */
+  log_retention_days: number
   /** What was examining the data, and whether it could reach the network. */
   detector?: { name: string; version?: string; network_posture: string }
 }

@@ -162,4 +162,17 @@ type AuditRecord struct {
 	Collisions    int                  `json:"collisions,omitzero"`
 	Duration      time.Duration        `json:"duration"`
 	ErrorCode     Code                 `json:"error_code,omitzero"`
+	// Decision is how a human, or the clock, settled an escalated statement.
+	// Empty for a statement that never waited.
+	Decision Decision `json:"decision,omitzero"`
 }
+
+// Decision is how an escalated statement was settled.
+type Decision string
+
+const (
+	DecisionApproved  Decision = "approved"
+	DecisionRefused   Decision = "refused"
+	DecisionExpired   Decision = "expired"
+	DecisionCancelled Decision = "cancelled"
+)

@@ -33,6 +33,7 @@ func (s *Server) routes() {
 	s.handle("PUT /v1/connections/{id}/terms", accessHuman, s.putTerms)
 
 	s.handle("GET /v1/approvals", accessHuman, s.listApprovals)
+	s.handle("GET /v1/requests", accessHuman, s.listRequests)
 	s.handle("POST /v1/approvals/{ticket}/decide", accessHuman, s.decide)
 
 	s.handle("GET /v1/grants", accessHuman, s.listGrants)
@@ -48,6 +49,8 @@ func (s *Server) routes() {
 	s.handle("GET /v1/activity/{audit_id}", accessHuman, s.activityRecord)
 
 	s.handle("GET /v1/doctor", accessHuman, s.doctor)
+	s.handle("GET /v1/settings", accessHuman, s.getSettings)
+	s.handle("PUT /v1/settings", accessHuman, s.putSettings)
 	s.handle("POST /v1/daemon/shutdown", accessHuman, s.shutdown)
 
 	// The vault opens itself and never locks, so these two are all that is left

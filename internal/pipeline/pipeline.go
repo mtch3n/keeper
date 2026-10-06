@@ -159,6 +159,7 @@ type state struct {
 	collisions    int
 	authorization string
 	approver      string
+	decision      types.Decision
 	errCode       types.Code
 }
 
@@ -304,6 +305,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	if req.Approval != nil {
 		st.authorization = "ticket:" + req.Approval.TicketID
 		st.approver = req.Approval.Approver
+		st.decision = types.DecisionApproved
 	} else if st.authorization == "" {
 		st.authorization = "tier" + fmt.Sprint(int(st.tier))
 	}
@@ -558,6 +560,7 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		RowCount:      st.rowCount,
 		Authorization: st.authorization,
 		Approver:      st.approver,
+		Decision:      st.decision,
 		Degradations:  st.degradations,
 		Collisions:    st.collisions,
 		Duration:      p.now().Sub(st.started),

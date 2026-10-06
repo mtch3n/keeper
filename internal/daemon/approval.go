@@ -120,6 +120,9 @@ func (d *Daemon) Decide(ctx context.Context, ticketID string, dec Decision) erro
 	events := d.dequeueLocked(ticketID, "decided")
 	d.mu.Unlock()
 
+	if dec.Decide == "refuse" {
+		d.recordDecisions(ctx, events, types.DecisionRefused, dec.Actor)
+	}
 	for _, e := range events {
 		d.hub.Publish(e)
 	}
@@ -170,4 +173,42 @@ func (d *Daemon) startApproved(tk *ticket) {
 		d.results.keep(res)
 		d.setTicketStateLocked(cur, types.TicketReady, res, nil)
 	})
+}
+
+// recordDecisions writes a record for every queue item the events settle. An
+// approval is recorded when its statement runs, with the result; a refusal, an
+// expiry or a cancellation never runs, so this is its only record (SPEC §10).
+// The statement goes through the log's own normalisation, so no literal lands.
+func (d *Daemon) recordDecisions(ctx context.Context, events []Event, decision types.Decision, actor string) {
+	for _, e := range events {
+		ev, ok := e.Data.(ApprovalEvent)
+		if !ok || ev.Item == nil {
+			continue
+		}
+		it := ev.Item
+		rec := &types.AuditRecord{
+			At:            d.now(),
+			SessionID:     it.Session.ID,
+			Client:        it.Session.Client,
+			Intent:        it.Facts.Intent,
+			Connection:    it.Connection,
+			Statement:     it.SQL,
+			StatementType: it.Facts.StatementType,
+			Relations:     it.Facts.Relations,
+			Tier:          it.Tier,
+			Approver:      actor,
+			Decision:      decision,
+			ErrorCode:     decisionCode[decision],
+		}
+		// A record that cannot be written does not undo the decision: the
+		// ticket's state is already settled and the agent already told.
+		_ = d.deps.Audit.Write(ctx, rec)
+	}
+}
+
+// decisionCode is the error an agent received for a statement settled this way.
+var decisionCode = map[types.Decision]types.Code{
+	types.DecisionRefused:   types.CodeApprovalRefused,
+	types.DecisionExpired:   types.CodeApprovalRefused,
+	types.DecisionCancelled: types.CodeApprovalRefused,
 }
