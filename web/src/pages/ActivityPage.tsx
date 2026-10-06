@@ -3,17 +3,20 @@ import { ChevronRightIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Cell, type CellValue } from '@/components/wrappers/Cell'
 import { Fact, Facts } from '@/components/wrappers/Facts'
-import { getActivityRecord, listActivity } from '@/lib/api'
-import { useSessionScope } from '@/lib/session-scope'
+import { getActivityRecord, listActivity, listConnections } from '@/lib/api'
 import { age, durationMs, relationList, renderSQL } from '@/lib/render'
 import { cn } from '@/lib/utils'
-import type { ActivityDetail, AuditRecord, ColumnMeta, QueryResult, Transform } from '@/lib/types'
+import type { ActivityDetail, AuditRecord, ColumnMeta, ConnectionSummary, QueryResult, Transform } from '@/lib/types'
+
+/** The filter value meaning "no filter". */
+const ALL = 'all'
+const NO_FILTER = { session: ALL, connection: ALL, tier: ALL, decision: ALL }
 
 /** Rows per page. One more is asked for, to know whether an older page exists. */
 const PAGE = 50
@@ -42,20 +45,15 @@ export function ActivityPage() {
   const [open, setOpen] = useState<string | null>(null)
   const [details, setDetails] = useState<Record<string, ActivityDetail>>({})
   const [error, setError] = useState<string | null>(null)
-  const { sessionId } = useSessionScope()
-  const [filters, setFilters] = useState<{ session: string; connection: string; tier: string }>({
-    session: '',
-    connection: '',
-    tier: '',
-  })
+  const [filters, setFilters] = useState(NO_FILTER)
+  const [connections, setConnections] = useState<ConnectionSummary[]>([])
+  // Agents seen so far, so the filter keeps offering one after narrowing to
+  // another: a list built from the narrowed page would shrink to one entry.
+  const [agents, setAgents] = useState<Record<string, string>>({})
 
-  // Choosing an agent in the sidebar is the same act as typing its id here,
-  // so it writes the filter rather than shadowing it: the field keeps showing
-  // what the list is actually filtered by, and clearing it still clears.
   useEffect(() => {
-    setCursors([])
-    setFilters((f) => (f.session === (sessionId ?? '') ? f : { ...f, session: sessionId ?? '' }))
-  }, [sessionId])
+    listConnections().then(setConnections).catch(() => {})
+  }, [])
 
   // A cursor belongs to the filter it was taken under, so changing a filter
   // goes back to the newest page.
@@ -67,16 +65,20 @@ export function ActivityPage() {
   const before = cursors.at(-1)
   const refresh = useCallback(async () => {
     try {
-      const tier = filters.tier === '' ? undefined : Number(filters.tier)
       const page = await listActivity({
-        session: filters.session || undefined,
-        connection: filters.connection || undefined,
-        tier: Number.isFinite(tier) ? tier : undefined,
+        session: filters.session === ALL ? undefined : filters.session,
+        connection: filters.connection === ALL ? undefined : filters.connection,
+        tier: filters.tier === ALL ? undefined : Number(filters.tier),
         before,
         limit: PAGE + 1,
       })
       setHasOlder(page.length > PAGE)
       setRecords(page.slice(0, PAGE))
+      setAgents((known) => {
+        const next = { ...known }
+        for (const r of page) next[r.session_id] ??= `${r.client.name} · ${r.client.workspace ?? 'unknown workspace'}`
+        return next
+      })
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -109,17 +111,30 @@ export function ActivityPage() {
           that gets used and one that does not. */}
       <div className="flex flex-wrap items-end gap-3">
         <Filter
-          label="session"
+          label="Agent"
           value={filters.session}
           onChange={(v) => filter({ session: v })}
+          options={Object.entries(agents).map(([value, label]) => ({ value, label }))}
         />
         <Filter
-          label="connection"
+          label="Connection"
           value={filters.connection}
           onChange={(v) => filter({ connection: v })}
+          options={connections.map((c) => ({ value: c.id, label: c.name }))}
         />
-        <Filter label="tier" value={filters.tier} onChange={(v) => filter({ tier: v })} />
-        <Button variant="outline" onClick={() => filter({ session: '', connection: '', tier: '' })}>
+        <Filter
+          label="Tier"
+          value={filters.tier}
+          onChange={(v) => filter({ tier: v })}
+          options={['0', '1', '2', '3', '4'].map((t) => ({ value: t, label: `tier ${t}` }))}
+        />
+        <Filter
+          label="Decision"
+          value={filters.decision}
+          onChange={(v) => filter({ decision: v })}
+          options={['approved', 'refused', 'expired', 'cancelled'].map((d) => ({ value: d, label: d }))}
+        />
+        <Button variant="outline" onClick={() => filter(NO_FILTER)}>
           Clear
         </Button>
         <Button variant="outline" onClick={() => void refresh()}>
@@ -144,8 +159,9 @@ export function ActivityPage() {
             <TableRow>
               <TableHead className="w-8" />
               <TableHead>When</TableHead>
-              <TableHead>Session</TableHead>
+              <TableHead>Agent</TableHead>
               <TableHead>Connection</TableHead>
+              <TableHead>Decision</TableHead>
               <TableHead className="text-right">Tier</TableHead>
               <TableHead className="text-right">Rows</TableHead>
               <TableHead>Policies applied</TableHead>
@@ -153,7 +169,7 @@ export function ActivityPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {records.map((r) => (
+            {records.filter((r) => filters.decision === ALL || r.decision === filters.decision).map((r) => (
               <Fragment key={r.id}>
                 <TableRow className="cursor-pointer" aria-expanded={open === r.id} onClick={() => void toggle(r.id)}>
                   <TableCell>
@@ -164,7 +180,13 @@ export function ActivityPage() {
                   </TableCell>
                   <TableCell className="text-meta">{age(r.at)} ago</TableCell>
                   <TableCell className="text-meta">{r.client.name}</TableCell>
-                  <TableCell className="text-meta">{r.connection}</TableCell>
+                  <TableCell className="text-meta">
+                    {connections.find((c) => c.id === r.connection)?.name ??
+                      (connections.length > 0 ? 'removed connection' : r.connection)}
+                  </TableCell>
+                  <TableCell className="text-meta">
+                    {r.decision ? `${r.decision}${r.approver ? ` by ${r.approver}` : ''}` : '—'}
+                  </TableCell>
                   <TableCell className="text-right text-meta">{r.tier}</TableCell>
                   <TableCell className="text-right text-meta">{r.row_count}</TableCell>
                   <TableCell className="text-meta">{summarize(r.transforms)}</TableCell>
@@ -172,7 +194,7 @@ export function ActivityPage() {
                 </TableRow>
                 {open === r.id ? (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={8} className="p-0 whitespace-normal">
+                    <TableCell colSpan={9} className="p-0 whitespace-normal">
                       {details[r.id] ? (
                         <RecordDetail record={details[r.id]} />
                       ) : (
@@ -211,11 +233,34 @@ export function ActivityPage() {
   )
 }
 
-function Filter({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+/** One labelled filter: a list of known values, never a field for an id. */
+function Filter({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+}) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-label text-muted-foreground">{label}</span>
-      <Input value={value} onChange={(e) => onChange(e.target.value)} className="w-48" />
+      <span className="text-label text-muted-foreground">{label.toLowerCase()}</span>
+      <Select value={value} onValueChange={(v) => onChange(v ?? ALL)}>
+        <SelectTrigger aria-label={label} className="w-48">
+          <SelectValue>{(v: string) => (v === ALL ? 'all' : (options.find((o) => o.value === v)?.label ?? v))}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL}>all</SelectItem>
+          {options.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </label>
   )
 }

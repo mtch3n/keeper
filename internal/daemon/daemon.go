@@ -242,7 +242,7 @@ func (d *Daemon) sweep() {
 
 func (d *Daemon) expire() {
 	now := d.now()
-	var events []Event
+	var events, expired []Event
 	d.mu.Lock()
 	for id, tk := range d.tickets {
 		if tk.t.State.Terminal() {
@@ -253,7 +253,7 @@ func (d *Daemon) expire() {
 		}
 		if now.Sub(tk.t.CreatedAt) > d.cfg.TicketTTL {
 			d.setTicketStateLocked(tk, types.TicketExpired, nil, nil)
-			events = append(events, d.dequeueLocked(id, "expired")...)
+			expired = append(expired, d.dequeueLocked(id, "expired")...)
 		}
 	}
 	for id, r := range d.requests {
@@ -276,7 +276,8 @@ func (d *Daemon) expire() {
 		}
 	}
 	d.mu.Unlock()
-	for _, e := range events {
+	d.recordDecisions(context.Background(), expired, types.DecisionExpired, "")
+	for _, e := range append(events, expired...) {
 		d.hub.Publish(e)
 	}
 }

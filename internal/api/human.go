@@ -327,3 +327,19 @@ func (s *Server) removeConnection(ctx context.Context, _ *reqInfo, _ http.Respon
 	}
 	return map[string]string{"state": "removed"}, nil
 }
+
+func (s *Server) getSettings(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
+	return s.d.Settings(ctx)
+}
+
+func (s *Server) putSettings(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
+	var req types.Settings
+	if err := s.readJSON(w, r, &req); err != nil {
+		return nil, err
+	}
+	return s.d.UpdateSettings(ctx, req)
+}
+
+func (s *Server) listRequests(_ context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
+	return s.d.PendingRequests(), nil
+}

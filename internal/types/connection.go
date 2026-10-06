@@ -169,3 +169,13 @@ type Connection struct {
 	// write mode does not exist; there is no boolean that enables it. SPEC §4.2.
 	HasWriteCredential bool `json:"has_write_credential"`
 }
+
+// Settings are the daemon-wide choices an operator makes in Settings. They live
+// in the vault beside the connections and are unreachable from MCP.
+type Settings struct {
+	// LogRetentionDays is how long the activity log keeps a record.
+	LogRetentionDays int `json:"log_retention_days"`
+}
+
+// DefaultSettings are a fresh vault's settings.
+func DefaultSettings() Settings { return Settings{LogRetentionDays: 30} }

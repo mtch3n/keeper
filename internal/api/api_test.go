@@ -1261,3 +1261,57 @@ func Test_HLT_C4_AProbeThatOutlastsDoctorIsUnknown(t *testing.T) {
 		t.Errorf("slow row = %+v, want unknown with no count", row)
 	}
 }
+
+// decisionRecord is the part of an activity record a decision test reads.
+type decisionRecord struct {
+	At         time.Time      `json:"at"`
+	Connection string         `json:"connection"`
+	Approver   string         `json:"approver"`
+	Decision   types.Decision `json:"decision"`
+}
+
+func Test_SHELL_C7_ARefusalIsRecordedWithWhoDecided(t *testing.T) {
+	r := escalatingRig(t)
+	a := r.agent("reconcile OPS-441")
+	var tk types.Ticket
+	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
+	r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "refuse", "actor": "ming"}, nil)
+	var records []decisionRecord
+	r.browser().mustJSON("GET", "/v1/activity", nil, &records)
+	if !slices.ContainsFunc(records, func(rec decisionRecord) bool {
+		return rec.Decision == types.DecisionRefused && rec.Approver == "ming" && rec.Connection == "c1" && !rec.At.IsZero()
+	}) {
+		t.Errorf("records = %+v, want a refused record decided by ming", records)
+	}
+}
+
+func Test_SHELL_C11_RetentionIsSavedAndReported(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+	b.mustJSON("PUT", "/v1/settings", map[string]any{"log_retention_days": 14}, nil)
+	var rep struct {
+		LogRetentionDays int `json:"log_retention_days"`
+	}
+	b.mustJSON("GET", "/v1/doctor", nil, &rep)
+	if rep.LogRetentionDays != 14 {
+		t.Errorf("doctor reports %d days, want 14", rep.LogRetentionDays)
+	}
+}
+
+func Test_SHELL_C12_ANonPositiveRetentionIsRefused(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+	b.mustJSON("PUT", "/v1/settings", map[string]any{"log_retention_days": 30}, nil)
+	for _, days := range []int{0, -3} {
+		if resp, raw := b.do("PUT", "/v1/settings", map[string]any{"log_retention_days": days}); resp.StatusCode == http.StatusOK {
+			t.Errorf("%d days was accepted: %s", days, raw)
+		}
+	}
+	var s struct {
+		LogRetentionDays int `json:"log_retention_days"`
+	}
+	b.mustJSON("GET", "/v1/settings", nil, &s)
+	if s.LogRetentionDays != 30 {
+		t.Errorf("stored retention = %d, want 30 unchanged", s.LogRetentionDays)
+	}
+}
