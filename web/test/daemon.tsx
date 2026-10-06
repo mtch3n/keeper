@@ -69,6 +69,7 @@ export function detail(id: string, name: string, auditedAt: string, findings: Fi
     audited_privileges: { audited_at: auditedAt, findings },
     catalog_status: { path: '.keeper/catalog.yaml', fresh: true, freshness_known: true, unclassified: 0 },
     detection: [{ kind: 'patterns' }],
+    persistent_tokens: false,
     limits: { max_rows_ceiling: 1000, max_bytes: 1048576, statement_timeout: 30000000000, scan_sample: 300 },
   }
 }

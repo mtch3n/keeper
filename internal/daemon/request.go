@@ -264,7 +264,7 @@ func (d *Daemon) AnswerInput(ctx context.Context, id, connectionID, namespace, v
 	sessionID, connID, ns := r.r.SessionID, r.r.ConnectionID, r.r.Namespace
 	d.mu.Unlock()
 
-	token, err := d.deps.Redactor.Mint(ctx, sessionID, connID, ns, value)
+	token, err := d.deps.Redactor.Mint(ctx, sessionID, connID, ns, value, d.persistentTokens(ctx, sessionID, connID))
 	if err != nil {
 		return err
 	}
@@ -417,4 +417,17 @@ func (d *Daemon) PendingRequests() []types.LocalRequest {
 	}
 	slices.SortFunc(out, func(a, b types.LocalRequest) int { return strings.Compare(a.ID, b.ID) })
 	return out
+}
+
+// persistentTokens reports whether a session's tokens on a connection persist:
+// its agent declared persistent and the connection allows it.
+func (d *Daemon) persistentTokens(ctx context.Context, sessionID, connID string) bool {
+	d.mu.Lock()
+	s := d.sessions[sessionID]
+	d.mu.Unlock()
+	if s == nil || s.Info().TokenScope != types.ScopePersistent {
+		return false
+	}
+	c, err := d.deps.Vault.Connection(ctx, connID)
+	return err == nil && c != nil && c.PersistentTokens
 }

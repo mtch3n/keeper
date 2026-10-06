@@ -994,3 +994,27 @@ func Test_WRITE_C14_ARowLargerThanTheCapLeavesNoRows(t *testing.T) {
 		t.Errorf("rows = %d, truncated %v by %q; want none, cut by size", len(dec.Result.Rows), dec.Result.Truncated, dec.Result.TruncatedBy)
 	}
 }
+
+func Test_TOKEN_C7_PersistentScopeOnAConnectionThatForbidsItGetsSessionTokens(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		h := newHarness(t, func(h *harness) {
+			h.authority.conn.PersistentTokens = allow
+			h.exec.cols = []types.ColumnMeta{fromColumn("email", "text", usersOID, 2)}
+			h.exec.rows = [][]any{{"jane@example.com"}}
+			h.exec.plan = readPlan(1, usersRef)
+		})
+		sess := testSession()
+		sess.TokenScope = types.ScopePersistent
+		dec := h.query(t, Request{SQL: "SELECT email FROM users", Session: sess})
+		if dec.Result == nil {
+			t.Fatalf("no result: %v", dec.Error)
+		}
+		if got := h.redactor.statements[len(h.redactor.statements)-1].Persistent; got != allow {
+			t.Errorf("allow=%v: tokens persistent = %v", allow, got)
+		}
+		said := slices.ContainsFunc(dec.Result.Degradations, func(d types.Degradation) bool { return d.Layer == "token" })
+		if said == allow {
+			t.Errorf("allow=%v: the response says tokens are session tokens: %v (degradations %v)", allow, said, dec.Result.Degradations)
+		}
+	}
+}

@@ -124,7 +124,7 @@ func TestSessionHeaderCarried(t *testing.T) {
 	}
 	defer c.Close()
 
-	if err := c.SetSessionIntent(t.Context(), "reconciliation OPS-441"); err != nil {
+	if err := c.SetSessionIntent(t.Context(), "reconciliation OPS-441", ""); err != nil {
 		t.Fatalf("SetSessionIntent: %v", err)
 	}
 	if gotHeader != "sess-1" {

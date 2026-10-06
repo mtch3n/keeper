@@ -76,7 +76,7 @@ Usage:
       passwords are prompted for, or read one per line from stdin
   keeper connection ls
   keeper connection show <name>
-  keeper connection set <name> [--mode ...] [--detection kind[:entity+entity][@raw],...|off] [--writes off|approve] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]
+  keeper connection set <name> [--mode ...] [--detection kind[:entity+entity][@raw],...|off] [--writes off|approve] [--persistent-tokens on|off] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]
   keeper connection terms <name> [--deny T]... [--allow T]... [--regex label=expr]...
   keeper connection denylist <name> [--add schema.table] [--remove schema.table] [--list]
   keeper connection rm <name>

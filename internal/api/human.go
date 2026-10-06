@@ -89,10 +89,11 @@ func defaultVia(sf surface) string {
 }
 
 type patchRequest struct {
-	Mode      *types.Mode    `json:"mode,omitzero"`
-	Limits    *types.Limits  `json:"limits,omitzero"`
-	Detection *[]types.Stage `json:"detection,omitzero"`
-	Writes    *types.Writes  `json:"writes,omitzero"`
+	Mode             *types.Mode    `json:"mode,omitzero"`
+	Limits           *types.Limits  `json:"limits,omitzero"`
+	Detection        *[]types.Stage `json:"detection,omitzero"`
+	Writes           *types.Writes  `json:"writes,omitzero"`
+	PersistentTokens *bool          `json:"persistent_tokens,omitzero"`
 }
 
 func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
@@ -100,7 +101,7 @@ func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.Respons
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Mode: req.Mode, Limits: req.Limits, Detection: req.Detection, Writes: req.Writes})
+	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Mode: req.Mode, Limits: req.Limits, Detection: req.Detection, Writes: req.Writes, PersistentTokens: req.PersistentTokens})
 }
 
 type termsRequest struct {
