@@ -17,14 +17,12 @@ type credentialRequest struct {
 }
 
 type registerRequest struct {
-	Name     string            `json:"name"`
-	HostID   string            `json:"host_id"`
-	Database string            `json:"database"`
-	Read     credentialRequest `json:"read"`
-	// Write is the separate _rw credential. There is no boolean that enables
-	// writes; if this is absent, write mode does not exist (§4.2).
-	Write       *credentialRequest `json:"write,omitzero"`
-	CatalogPath string             `json:"catalog_path,omitzero"`
+	Name        string            `json:"name"`
+	HostID      string            `json:"host_id"`
+	Database    string            `json:"database"`
+	Credential  credentialRequest `json:"credential"`
+	Writes      types.Writes      `json:"writes,omitzero"`
+	CatalogPath string            `json:"catalog_path,omitzero"`
 }
 
 // registerConnection stores the connection and reports what G0 found about its
@@ -37,12 +35,9 @@ func (s *Server) registerConnection(ctx context.Context, _ *reqInfo, w http.Resp
 	}
 	spec := daemon.RegisterSpec{
 		Name: req.Name, HostID: req.HostID, Database: req.Database,
-		Read:        ports.Credential(req.Read),
+		Credential:  ports.Credential(req.Credential),
+		Writes:      req.Writes,
 		CatalogPath: req.CatalogPath,
-	}
-	if req.Write != nil {
-		w := ports.Credential(*req.Write)
-		spec.Write = &w
 	}
 	return s.d.Register(ctx, spec)
 }
@@ -97,6 +92,7 @@ type patchRequest struct {
 	Mode      *types.Mode    `json:"mode,omitzero"`
 	Limits    *types.Limits  `json:"limits,omitzero"`
 	Detection *[]types.Stage `json:"detection,omitzero"`
+	Writes    *types.Writes  `json:"writes,omitzero"`
 }
 
 func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
@@ -104,7 +100,7 @@ func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.Respons
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Mode: req.Mode, Limits: req.Limits, Detection: req.Detection})
+	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Mode: req.Mode, Limits: req.Limits, Detection: req.Detection, Writes: req.Writes})
 }
 
 type termsRequest struct {

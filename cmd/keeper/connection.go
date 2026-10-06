@@ -61,8 +61,8 @@ func connectionAdd(ctx context.Context, args []string) error {
 	name := fs.String("name", "", "connection name (required)")
 	host := fs.String("host", "", "name of the host it is on, from `keeper host add` (required)")
 	database := fs.String("database", "", "database name (required)")
-	user := fs.String("user", "", "read (_ro) role (required)")
-	writeUser := fs.String("write-user", "", "write (_rw) role; write mode does not exist without one (SPEC §4.2)")
+	user := fs.String("user", "", "the profile's login role (required)")
+	writes := fs.String("writes", "off", "off | approve: whether this profile's sessions may write; every write waits for approval")
 	catalogPath := fs.String("catalog", "", "catalog.yaml path (default .keeper/catalog.yaml, SPEC R5.2a)")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
@@ -77,18 +77,11 @@ func connectionAdd(ctx context.Context, args []string) error {
 	in := newSecretReader()
 	params := client.RegisterConnectionParams{
 		Name: *name, Database: *database, CatalogPath: *catalogPath,
-		Read: client.Credential{User: *user},
+		Credential: client.Credential{User: *user}, Writes: types.Writes(*writes),
 	}
 	var err error
-	if params.Read.Password, err = in.read("password for " + *user); err != nil {
+	if params.Credential.Password, err = in.read("password for " + *user); err != nil {
 		return err
-	}
-	if *writeUser != "" {
-		w := client.Credential{User: *writeUser}
-		if w.Password, err = in.read("password for " + *writeUser); err != nil {
-			return err
-		}
-		params.Write = &w
 	}
 
 	cli, err := connectDaemon(ctx)
@@ -171,9 +164,9 @@ func connectionLs(ctx context.Context, args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tENGINE\tDATABASE\tROLE\tMODE")
+	fmt.Fprintln(w, "NAME\tHOST\tADDRESS\tDATABASE\tUSERNAME\tWRITES\tMODE")
 	for _, c := range conns {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.Name, c.Engine, c.Database, c.Role, c.Mode)
+		fmt.Fprintf(w, "%s\t%s\t%s:%d\t%s\t%s\t%s\t%s\n", c.Name, c.Host, c.Address, c.Port, c.Database, c.Username, c.Writes, c.Mode)
 	}
 	return w.Flush()
 }
@@ -213,7 +206,9 @@ func connectionShow(ctx context.Context, args []string) error {
 	if len(detail.Schemas) > 0 {
 		fmt.Printf("schemas:   %s\n", strings.Join(detail.Schemas, ", "))
 	}
-	fmt.Printf("role:      %s\n", detail.Role)
+	fmt.Printf("host:      %s (%s:%d)\n", detail.Host, detail.Address, detail.Port)
+	fmt.Printf("username:  %s\n", detail.Username)
+	fmt.Printf("writes:    %s\n", detail.Writes)
 	fmt.Printf("mode:      %s\n", detail.Mode)
 	fmt.Printf("detection: %s\n", stageList(detail.Detection))
 	fmt.Printf("catalog:   %s\n", detail.CatalogStatus.Path)
@@ -236,6 +231,7 @@ func connectionSet(ctx context.Context, args []string) error {
 	timeout := fs.Duration("timeout", 0, "SET LOCAL statement_timeout for every statement")
 	scanSample := fs.Int("scan-sample", 0, "sample size catalog init examines per column")
 	detection := fs.String("detection", "", "detection stages in order, comma-separated, or off: kind[:entity+entity][@raw], kinds patterns and list")
+	writes := fs.String("writes", "", "off | approve: whether this profile's sessions may write")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -263,6 +259,7 @@ func connectionSet(ctx context.Context, args []string) error {
 		MaxRowsCeiling:   *maxRows,
 		StatementTimeout: *timeout,
 		ScanSample:       *scanSample,
+		Writes:           types.Writes(*writes),
 	}
 	if *detection != "" {
 		stages := parseStages(*detection)
@@ -275,8 +272,8 @@ func connectionSet(ctx context.Context, args []string) error {
 	if *jsonOut {
 		return printJSON(conn)
 	}
-	fmt.Printf("%q updated: mode=%s detection=%s max_rows_ceiling=%d statement_timeout=%s scan_sample=%d\n",
-		conn.Name, conn.Mode, stageList(conn.Detection), conn.Limits.MaxRowsCeiling, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
+	fmt.Printf("%q updated: mode=%s writes=%s detection=%s max_rows_ceiling=%d statement_timeout=%s scan_sample=%d\n",
+		conn.Name, conn.Mode, conn.Writes, stageList(conn.Detection), conn.Limits.MaxRowsCeiling, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
 	return nil
 }
 

@@ -32,10 +32,10 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// DSNFunc resolves a connection id and a role to a connection string.
+// DSNFunc resolves a connection id to its connection string.
 // internal/vault supplies it; internal/pgdb never reads a credential from
 // anywhere else and never stores one.
-type DSNFunc func(ctx context.Context, connID string, role ports.Role) (string, error)
+type DSNFunc func(ctx context.Context, connID string) (string, error)
 
 // Config is everything the Executor cannot discover for itself.
 type Config struct {
@@ -125,7 +125,7 @@ func (db *DB) pool(ctx context.Context, connID string, role ports.Role) (*pgxpoo
 		return p, nil
 	}
 
-	dsn, err := db.dsn(ctx, connID, role)
+	dsn, err := db.dsn(ctx, connID)
 	if err != nil {
 		return nil, convert(err)
 	}
@@ -159,12 +159,12 @@ func (db *DB) pool(ctx context.Context, connID string, role ports.Role) (*pgxpoo
 	}
 	cfg.ConnConfig.RuntimeParams["application_name"] = db.appName
 
-	// The read credential's session cannot write, whatever the account behind it
-	// is allowed to do. Every read path already runs BEGIN READ ONLY, so this
-	// changes nothing about the statements keeper means to send; what it removes
-	// is the assumption that a read DSN names a read-only role. Most of them do
-	// not — an operator registers the credential they have, and the one they
-	// have is usually the application's read-write login.
+	// A read session cannot write, whatever the account behind it is allowed to
+	// do. Every read path already runs BEGIN READ ONLY, so this changes nothing
+	// about the statements keeper means to send; what it removes is the
+	// assumption that a profile's login is a read-only role. Most are not — an
+	// operator registers the credential they have, and the one they have is
+	// usually the application's read-write login.
 	//
 	// It is set in the startup packet rather than with SET, so it survives
 	// DISCARD ALL: RESET ALL restores a parameter to its value at connection
@@ -389,21 +389,11 @@ func (db *DB) Describe(ctx context.Context, connID, sql string, params []ports.P
 }
 
 // Plan implements ports.Executor. EXPLAIN (FORMAT JSON), never ANALYZE, inside
-// the same BEGIN READ ONLY and statement_timeout as execution (SPEC R7.4a).
-//
-// The read credential plans first. PostgreSQL checks permissions at executor
-// start, and EXPLAIN without ANALYZE still reaches executor start, so planning
-// an UPDATE under a SELECT-only role is refused; the write credential is tried
-// in that case. This cannot smuggle a read through the write credential: a plan
-// with no ModifyTable node is executed by Run, which always uses the read role.
+// the same BEGIN READ ONLY and statement_timeout as execution (SPEC R7.4a). A
+// read-only transaction still plans a write: EXPLAIN without ANALYZE never
+// executes it.
 func (db *DB) Plan(ctx context.Context, connID, sql string, params []ports.Param) (*ports.PlanFacts, error) {
-	facts, err := db.planAs(ctx, connID, ports.RoleRead, sql, params)
-	if err != nil && isCode(err, types.CodePermissionDenied) {
-		if writeFacts, writeErr := db.planAs(ctx, connID, ports.RoleWrite, sql, params); writeErr == nil {
-			return writeFacts, nil
-		}
-	}
-	return facts, err
+	return db.planAs(ctx, connID, ports.RoleRead, sql, params)
 }
 
 func (db *DB) planAs(ctx context.Context, connID string, role ports.Role, sql string, params []ports.Param) (*ports.PlanFacts, error) {

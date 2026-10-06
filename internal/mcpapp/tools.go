@@ -102,11 +102,10 @@ func (h *daemonHolder) setSessionIntent(ctx context.Context, req *mcp.CallToolRe
 // name is disclosed deliberately (it is the username, not a credential) so
 // the agent can interpret a permission refusal.
 type ConnectionInfo struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Engine   string `json:"engine"`
-	Database string `json:"database"`
-	Role     string `json:"role"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Engine string `json:"engine"`
+	client.Profile
 }
 
 // ListConnectionsOut wraps the list because MCP structured content must be a
@@ -128,7 +127,7 @@ func (h *daemonHolder) listConnections(ctx context.Context, req *mcp.CallToolReq
 	}
 	out := ListConnectionsOut{Connections: make([]ConnectionInfo, len(conns))}
 	for i, c := range conns {
-		out.Connections[i] = ConnectionInfo{ID: c.ID, Name: c.Name, Engine: c.Engine, Database: c.Database, Role: c.Role}
+		out.Connections[i] = ConnectionInfo{ID: c.ID, Name: c.Name, Engine: c.Engine, Profile: c.Profile}
 	}
 	return nil, out, nil
 }

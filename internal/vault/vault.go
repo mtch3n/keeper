@@ -267,7 +267,7 @@ func (v *Vault) RemoveHost(ctx context.Context, id string) error {
 // fresh per-connection HMAC token key (version 1). Whatever the audit found
 // about the role travels with the connection as a report and enables or
 // disables nothing: SPEC R4.1, R8.3a.
-func (v *Vault) Register(ctx context.Context, c *types.Connection, read ports.Credential, write *ports.Credential) error {
+func (v *Vault) Register(ctx context.Context, c *types.Connection, cred ports.Credential) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if !v.open {
@@ -283,21 +283,15 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, read ports.Cr
 		return &ConflictError{Subject: c.ID, Reason: "a connection with this id is already registered"}
 	}
 
-	c.HasWriteCredential = write != nil
-
 	key := make([]byte, tokenKeySize)
 	if _, err := rand.Read(key); err != nil {
 		return fmt.Errorf("vault: generate token key: %w", err)
 	}
 
 	rec := connectionRecord{
-		Conn:      *c,
-		Read:      credential(read),
-		TokenKeys: []tokenKeyEntry{{Version: 1, Key: key}},
-	}
-	if write != nil {
-		w := credential(*write)
-		rec.Write = &w
+		Conn:       *c,
+		Credential: credential(cred),
+		TokenKeys:  []tokenKeyEntry{{Version: 1, Key: key}},
 	}
 	v.doc.Connections = append(v.doc.Connections, rec)
 	if err := v.persist(); err != nil {
@@ -308,7 +302,7 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, read ports.Cr
 }
 
 // Update replaces the stored connection's editable state: mode, limits,
-// denylist, write scope and findings. Findings are stored as the last audit
+// denylist, writes setting and findings. Findings are stored as the last audit
 // reported them and gate nothing; a re-audit that turns up a new privilege
 // changes what the audit report says and leaves the connection usable, which
 // is what makes the audit separable from the connection at all: SPEC R4.1.
@@ -414,11 +408,9 @@ func (v *Vault) SetTerms(ctx context.Context, id string, t ports.Terms) error {
 	return nil
 }
 
-// DSN assembles the connection string for a role from the connection's host
-// and that role's credential. There is no boolean that enables writes: an
-// absent write credential is reported as CodeNoWriteCredential, the code the
-// rest of the system already expects for this case. SPEC §4.2.
-func (v *Vault) DSN(ctx context.Context, id string, role ports.Role) (string, error) {
+// DSN assembles the connection string from the connection's host and its
+// credential.
+func (v *Vault) DSN(ctx context.Context, id string) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if !v.open {
@@ -432,23 +424,10 @@ func (v *Vault) DSN(ctx context.Context, id string, role ports.Role) (string, er
 	if !ok {
 		return "", fmt.Errorf("vault: connection %s has no host", id)
 	}
-	switch role {
-	case ports.RoleRead:
-		if rec.Read.User == "" {
-			return "", fmt.Errorf("vault: connection %s has no read credential", id)
-		}
-		return dsn(h, rec.Conn.Database, rec.Read), nil
-	case ports.RoleWrite:
-		if rec.Write == nil {
-			return "", &types.Error{
-				Code:    types.CodeNoWriteCredential,
-				Summary: "connection " + id + " has no write credential",
-			}
-		}
-		return dsn(h, rec.Conn.Database, *rec.Write), nil
-	default:
-		return "", fmt.Errorf("vault: unknown role %q", role)
+	if rec.Credential.User == "" {
+		return "", fmt.Errorf("vault: connection %s has no credential", id)
 	}
+	return dsn(h, rec.Conn.Database, rec.Credential), nil
 }
 
 // dsn is the postgres URL for one credential on a host and database. url.URL

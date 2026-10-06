@@ -93,10 +93,9 @@ func (v *fakeVault) Connection(_ context.Context, id string) (*types.Connection,
 	return c, nil
 }
 
-func (v *fakeVault) Register(_ context.Context, c *types.Connection, _ ports.Credential, write *ports.Credential) error {
+func (v *fakeVault) Register(_ context.Context, c *types.Connection, _ ports.Credential) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	c.HasWriteCredential = write != nil
 	v.conns[c.ID] = c
 	v.registered = append(v.registered, c)
 	return nil
@@ -116,7 +115,7 @@ func (v *fakeVault) Remove(_ context.Context, id string) error {
 	return nil
 }
 
-func (v *fakeVault) DSN(_ context.Context, id string, _ ports.Role) (string, error) {
+func (v *fakeVault) DSN(_ context.Context, id string) (string, error) {
 	return "postgres://" + id, nil
 }
 
