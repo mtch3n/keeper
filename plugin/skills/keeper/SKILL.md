@@ -18,12 +18,10 @@ through them lands in this conversation, gets sent to a model provider, and ends
 up in the transcript, the summary and whatever you write afterwards. That is the
 problem keeper exists to solve, and going around it re-creates it exactly.
 
-## Say what you are doing first (required)
+## Token scope, and an optional intent
 
-Call `set_session_intent` once, with a short description of the task — a ticket
-id, or the question you are answering. keeper refuses queries until you do.
-
-Say how long your tokens should live, with `token_scope`:
+`set_session_intent` is optional; queries run without it. Call it when you want
+tokens that outlive this session, with `token_scope`:
 
 - `session` (the default) — tokens resolve only in this session. Use it for
   short work: nothing you hold links to anything another session sees.
@@ -35,10 +33,10 @@ Say how long your tokens should live, with `token_scope`:
 Pick persistent only when the work needs a token to outlive the session, and say
 so to the user.
 
-It is not bookkeeping. When a statement escalates, a human sees your intent
-beside the SQL and decides on that; "reconcile duplicate accounts OPS-441" gets
-approved and "" does not. Keep credentials and personal data out of it: keeper
-screens the text and rejects it if it finds any.
+You may also pass a short `intent` — a ticket id or the question you are
+answering. A human sees it beside anything that waits for approval. Keep
+credentials and personal data out of it: keeper screens it and rejects it if it
+finds any.
 
 ## Pick the profile yourself
 

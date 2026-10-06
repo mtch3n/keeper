@@ -637,16 +637,18 @@ func TestUnresolvableTokenExplainsWhatHappened(t *testing.T) {
 	}
 }
 
-// §6.1: set_session_intent is required before any query, and R10c screens it.
-func TestIntentIsRequiredAndScreened(t *testing.T) {
+// An intent is optional: a query runs without one. One that is given is still
+// screened (R10c), because it reaches the Inbox and the activity log.
+func TestIntentIsOptionalAndScreened(t *testing.T) {
 	r := newRig(t)
 	r.alog.reject = "patient Jane Doe"
 	a := r.agent("")
 
 	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"})
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("a query ran with no declared intent: %d %s", resp.StatusCode, raw)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a query without an intent was refused: %d %s", resp.StatusCode, raw)
 	}
+	a.mustJSON("POST", "/v1/session/intent", map[string]any{"token_scope": "session"}, nil)
 
 	resp, raw = a.do("POST", "/v1/session/intent", map[string]any{"intent": "patient Jane Doe"})
 	if resp.StatusCode != http.StatusForbidden {

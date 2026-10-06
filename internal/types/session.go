@@ -19,7 +19,7 @@ type ClientInfo struct {
 type Session struct {
 	ID     string     `json:"id"`
 	Client ClientInfo `json:"client"`
-	Intent string     `json:"intent,omitzero"` // set_session_intent, required before any query
+	Intent string     `json:"intent,omitzero"` // set_session_intent, optional
 	// TokenScope is how long this session's tokens live, as its agent declared.
 	TokenScope  TokenScope `json:"token_scope,omitzero"`
 	ConnectedAt time.Time  `json:"connected_at"`
