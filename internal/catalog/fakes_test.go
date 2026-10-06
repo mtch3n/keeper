@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"strings"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
@@ -29,32 +30,32 @@ func (f *fakeSampler) SampleColumn(_ context.Context, _ string, rel types.Relati
 	return f.values[key], nil
 }
 
-// fakeNames is a canned NameHeuristic: exact column-name matches only.
-type fakeNames struct {
-	matches map[string]string
-}
+// fakeDetector stands in for a connection's passes. The sample value "HIT"
+// is an email and nine digits are a US SSN, so a test can dial in an exact
+// hit rate by choosing its samples. err fails every call.
+type fakeDetector struct{ err error }
 
-func (f *fakeNames) MatchName(column string) (string, bool) {
-	ns, ok := f.matches[column]
-	return ns, ok
-}
-
-// fakeRuleMatcher treats the literal sample value "HIT" as a match for the
-// "email" rule and everything else as a miss, so a test can dial in an exact
-// hit rate by choosing how many "HIT" values a fakeSampler returns.
-type fakeRuleMatcher struct{}
-
-func (fakeRuleMatcher) MatchRate(_ context.Context, samples []string) (string, float64) {
-	if len(samples) == 0 {
-		return "", 0
+func (f fakeDetector) Detect(_ context.Context, texts []string) ([][]ports.Span, error) {
+	if f.err != nil {
+		return nil, f.err
 	}
-	hits := 0
-	for _, s := range samples {
-		if s == "HIT" {
-			hits++
+	out := make([][]ports.Span, len(texts))
+	for i, t := range texts {
+		out[i] = []ports.Span{}
+		switch {
+		case t == "HIT":
+			out[i] = append(out[i], ports.Span{Start: 0, End: len(t), Type: "email_address"})
+		case len(t) == 9 && strings.Trim(t, "0123456789") == "":
+			out[i] = append(out[i], ports.Span{Start: 0, End: len(t), Type: "us_ssn"})
 		}
 	}
-	return "email", float64(hits) / float64(len(samples))
+	return out, nil
+}
+
+func (fakeDetector) Identity() ports.DetectorIdentity { return ports.DetectorIdentity{Name: "fake"} }
+
+func detectorFor(d ports.Detector) ports.DetectorFor {
+	return func(context.Context, string) (ports.Detector, error) { return d, nil }
 }
 
 // fakePrivileges is a canned PrivilegeChecker.

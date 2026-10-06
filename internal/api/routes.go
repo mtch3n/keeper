@@ -30,6 +30,7 @@ func (s *Server) routes() {
 	s.handle("PATCH /v1/connections/{id}", accessHuman, s.patchConnection)
 	s.handle("DELETE /v1/connections/{id}", accessHuman, s.removeConnection)
 	s.handle("PUT /v1/connections/{id}/denylist", accessHuman, s.putDenylist)
+	s.handle("PUT /v1/connections/{id}/terms", accessHuman, s.putTerms)
 
 	s.handle("GET /v1/approvals", accessHuman, s.listApprovals)
 	s.handle("POST /v1/approvals/{ticket}/decide", accessHuman, s.decide)

@@ -38,20 +38,3 @@ type PrivilegeChecker interface {
 type Fingerprinter interface {
 	Fingerprint(ctx context.Context, connID string, tableOID uint32) (string, error)
 }
-
-// NameHeuristic recognizes a column name that is PII by naming convention
-// alone (SPEC §5.4), independent of any sampled data — "email", "ssn" and
-// friends. It reports the token namespace to propose. internal/rules is
-// expected to satisfy this; catalog does not import it.
-type NameHeuristic interface {
-	MatchName(columnName string) (namespace string, ok bool)
-}
-
-// RuleMatcher runs the detection-rule pass over sampled column values for
-// SPEC R5.3a. For the rule that matched the largest share of non-null
-// samples it reports the rule's name — which becomes the token namespace —
-// and the hit rate in [0,1]. internal/rules is expected to satisfy this;
-// catalog does not import it.
-type RuleMatcher interface {
-	MatchRate(ctx context.Context, samples []string) (namespace string, hitRate float64)
-}

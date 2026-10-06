@@ -16,6 +16,7 @@ type fakeVault struct {
 	mu         sync.Mutex
 	hosts      map[string]*types.Host
 	conns      map[string]*types.Connection
+	terms      map[string]ports.Terms
 	registered []*types.Connection
 }
 
@@ -25,6 +26,7 @@ func newVault(cs ...*types.Connection) *fakeVault {
 	v := &fakeVault{
 		hosts: map[string]*types.Host{"h1": {ID: "h1", Name: "db1", Address: "h", Port: 5432, SSLMode: "prefer"}},
 		conns: map[string]*types.Connection{},
+		terms: map[string]ports.Terms{},
 	}
 	for _, c := range cs {
 		v.conns[c.ID] = c
@@ -115,6 +117,19 @@ func (v *fakeVault) Remove(_ context.Context, id string) error {
 
 func (v *fakeVault) DSN(_ context.Context, id string, _ ports.Role) (string, error) {
 	return "postgres://" + id, nil
+}
+
+func (v *fakeVault) Terms(_ context.Context, id string) (ports.Terms, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.terms[id], nil
+}
+
+func (v *fakeVault) SetTerms(_ context.Context, id string, t ports.Terms) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.terms[id] = t
+	return nil
 }
 
 func (v *fakeVault) TokenKey(context.Context, string, int) ([]byte, int, error) {
@@ -379,7 +394,7 @@ func (fakeJudge) Identity() string               { return "fake-judge" }
 
 type fakeDetector struct{}
 
-func (fakeDetector) Scan(context.Context, string) ([]ports.Span, error) { return nil, nil }
+func (fakeDetector) Detect(context.Context, []string) ([][]ports.Span, error) { return nil, nil }
 func (fakeDetector) Identity() ports.DetectorIdentity {
 	return ports.DetectorIdentity{Name: "fake", NetworkPosture: "none"}
 }

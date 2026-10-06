@@ -15,7 +15,7 @@ import (
 
 func runConnection(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("connection: expected a subcommand (add, ls, show, set, denylist, rm)")
+		return fmt.Errorf("connection: expected a subcommand (add, ls, show, set, terms, denylist, rm)")
 	}
 	ctx := context.Background()
 	sub, rest := args[0], args[1:]
@@ -28,6 +28,8 @@ func runConnection(args []string) error {
 		return connectionShow(ctx, rest)
 	case "set":
 		return connectionSet(ctx, rest)
+	case "terms":
+		return connectionTerms(ctx, rest)
 	case "denylist":
 		return connectionDenylist(ctx, rest)
 	case "rm":
@@ -212,6 +214,7 @@ func connectionShow(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("role:      %s\n", detail.Role)
 	fmt.Printf("mode:      %s\n", detail.Mode)
+	fmt.Printf("detection: %s\n", passList(detail.Detection))
 	fmt.Printf("catalog:   %s\n", detail.CatalogStatus.Path)
 	if detail.CatalogStatus.Unclassified > 0 {
 		fmt.Printf("           %d unclassified column(s)\n", detail.CatalogStatus.Unclassified)
@@ -230,7 +233,8 @@ func connectionSet(ctx context.Context, args []string) error {
 	mode := fs.String("mode", "", "strict | assisted | permissive (SPEC §9.4)")
 	maxRows := fs.Int("max-rows", 0, "operator ceiling for query(max_rows); the agent cannot raise it")
 	timeout := fs.Duration("timeout", 0, "SET LOCAL statement_timeout for every statement")
-	scanSample := fs.Int("scan-sample", 0, "sample size for the model layer of a scan column")
+	scanSample := fs.Int("scan-sample", 0, "sample size catalog init examines per column")
+	detection := fs.String("detection", "", "detection passes in order, comma-separated (patterns, list), or off")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -253,20 +257,80 @@ func connectionSet(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	conn, err := cli.PatchConnection(ctx, id, client.PatchConnectionParams{
+	params := client.PatchConnectionParams{
 		Mode:             types.Mode(*mode),
 		MaxRowsCeiling:   *maxRows,
 		StatementTimeout: *timeout,
 		ScanSample:       *scanSample,
-	})
+	}
+	if *detection != "" {
+		passes := []types.Pass{}
+		if *detection != "off" {
+			for p := range strings.SplitSeq(*detection, ",") {
+				passes = append(passes, types.Pass(strings.TrimSpace(p)))
+			}
+		}
+		params.Detection = &passes
+	}
+	conn, err := cli.PatchConnection(ctx, id, params)
 	if err != nil {
 		return err
 	}
 	if *jsonOut {
 		return printJSON(conn)
 	}
-	fmt.Printf("%q updated: mode=%s max_rows_ceiling=%d statement_timeout=%s scan_sample=%d\n",
-		conn.Name, conn.Mode, conn.Limits.MaxRowsCeiling, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
+	fmt.Printf("%q updated: mode=%s detection=%s max_rows_ceiling=%d statement_timeout=%s scan_sample=%d\n",
+		conn.Name, conn.Mode, passList(conn.Detection), conn.Limits.MaxRowsCeiling, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
+	return nil
+}
+
+// passList renders a connection's passes, or off when it runs none.
+func passList(ps []types.Pass) string {
+	if len(ps) == 0 {
+		return "off (scan columns are redacted whole)"
+	}
+	names := make([]string, len(ps))
+	for i, p := range ps {
+		names[i] = string(p)
+	}
+	return strings.Join(names, ", ")
+}
+
+// connectionTerms replaces the list pass's terms. They go in and never come
+// back out: the daemon answers with counts, so this command cannot show the
+// current terms and every run states the whole set.
+func connectionTerms(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("connection terms", flag.ExitOnError)
+	var deny, allow stringList
+	fs.Var(&deny, "deny", "a term that is always PII, matched case-insensitively (repeatable)")
+	fs.Var(&allow, "allow", "a value that is never redacted, e.g. support@yourco.com (repeatable)")
+	jsonOut := fs.Bool("json", false, "JSON output")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	name := fs.Arg(0)
+	if name == "" {
+		return fmt.Errorf("connection terms: expected a connection name")
+	}
+
+	cli, err := connectDaemon(ctx)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	id, err := resolveConnectionID(ctx, cli, name)
+	if err != nil {
+		return err
+	}
+	counts, err := cli.SetTerms(ctx, id, deny, allow)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(counts)
+	}
+	fmt.Printf("%q now holds %d deny and %d allow term(s). They take effect where its passes include list.\n", name, counts.Deny, counts.Allow)
 	return nil
 }
 

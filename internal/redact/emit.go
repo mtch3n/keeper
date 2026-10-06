@@ -3,8 +3,6 @@ package redact
 import (
 	"reflect"
 	"strings"
-
-	"github.com/mtchen/keeper/internal/rules"
 )
 
 // RedactedMarker replaces a value that keeps nothing. It is bracketed like a
@@ -226,7 +224,7 @@ func (t *retokenizer) rewrite(s string) string {
 	if m.Len() == 0 {
 		return s
 	}
-	hits := rules.ResolveOverlaps(m.FindAll(s))
+	hits := ResolveOverlaps(m.FindAll(s))
 	if len(hits) == 0 {
 		return s
 	}

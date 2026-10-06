@@ -96,13 +96,20 @@ func (c *fakeCatalog) Fresh(context.Context, []uint32) (bool, error) { return c.
 
 const maskMarker = "MASKED"
 
-type fakeRedactor struct{ applyCalls int }
+type fakeRedactor struct {
+	applyCalls int
+	// unexamined reports every column's free text as not examined.
+	unexamined bool
+}
 
 func (r *fakeRedactor) Apply(_ context.Context, _ string, cols []types.ColumnMeta, rows [][]any) (map[string]types.Transform, error) {
 	r.applyCalls++
 	out := map[string]types.Transform{}
 	for i, c := range cols {
 		out[c.Name] = types.Transform{Policy: c.Policy}
+		if r.unexamined {
+			out[c.Name] = types.Transform{Policy: c.Policy, Basis: types.BasisUnexamined}
+		}
 		if !c.Policy.Masks() {
 			continue
 		}

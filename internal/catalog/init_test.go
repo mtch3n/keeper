@@ -1,6 +1,9 @@
 package catalog
 
 import (
+	"errors"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,8 +58,7 @@ func testInitDeps() Dependencies {
 			"public.users.account_number": nineDigitSamples(10), // 100%, non-key
 			"public.users.employee_id":    nineDigitSamples(10), // 100%, identity (key)
 		}},
-		Names: &fakeNames{matches: map[string]string{"email": "email"}},
-		Rules: fakeRuleMatcher{},
+		Detectors: detectorFor(fakeDetector{}),
 	}
 }
 
@@ -70,8 +72,8 @@ func TestInitTypeDefaults(t *testing.T) {
 	if got := proposal.SafeToBulkAccept["public.users.id"]; got.Policy != types.PolicyAllow {
 		t.Errorf("typed scalar id: got %+v, want allow", got)
 	}
-	if got := proposal.SafeToBulkAccept["public.users.email"]; got.Policy != types.PolicyToken || got.Namespace != "email" {
-		t.Errorf("name-heuristic email: got %+v, want token/email", got)
+	if got, ok := proposal.NeedsReview["public.users.email"]; !ok || got.Policy != types.PolicyScan {
+		t.Errorf("email with sample=0: got %+v (ok=%v), want scan in NeedsReview: a column name proves nothing", got, ok)
 	}
 	if got, ok := proposal.NeedsReview["public.users.metadata"]; !ok || got.Policy != types.PolicyScan {
 		t.Errorf("jsonb metadata: got %+v (ok=%v), want scan in NeedsReview", got, ok)
@@ -96,8 +98,8 @@ func TestInitSamplingThresholdBands(t *testing.T) {
 
 	// >=90%: promoted to token, namespace from the matching rule.
 	got, ok := proposal.SafeToBulkAccept["public.users.contact"]
-	if !ok || got.Policy != types.PolicyToken || got.Namespace != "email" {
-		t.Errorf("contact at 95%%: got %+v (ok=%v), want token/email in SafeToBulkAccept", got, ok)
+	if !ok || got.Policy != types.PolicyToken || got.Namespace != "email_address" {
+		t.Errorf("contact at 95%%: got %+v (ok=%v), want token/email_address in SafeToBulkAccept", got, ok)
 	}
 	if rate := proposal.SampleRates["public.users.contact"]; rate < 0.9 {
 		t.Errorf("contact sample rate = %v, want >= 0.9", rate)
@@ -130,8 +132,8 @@ func TestInitNumericKeyVsNonKeySplit(t *testing.T) {
 	// account_number: 9-digit at 100%, not a PK/FK/identity/defaulted column
 	// -> promoted to token. This is the accounts.ssn_num side of R5.3b.
 	got, ok := proposal.SafeToBulkAccept["public.users.account_number"]
-	if !ok || got.Policy != types.PolicyToken || got.Namespace != "ssn" {
-		t.Errorf("account_number: got %+v (ok=%v), want token/ssn", got, ok)
+	if !ok || got.Policy != types.PolicyToken || got.Namespace != "us_ssn" {
+		t.Errorf("account_number: got %+v (ok=%v), want token/us_ssn", got, ok)
 	}
 	if rate := proposal.SampleRates["public.users.account_number"]; rate != 1 {
 		t.Errorf("account_number sample rate = %v, want 1.0", rate)
@@ -156,7 +158,6 @@ func TestInitNumericKeyVsNonKeySplit(t *testing.T) {
 func TestInitSkipsSamplingWithoutDependencies(t *testing.T) {
 	deps := testInitDeps()
 	deps.Sampler = nil
-	deps.Rules = nil
 	s, _ := openTestStore(t, deps, nil)
 
 	proposal, err := s.Init(t.Context(), "conn1", 20)
@@ -164,10 +165,10 @@ func TestInitSkipsSamplingWithoutDependencies(t *testing.T) {
 		t.Fatalf("Init: %v", err)
 	}
 	if got, ok := proposal.NeedsReview["public.users.contact"]; !ok || got.Policy != types.PolicyScan {
-		t.Errorf("without a Sampler/Rules, contact must fall back to scan: got %+v (ok=%v)", got, ok)
+		t.Errorf("without a Sampler, contact must fall back to scan: got %+v (ok=%v)", got, ok)
 	}
 	if len(proposal.SampleRates) != 0 {
-		t.Errorf("without a Sampler/Rules, no sample rates should be recorded: %+v", proposal.SampleRates)
+		t.Errorf("without a Sampler, no sample rates should be recorded: %+v", proposal.SampleRates)
 	}
 }
 
@@ -186,5 +187,65 @@ func TestInitProposalKeysUseDottedForm(t *testing.T) {
 		if strings.Count(key, ".") != 2 {
 			t.Errorf("NeedsReview key %q is not schema.table.column", key)
 		}
+	}
+}
+
+func Test_DET_C20_NoPassesProposesNothing(t *testing.T) {
+	deps := testInitDeps()
+	deps.Detectors = detectorFor(nil)
+	s, _ := openTestStore(t, deps, nil)
+	proposal, err := s.Init(t.Context(), "conn1", 20)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if n := len(proposal.SafeToBulkAccept) + len(proposal.NeedsReview); n != 0 {
+		t.Errorf("a connection with no passes got %d proposal(s): %+v %+v", n, proposal.SafeToBulkAccept, proposal.NeedsReview)
+	}
+}
+
+func Test_DET_C6_InitProposesAndWritesNothing(t *testing.T) {
+	s, paths := openTestStore(t, testInitDeps(), nil)
+	read := func() string {
+		c, _ := os.ReadFile(paths.Committed)
+		o, _ := os.ReadFile(paths.Overlay)
+		return string(c) + "\x00" + string(o)
+	}
+	before := read()
+	proposal, err := s.Init(t.Context(), "conn1", 20)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got := proposal.SafeToBulkAccept["public.users.contact"]; got.Policy != types.PolicyToken {
+		t.Errorf("contact sampled at 95%% emails was not proposed as token: %+v", got)
+	}
+	if read() != before {
+		t.Error("Init changed catalog.yaml before anyone accepted a proposal")
+	}
+	entries, err := s.Entries(t.Context(), "conn1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := entries["public.users.contact"]; ok {
+		t.Error("a proposal became a catalog entry without being accepted")
+	}
+}
+
+func Test_DET_C21_AFailingPassLeavesSampledColumnsUnproposed(t *testing.T) {
+	deps := testInitDeps()
+	deps.Detectors = detectorFor(fakeDetector{err: errors.New("pass failed")})
+	s, _ := openTestStore(t, deps, nil)
+	proposal, err := s.Init(t.Context(), "conn1", 20)
+	if err != nil {
+		t.Fatalf("Init must complete when a pass fails: %v", err)
+	}
+	for _, col := range []string{"public.users.contact", "public.users.notes", "public.users.account_number"} {
+		_, safe := proposal.SafeToBulkAccept[col]
+		_, review := proposal.NeedsReview[col]
+		if safe || review {
+			t.Errorf("%s was proposed although its samples were never examined", col)
+		}
+	}
+	if !slices.ContainsFunc(proposal.Degradations, func(d types.Degradation) bool { return d.Layer == "detector" }) {
+		t.Errorf("degradations = %v, want the detector named", proposal.Degradations)
 	}
 }

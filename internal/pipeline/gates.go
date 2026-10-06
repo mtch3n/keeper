@@ -344,8 +344,13 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 
 	st.transforms = make(map[string]types.Transform, len(st.cols))
 	keep := make([]int, 0, len(st.cols))
+	unexamined := false
 	for i, c := range st.cols {
 		t := transforms[c.meta.Name]
+		if t.Basis == types.BasisUnexamined && !unexamined {
+			unexamined = true
+			st.degrade("detector", "free text was not examined, so its cells were redacted whole")
+		}
 		t.Policy = c.entry.Policy
 		if t.Basis == "" {
 			t.Basis = c.basis

@@ -15,13 +15,13 @@ import (
 	"github.com/mtchen/keeper/internal/audit"
 	"github.com/mtchen/keeper/internal/catalog"
 	"github.com/mtchen/keeper/internal/daemon"
+	"github.com/mtchen/keeper/internal/detect"
 	"github.com/mtchen/keeper/internal/judge"
 	"github.com/mtchen/keeper/internal/pgaudit"
 	"github.com/mtchen/keeper/internal/pgdb"
 	"github.com/mtchen/keeper/internal/pipeline"
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/redact"
-	"github.com/mtchen/keeper/internal/rules"
 	"github.com/mtchen/keeper/internal/types"
 	"github.com/mtchen/keeper/internal/vault"
 )
@@ -40,11 +40,13 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 
 	v := vault.New(dir)
 
-	// The detector never leaves the machine. R8.5g makes its identity and
-	// network posture a reported fact, and doctor prints what it says.
-	det := rules.New(rules.Config{})
+	// One patterns engine, shared: it screens every session intent and is the
+	// patterns pass of every connection that lists it. Each connection's chain
+	// is built from its own passes and terms when a statement needs it.
+	patterns := detect.NewPatterns()
+	detectors := detect.NewFactory(patterns, v)
 
-	alog, err := audit.New(audit.Config{Path: filepath.Join(dir, "audit.log"), Detector: det})
+	alog, err := audit.New(audit.Config{Path: filepath.Join(dir, "audit.log"), Detector: patterns})
 	if err != nil {
 		return daemon.Deps{}, nil, nil, fmt.Errorf("audit log: %w", err)
 	}
@@ -60,12 +62,12 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		return daemon.Deps{}, nil, nil, fmt.Errorf("database: %w", err)
 	}
 
-	cats := newCatalogs(v, exec, det, dir)
+	cats := newCatalogs(v, exec, detectors.For, dir)
 
 	red, err := redact.New(redact.Config{
-		Keys:     v,
-		Detector: det,
-		Policies: cats,
+		Keys:      v,
+		Detectors: detectors.For,
+		Policies:  cats,
 	})
 	if err != nil {
 		alog.Close()
@@ -110,7 +112,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		Redactor:     red,
 		Audit:        alog,
 		Judge:        jd,
-		Detector:     det,
+		Detector:     patterns,
 		Pipeline:     &pipelineAdapter{p: pipe},
 	}
 
@@ -158,15 +160,14 @@ type connectionLookup interface {
 	Connection(ctx context.Context, id string) (*types.Connection, error)
 }
 
-func newCatalogs(v *vault.Vault, exec *pgdb.DB, det *rules.Detector, dir string) *catalogs {
+func newCatalogs(v *vault.Vault, exec *pgdb.DB, detectors ports.DetectorFor, dir string) *catalogs {
 	return &catalogs{
 		store: catalog.NewStore(catalog.Dependencies{
 			Introspector: exec,
 			Sampler:      exec,
 			Privileges:   exec,
 			Fingerprints: exec,
-			Names:        nameHeuristic{det},
-			Rules:        ruleMatcher{det},
+			Detectors:    detectors,
 		}),
 		vault: v,
 		dir:   dir,
@@ -301,31 +302,6 @@ func (c *catalogs) closeAll() {
 		c.store.Close(id)
 	}
 	clear(c.open)
-}
-
-// nameHeuristic and ruleMatcher fit the detector to the two one-method
-// interfaces the catalog declares. The catalog cannot import rules and rules
-// does not know the catalog exists, so the shapes are named at each end and met
-// here — which is the whole job of this file.
-type nameHeuristic struct{ d *rules.Detector }
-
-func (n nameHeuristic) MatchName(column string) (string, bool) { return n.d.NameHeuristic(column) }
-
-type ruleMatcher struct{ d *rules.Detector }
-
-// MatchRate reports the rule that matched most of the sample and its hit rate.
-// R5.3a's thresholds are the catalog's to apply; this only answers "which rule,
-// how often", and a tie goes to the rule that sorts first so the answer is
-// stable across runs.
-func (r ruleMatcher) MatchRate(_ context.Context, samples []string) (string, float64) {
-	rates := r.d.MatchRate(samples)
-	best, rate := "", 0.0
-	for ns, v := range rates {
-		if v > rate || (v == rate && ns < best) {
-			best, rate = ns, v
-		}
-	}
-	return best, rate
 }
 
 // safeFileName keeps a connection id from escaping the config directory. Ids are

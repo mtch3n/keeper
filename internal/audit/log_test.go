@@ -5,20 +5,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mtchen/keeper/internal/detect"
 	"github.com/mtchen/keeper/internal/ports"
-	"github.com/mtchen/keeper/internal/rules"
 	"github.com/mtchen/keeper/internal/types"
 )
 
 func newLog(t *testing.T) *Log {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "keeper", "audit.log")
-	l, err := New(Config{Path: path, Detector: rules.New(rules.Config{})})
+	l, err := New(Config{Path: path, Detector: detect.NewPatterns()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +241,6 @@ func TestScreenIntent(t *testing.T) {
 		"check card 4111 1111 1111 1111",
 		"look up 078-05-1120",
 		"the account GB82WEST12345698765432",
-		"reconcile Jane Doe's refunds",
 	}
 	for _, intent := range rejected {
 		err := l.ScreenIntent(t.Context(), intent)
@@ -289,7 +289,7 @@ func TestScreenIntentFailsClosedOnADetectorError(t *testing.T) {
 
 type brokenDetector struct{}
 
-func (brokenDetector) Scan(ctx context.Context, text string) ([]ports.Span, error) {
+func (brokenDetector) Detect(context.Context, []string) ([][]ports.Span, error) {
 	return nil, errors.New("sidecar unreachable")
 }
 func (brokenDetector) Identity() ports.DetectorIdentity {
@@ -321,5 +321,22 @@ func TestConcurrentWrites(t *testing.T) {
 func TestNewRequiresADetector(t *testing.T) {
 	if _, err := New(Config{Path: filepath.Join(t.TempDir(), "a.log")}); err == nil {
 		t.Error("New accepted a nil detector")
+	}
+}
+
+// An intent belongs to a session, not a connection, so whatever passes a
+// connection runs, the intent is screened in process by the patterns pass and
+// never leaves the machine.
+func Test_DET_C18_AnIntentIsScreenedByThePatternsPass(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	l, err := New(Config{Path: path, Detector: detect.NewPatterns()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	err = l.ScreenIntent(t.Context(), "follow up with jane@example.com")
+	ie, ok := errors.AsType[*IntentError](err)
+	if !ok || !slices.Contains(ie.Types, "email_address") {
+		t.Fatalf("ScreenIntent = %v, want an email_address rejection", err)
 	}
 }

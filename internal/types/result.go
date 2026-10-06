@@ -25,6 +25,9 @@ const (
 	BasisInherited Basis = "inherited" // a computed column, from R7.6
 	BasisParameter Basis = "parameter" // from a token-resolved parameter, R8.4b
 	BasisUnknown   Basis = "unknown"   // an unresolved column redacted under R5.4a
+	// BasisUnexamined is a scan column whose free text no pass examined — the
+	// connection runs none, or one failed — so its cells were redacted whole.
+	BasisUnexamined Basis = "unexamined"
 )
 
 // Transform is what happened to one output column, declared in every response.

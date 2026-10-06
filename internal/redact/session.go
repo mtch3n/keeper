@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mtchen/keeper/internal/rules"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -42,7 +41,7 @@ type session struct {
 	// automaton's pattern i belongs to. A binding contributes both its bound
 	// value and its normalized form when they differ, because the database
 	// returns the former and the token was computed from the latter.
-	matcher *rules.Matcher
+	matcher *Matcher
 	owners  []*binding
 	// short holds values below the substring threshold, matched by whole-cell
 	// equality instead. Dropping them entirely would be a hole; substring
@@ -114,7 +113,7 @@ func (s *session) sweepLocked(now time.Time) {
 // index is the emission-scan view of the map: an Aho-Corasick automaton over
 // every resolved value, plus the short-value exact set.
 type index struct {
-	matcher *rules.Matcher
+	matcher *Matcher
 	owners  []*binding
 	short   map[string]*binding
 }
@@ -170,7 +169,7 @@ func (s *session) rebuildLocked(minMatch int) {
 	}
 	s.owners = owners
 	s.short = short
-	s.matcher = rules.NewMatcher(patterns, rules.MatcherOptions{Fold: true})
+	s.matcher = NewMatcher(patterns, MatcherOptions{Fold: true})
 	s.dirty = false
 }
 

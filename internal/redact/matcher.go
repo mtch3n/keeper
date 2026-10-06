@@ -1,4 +1,4 @@
-package rules
+package redact
 
 import (
 	"slices"

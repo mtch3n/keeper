@@ -5,6 +5,7 @@ go 1.27
 require (
 	filippo.io/age v1.3.2
 	github.com/go-sql-driver/mysql v1.10.1
+	github.com/hoophq/alcatraz v0.21.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/testcontainers/testcontainers-go v0.44.0

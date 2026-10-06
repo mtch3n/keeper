@@ -18,6 +18,19 @@ const (
 	ModePermissive Mode = "permissive"
 )
 
+// Pass names one detection pass a connection can run.
+type Pass string
+
+const (
+	// PassPatterns is in-process pattern and checksum detection.
+	PassPatterns Pass = "patterns"
+	// PassList matches the connection's own deny terms.
+	PassList Pass = "list"
+)
+
+// Passes are the passes keeper can run, in the order a description lists them.
+var Passes = []Pass{PassPatterns, PassList}
+
 // Valid reports whether m is a mode keeper knows.
 func (m Mode) Valid() bool { return m == ModeStrict || m == ModeAssisted || m == ModePermissive }
 
@@ -131,8 +144,11 @@ type Connection struct {
 	// CatalogPath defaults to .keeper/catalog.yaml in the project repo. SPEC R5.2a.
 	CatalogPath string `json:"catalog_path"`
 
-	Mode       Mode              `json:"mode"`
-	Limits     Limits            `json:"limits"`
+	Mode   Mode   `json:"mode"`
+	Limits Limits `json:"limits"`
+	// Detection is the ordered list of passes a scan column's free text runs
+	// through. Empty is off: free text is redacted whole.
+	Detection  []Pass            `json:"detection,omitzero"`
 	Denylist   []RelationRef     `json:"denylist,omitzero"`
 	WriteScope []WriteScopeEntry `json:"write_scope,omitzero"`
 

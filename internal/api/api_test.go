@@ -5,6 +5,8 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -1004,5 +1006,101 @@ func TestHostCarriesSeveralConnections(t *testing.T) {
 		"name": "x", "host_id": "nope", "database": "db", "read": map[string]any{"user": "u"},
 	}); resp.StatusCode == http.StatusOK {
 		t.Fatalf("registered a connection on a host that does not exist: %s", raw)
+	}
+}
+
+func Test_DET_C1_DescribeShowsAConnectionsPassesInOrder(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+	b.mustJSON("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"list", "patterns"}}, nil)
+	var d struct {
+		Detection []string `json:"detection"`
+	}
+	b.mustJSON("GET", "/v1/connections/c1", nil, &d)
+	if !slices.Equal(d.Detection, []string{"list", "patterns"}) {
+		t.Errorf("detection = %v, want [list patterns]", d.Detection)
+	}
+}
+
+func Test_DET_C2_AnAgentCannotChangeDetection(t *testing.T) {
+	r := newRig(t)
+	before := slices.Clone(r.vault.conns["c1"].Detection)
+	a := r.agent("reconcile OPS-441")
+	for _, req := range []struct {
+		method, path string
+		body         any
+	}{
+		{"PATCH", "/v1/connections/c1", map[string]any{"detection": []string{}}},
+		{"PUT", "/v1/connections/c1/terms", map[string]any{"allow": []string{"jane@example.com"}}},
+	} {
+		if resp, _ := a.do(req.method, req.path, req.body); resp.StatusCode == http.StatusOK {
+			t.Errorf("%s %s succeeded from an MCP session", req.method, req.path)
+		}
+	}
+	if !slices.Equal(r.vault.conns["c1"].Detection, before) {
+		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
+	}
+	if len(r.vault.terms["c1"].Allow) != 0 {
+		t.Errorf("terms changed to %+v", r.vault.terms["c1"])
+	}
+}
+
+func Test_DET_C3_AnUnknownPassIsRejected(t *testing.T) {
+	r := newRig(t)
+	before := slices.Clone(r.vault.conns["c1"].Detection)
+	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"patterns", "magic"}})
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("an unknown pass was accepted: %s", raw)
+	}
+	if !strings.Contains(string(raw), "patterns") || !strings.Contains(string(raw), "list") {
+		t.Errorf("the error does not name the known passes: %s", raw)
+	}
+	if !slices.Equal(r.vault.conns["c1"].Detection, before) {
+		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
+	}
+}
+
+func Test_DET_C37_PresidioIsNotAPassYet(t *testing.T) {
+	r := newRig(t)
+	if resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"presidio"}}); resp.StatusCode == http.StatusOK {
+		t.Fatalf("presidio was accepted as a pass: %s", raw)
+	}
+}
+
+func Test_DET_C26_ANewConnectionStartsWithPatterns(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+	var c struct {
+		ID string `json:"id"`
+	}
+	b.mustJSON("POST", "/v1/connections", map[string]any{
+		"name": "new", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"},
+	}, &c)
+	var d struct {
+		Detection []string `json:"detection"`
+	}
+	b.mustJSON("GET", "/v1/connections/"+c.ID, nil, &d)
+	if !slices.Equal(d.Detection, []string{"patterns"}) {
+		t.Errorf("detection = %v, want [patterns]", d.Detection)
+	}
+}
+
+func Test_DET_C31_TermsNeverComeBackOut(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+	const deny, allow = "Acme Corp Secret", "support@yourco.example"
+	var put map[string]any
+	b.mustJSON("PUT", "/v1/connections/c1/terms", map[string]any{"deny": []string{deny}, "allow": []string{allow}}, &put)
+	if got := r.vault.terms["c1"]; !slices.Equal(got.Deny, []string{deny}) || !slices.Equal(got.Allow, []string{allow}) {
+		t.Fatalf("terms were not stored: %+v", got)
+	}
+	_, patch := b.do("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"patterns", "list"}})
+	_, desc := b.do("GET", "/v1/connections/c1", nil)
+	_, list := b.do("GET", "/v1/connections", nil)
+	putRaw, _ := json.Marshal(put)
+	for name, raw := range map[string][]byte{"terms response": putRaw, "patch": patch, "describe": desc, "list": list} {
+		if strings.Contains(string(raw), deny) || strings.Contains(string(raw), allow) {
+			t.Errorf("%s carries a term: %s", name, raw)
+		}
 	}
 }
