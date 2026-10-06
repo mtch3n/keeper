@@ -361,7 +361,7 @@ func (v *Vault) Terms(ctx context.Context, id string) (ports.Terms, error) {
 	if !ok {
 		return ports.Terms{}, &NotFoundError{ID: id}
 	}
-	return ports.Terms{Deny: slices.Clone(rec.Deny), Allow: slices.Clone(rec.Allow)}, nil
+	return ports.Terms{Deny: slices.Clone(rec.Deny), Allow: slices.Clone(rec.Allow), Patterns: slices.Clone(rec.Patterns)}, nil
 }
 
 // SetTerms replaces a connection's list-pass terms.
@@ -375,10 +375,10 @@ func (v *Vault) SetTerms(ctx context.Context, id string, t ports.Terms) error {
 	if !ok {
 		return &NotFoundError{ID: id}
 	}
-	prevDeny, prevAllow := rec.Deny, rec.Allow
-	rec.Deny, rec.Allow = slices.Clone(t.Deny), slices.Clone(t.Allow)
+	prevDeny, prevAllow, prevPatterns := rec.Deny, rec.Allow, rec.Patterns
+	rec.Deny, rec.Allow, rec.Patterns = slices.Clone(t.Deny), slices.Clone(t.Allow), slices.Clone(t.Patterns)
 	if err := v.persist(); err != nil {
-		rec.Deny, rec.Allow = prevDeny, prevAllow
+		rec.Deny, rec.Allow, rec.Patterns = prevDeny, prevAllow, prevPatterns
 		return err
 	}
 	return nil

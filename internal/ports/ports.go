@@ -200,8 +200,16 @@ type DetectorFor func(ctx context.Context, connID string) (Detector, error)
 // the human surface, the vault and the list pass and are never returned by
 // any API.
 type Terms struct {
-	Deny  []string
-	Allow []string
+	Deny     []string
+	Allow    []string
+	Patterns []Pattern
+}
+
+// Pattern is one operator regular expression the list pass matches. A hit is
+// labelled Label, or "custom" when Label is empty.
+type Pattern struct {
+	Label string `json:"label,omitzero"`
+	Expr  string `json:"expr"`
 }
 
 // Span is one detected range, half-open.

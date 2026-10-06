@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mtchen/keeper/internal/client"
+	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -214,7 +215,7 @@ func connectionShow(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("role:      %s\n", detail.Role)
 	fmt.Printf("mode:      %s\n", detail.Mode)
-	fmt.Printf("detection: %s\n", passList(detail.Detection))
+	fmt.Printf("detection: %s\n", stageList(detail.Detection))
 	fmt.Printf("catalog:   %s\n", detail.CatalogStatus.Path)
 	if detail.CatalogStatus.Unclassified > 0 {
 		fmt.Printf("           %d unclassified column(s)\n", detail.CatalogStatus.Unclassified)
@@ -234,7 +235,7 @@ func connectionSet(ctx context.Context, args []string) error {
 	maxRows := fs.Int("max-rows", 0, "operator ceiling for query(max_rows); the agent cannot raise it")
 	timeout := fs.Duration("timeout", 0, "SET LOCAL statement_timeout for every statement")
 	scanSample := fs.Int("scan-sample", 0, "sample size catalog init examines per column")
-	detection := fs.String("detection", "", "detection passes in order, comma-separated (patterns, list), or off")
+	detection := fs.String("detection", "", "detection stages in order, comma-separated, or off: kind[:entity+entity][@raw], kinds patterns and list")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -264,13 +265,8 @@ func connectionSet(ctx context.Context, args []string) error {
 		ScanSample:       *scanSample,
 	}
 	if *detection != "" {
-		passes := []types.Pass{}
-		if *detection != "off" {
-			for p := range strings.SplitSeq(*detection, ",") {
-				passes = append(passes, types.Pass(strings.TrimSpace(p)))
-			}
-		}
-		params.Detection = &passes
+		stages := parseStages(*detection)
+		params.Detection = &stages
 	}
 	conn, err := cli.PatchConnection(ctx, id, params)
 	if err != nil {
@@ -280,30 +276,60 @@ func connectionSet(ctx context.Context, args []string) error {
 		return printJSON(conn)
 	}
 	fmt.Printf("%q updated: mode=%s detection=%s max_rows_ceiling=%d statement_timeout=%s scan_sample=%d\n",
-		conn.Name, conn.Mode, passList(conn.Detection), conn.Limits.MaxRowsCeiling, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
+		conn.Name, conn.Mode, stageList(conn.Detection), conn.Limits.MaxRowsCeiling, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
 	return nil
 }
 
-// passList renders a connection's passes, or off when it runs none.
-func passList(ps []types.Pass) string {
-	if len(ps) == 0 {
-		return "off (scan columns are redacted whole)"
+// parseStages reads --detection: "off", or stages like
+// "patterns:email_address+credit_card,list@raw". The daemon validates them.
+func parseStages(spec string) []types.Stage {
+	stages := []types.Stage{}
+	if spec == "off" {
+		return stages
 	}
-	names := make([]string, len(ps))
-	for i, p := range ps {
-		names[i] = string(p)
+	for part := range strings.SplitSeq(spec, ",") {
+		part = strings.TrimSpace(part)
+		var st types.Stage
+		part, st.Raw = strings.CutSuffix(part, "@raw")
+		kind, entities, _ := strings.Cut(part, ":")
+		st.Kind = types.StageKind(kind)
+		if entities != "" {
+			st.Entities = strings.Split(entities, "+")
+		}
+		stages = append(stages, st)
 	}
-	return strings.Join(names, ", ")
+	return stages
 }
 
-// connectionTerms replaces the list pass's terms. They go in and never come
-// back out: the daemon answers with counts, so this command cannot show the
-// current terms and every run states the whole set.
+// stageList renders a connection's pipeline, or off when it runs none.
+func stageList(stages []types.Stage) string {
+	if len(stages) == 0 {
+		return "off (scan columns are redacted whole)"
+	}
+	parts := make([]string, len(stages))
+	for i, st := range stages {
+		p := string(st.Kind)
+		if len(st.Entities) > 0 {
+			p += ":" + strings.Join(st.Entities, "+")
+		}
+		if st.Raw {
+			p += "@raw"
+		}
+		parts[i] = p
+	}
+	return strings.Join(parts, ", ")
+}
+
+// connectionTerms replaces the list stage's terms and expressions. They go in
+// and never come back out: the daemon answers with counts, so this command
+// cannot show the current set and every run states the whole of it.
 func connectionTerms(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("connection terms", flag.ExitOnError)
 	var deny, allow stringList
 	fs.Var(&deny, "deny", "a term that is always PII, matched case-insensitively (repeatable)")
 	fs.Var(&allow, "allow", "a value that is never redacted, e.g. support@yourco.com (repeatable)")
+	var exprs stringList
+	fs.Var(&exprs, "regex", "an expression to redact, as label=expr or just expr (repeatable), e.g. employee_id=EMP-\\d{6}")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -323,15 +349,29 @@ func connectionTerms(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	counts, err := cli.SetTerms(ctx, id, deny, allow)
+	terms := ports.Terms{Deny: deny, Allow: allow, Patterns: []ports.Pattern{}}
+	for _, e := range exprs {
+		terms.Patterns = append(terms.Patterns, parsePattern(e))
+	}
+	counts, err := cli.SetTerms(ctx, id, terms)
 	if err != nil {
 		return err
 	}
 	if *jsonOut {
 		return printJSON(counts)
 	}
-	fmt.Printf("%q now holds %d deny and %d allow term(s). They take effect where its passes include list.\n", name, counts.Deny, counts.Allow)
+	fmt.Printf("%q now holds %d deny term(s), %d allow term(s) and %d expression(s). They take effect where its stages include list.\n",
+		name, counts.Deny, counts.Allow, counts.Patterns)
 	return nil
+}
+
+// parsePattern splits "label=expr". An expression may itself contain '=', so
+// the text before the first '=' is a label only when it looks like one.
+func parsePattern(s string) ports.Pattern {
+	if label, expr, ok := strings.Cut(s, "="); ok && label != "" && strings.Trim(label, "abcdefghijklmnopqrstuvwxyz0123456789_") == "" {
+		return ports.Pattern{Label: label, Expr: expr}
+	}
+	return ports.Pattern{Expr: s}
 }
 
 func connectionDenylist(ctx context.Context, args []string) error {

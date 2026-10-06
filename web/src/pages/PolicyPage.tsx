@@ -18,8 +18,9 @@ import {
   setTerms,
   updateConnection,
   type ConnectionDetail,
+  type Pattern,
 } from '@/lib/api'
-import type { ConnectionSummary, Mode, Pass, RelationRef } from '@/lib/types'
+import type { ConnectionSummary, Mode, RelationRef, Stage, StageKind } from '@/lib/types'
 
 /**
  * Per-connection limits (SPEC §4.5), the mode selector (§9.4) and the
@@ -240,7 +241,7 @@ function LimitsForm({
   )
 }
 
-const PASSES: { value: Pass; title: string; finds: string }[] = [
+const KINDS: { value: StageKind; title: string; finds: string }[] = [
   {
     value: 'patterns',
     title: 'Patterns',
@@ -250,17 +251,31 @@ const PASSES: { value: Pass; title: string; finds: string }[] = [
   {
     value: 'list',
     title: 'Your list',
-    finds: 'The deny terms below — customer names, codenames, anything only you know is sensitive.',
+    finds: 'The deny terms and expressions below — names, codenames, your own identifiers.',
   },
 ]
 
+/** "label = expr" or a bare expression, one per line. */
+function parsePatterns(text: string): Pattern[] {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+    .map((l) => {
+      const m = /^([a-z0-9_]+)\s*=\s*(.+)$/.exec(l)
+      return m ? { label: m[1], expr: m[2] } : { expr: l }
+    })
+}
+
 /**
- * What finds PII inside a `scan` column's free text. Detection never sets a
- * column's policy: the catalog does. With no pass on, free text is not
- * examined and every scan cell is redacted whole.
+ * The pipeline a `scan` column's free text runs through, in order. Each stage
+ * gets the text with earlier stages' hits masked, and a text earlier hits
+ * cover entirely is not sent on. Detection never sets a column's policy: the
+ * catalog does. With no stage on, every scan cell is redacted whole.
  *
- * The terms are write-only. The daemon answers a save with counts and never
- * sends a term back, so these boxes start empty and a save states the whole set.
+ * Terms and expressions are write-only. The daemon answers a save with counts
+ * and never sends one back, so these boxes start empty and a save states the
+ * whole set.
  */
 function DetectionEditor({
   detail,
@@ -274,11 +289,15 @@ function DetectionEditor({
   const [busy, setBusy] = useState(false)
   const [deny, setDeny] = useState('')
   const [allow, setAllow] = useState('')
-  const [saved, setSaved] = useState<{ deny: number; allow: number } | null>(null)
-  const on = detail.detection ?? []
+  const [patterns, setPatterns] = useState('')
+  const [entities, setEntities] = useState<Record<string, string>>(() =>
+    Object.fromEntries((detail.detection ?? []).map((st) => [st.kind, (st.entities ?? []).join(', ')])),
+  )
+  const [saved, setSaved] = useState<{ deny: number; allow: number; patterns: number } | null>(null)
+  const stages = detail.detection ?? []
+  const on = (k: StageKind) => stages.some((st) => st.kind === k)
 
-  const toggle = async (pass: Pass, enabled: boolean) => {
-    const next = PASSES.map((p) => p.value).filter((p) => (p === pass ? enabled : on.includes(p)))
+  const save = async (next: Stage[]) => {
     setBusy(true)
     try {
       await updateConnection(detail.id, { detection: next })
@@ -290,6 +309,18 @@ function DetectionEditor({
     }
   }
 
+  const stageFor = (k: StageKind): Stage => {
+    const list = (entities[k] ?? '')
+      .split(',')
+      .map((e) => e.trim())
+      .filter((e) => e !== '')
+    const prev = stages.find((st) => st.kind === k)
+    return { kind: k, ...(list.length > 0 ? { entities: list } : {}), ...(prev?.raw ? { raw: true } : {}) }
+  }
+  const toggle = (k: StageKind, enabled: boolean) =>
+    void save(KINDS.map((x) => x.value).filter((x) => (x === k ? enabled : on(x))).map(stageFor))
+  const applyEntities = () => void save(KINDS.map((x) => x.value).filter(on).map(stageFor))
+
   const lines = (s: string) =>
     s
       .split('\n')
@@ -299,9 +330,10 @@ function DetectionEditor({
   const saveTerms = async () => {
     setBusy(true)
     try {
-      setSaved(await setTerms(detail.id, { deny: lines(deny), allow: lines(allow) }))
+      setSaved(await setTerms(detail.id, { deny: lines(deny), allow: lines(allow), patterns: parsePatterns(patterns) }))
       setDeny('')
       setAllow('')
+      setPatterns('')
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -313,22 +345,41 @@ function DetectionEditor({
     <section className="flex flex-col gap-4">
       <h2 className="text-heading">Detection</h2>
       <FieldGroup>
-        {PASSES.map((p) => (
-          <Field key={p.value} orientation="horizontal">
-            <Switch
-              id={`pass-${p.value}`}
-              checked={on.includes(p.value)}
-              disabled={busy}
-              onCheckedChange={(v) => void toggle(p.value, v)}
-            />
-            <FieldContent>
-              <FieldLabel htmlFor={`pass-${p.value}`}>{p.title}</FieldLabel>
-              <FieldDescription>{p.finds}</FieldDescription>
-            </FieldContent>
+        {KINDS.map((k) => (
+          <Field key={k.value}>
+            <Field orientation="horizontal">
+              <Switch
+                id={`stage-${k.value}`}
+                checked={on(k.value)}
+                disabled={busy}
+                onCheckedChange={(v) => toggle(k.value, v)}
+              />
+              <FieldContent>
+                <FieldLabel htmlFor={`stage-${k.value}`}>{k.title}</FieldLabel>
+                <FieldDescription>{k.finds}</FieldDescription>
+              </FieldContent>
+            </Field>
+            {on(k.value) ? (
+              <div className="flex items-end gap-3">
+                <Field>
+                  <FieldLabel htmlFor={`entities-${k.value}`}>Only these entities (optional)</FieldLabel>
+                  <Input
+                    id={`entities-${k.value}`}
+                    value={entities[k.value] ?? ''}
+                    onChange={(e) => setEntities((m) => ({ ...m, [k.value]: e.target.value }))}
+                    placeholder="email_address, credit_card"
+                    className="w-80"
+                  />
+                </Field>
+                <Button variant="outline" disabled={busy} onClick={applyEntities}>
+                  Apply
+                </Button>
+              </div>
+            ) : null}
           </Field>
         ))}
       </FieldGroup>
-      {on.length === 0 ? (
+      {stages.length === 0 ? (
         <p className="text-meta text-muted-foreground">
           Off: free text is not examined, so every scan cell is redacted whole.
         </p>
@@ -340,10 +391,24 @@ function DetectionEditor({
           <Textarea id="terms-deny" value={deny} onChange={(e) => setDeny(e.target.value)} disabled={busy} />
         </Field>
         <Field>
+          <FieldLabel htmlFor="terms-patterns">Expressions, one per line as label = expression</FieldLabel>
+          <Textarea
+            id="terms-patterns"
+            value={patterns}
+            onChange={(e) => setPatterns(e.target.value)}
+            disabled={busy}
+            placeholder="employee_id = EMP-\d{6}"
+          />
+          <FieldDescription>
+            Go RE2 syntax, so no expression can stall a query. One that does not compile or matches empty text is
+            refused by name.
+          </FieldDescription>
+        </Field>
+        <Field>
           <FieldLabel htmlFor="terms-allow">Allow terms, one per line</FieldLabel>
           <Textarea id="terms-allow" value={allow} onChange={(e) => setAllow(e.target.value)} disabled={busy} />
           <FieldDescription>
-            A value any pass finds is left visible only when it equals an allow term exactly, ignoring case.
+            A value any stage finds is left visible only when it equals an allow term exactly, ignoring case.
           </FieldDescription>
         </Field>
       </FieldGroup>
@@ -353,12 +418,12 @@ function DetectionEditor({
         </Button>
         {saved ? (
           <span className="text-meta text-muted-foreground">
-            stored {saved.deny} deny and {saved.allow} allow term(s)
+            stored {saved.deny} deny term(s), {saved.patterns} expression(s), {saved.allow} allow term(s)
           </span>
         ) : null}
       </div>
       <p className="text-meta text-muted-foreground">
-        Terms are never shown again once saved. Saving replaces the whole set, so an empty save clears it.
+        Never shown again once saved. Saving replaces the whole set, so an empty save clears it.
       </p>
     </section>
   )

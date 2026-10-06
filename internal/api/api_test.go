@@ -1012,32 +1012,32 @@ func TestHostCarriesSeveralConnections(t *testing.T) {
 func Test_DET_C1_DescribeShowsAConnectionsPassesInOrder(t *testing.T) {
 	r := newRig(t)
 	b := r.browser()
-	b.mustJSON("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"list", "patterns"}}, nil)
+	b.mustJSON("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "list"}, {"kind": "patterns"}}}, nil)
 	var d struct {
-		Detection []string `json:"detection"`
+		Detection []types.Stage `json:"detection"`
 	}
 	b.mustJSON("GET", "/v1/connections/c1", nil, &d)
-	if !slices.Equal(d.Detection, []string{"list", "patterns"}) {
+	if !slices.Equal(stageKinds(d.Detection), []types.StageKind{"list", "patterns"}) {
 		t.Errorf("detection = %v, want [list patterns]", d.Detection)
 	}
 }
 
 func Test_DET_C2_AnAgentCannotChangeDetection(t *testing.T) {
 	r := newRig(t)
-	before := slices.Clone(r.vault.conns["c1"].Detection)
+	before := stageKinds(r.vault.conns["c1"].Detection)
 	a := r.agent("reconcile OPS-441")
 	for _, req := range []struct {
 		method, path string
 		body         any
 	}{
-		{"PATCH", "/v1/connections/c1", map[string]any{"detection": []string{}}},
+		{"PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{}}},
 		{"PUT", "/v1/connections/c1/terms", map[string]any{"allow": []string{"jane@example.com"}}},
 	} {
 		if resp, _ := a.do(req.method, req.path, req.body); resp.StatusCode == http.StatusOK {
 			t.Errorf("%s %s succeeded from an MCP session", req.method, req.path)
 		}
 	}
-	if !slices.Equal(r.vault.conns["c1"].Detection, before) {
+	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) {
 		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
 	}
 	if len(r.vault.terms["c1"].Allow) != 0 {
@@ -1047,22 +1047,22 @@ func Test_DET_C2_AnAgentCannotChangeDetection(t *testing.T) {
 
 func Test_DET_C3_AnUnknownPassIsRejected(t *testing.T) {
 	r := newRig(t)
-	before := slices.Clone(r.vault.conns["c1"].Detection)
-	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"patterns", "magic"}})
+	before := stageKinds(r.vault.conns["c1"].Detection)
+	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "patterns"}, {"kind": "magic"}}})
 	if resp.StatusCode == http.StatusOK {
 		t.Fatalf("an unknown pass was accepted: %s", raw)
 	}
 	if !strings.Contains(string(raw), "patterns") || !strings.Contains(string(raw), "list") {
-		t.Errorf("the error does not name the known passes: %s", raw)
+		t.Errorf("the error does not name the known stage kinds: %s", raw)
 	}
-	if !slices.Equal(r.vault.conns["c1"].Detection, before) {
+	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) {
 		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
 	}
 }
 
 func Test_DET_C37_PresidioIsNotAPassYet(t *testing.T) {
 	r := newRig(t)
-	if resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"presidio"}}); resp.StatusCode == http.StatusOK {
+	if resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "presidio"}}}); resp.StatusCode == http.StatusOK {
 		t.Fatalf("presidio was accepted as a pass: %s", raw)
 	}
 }
@@ -1077,10 +1077,10 @@ func Test_DET_C26_ANewConnectionStartsWithPatterns(t *testing.T) {
 		"name": "new", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"},
 	}, &c)
 	var d struct {
-		Detection []string `json:"detection"`
+		Detection []types.Stage `json:"detection"`
 	}
 	b.mustJSON("GET", "/v1/connections/"+c.ID, nil, &d)
-	if !slices.Equal(d.Detection, []string{"patterns"}) {
+	if !slices.Equal(stageKinds(d.Detection), []types.StageKind{"patterns"}) {
 		t.Errorf("detection = %v, want [patterns]", d.Detection)
 	}
 }
@@ -1094,7 +1094,7 @@ func Test_DET_C31_TermsNeverComeBackOut(t *testing.T) {
 	if got := r.vault.terms["c1"]; !slices.Equal(got.Deny, []string{deny}) || !slices.Equal(got.Allow, []string{allow}) {
 		t.Fatalf("terms were not stored: %+v", got)
 	}
-	_, patch := b.do("PATCH", "/v1/connections/c1", map[string]any{"detection": []string{"patterns", "list"}})
+	_, patch := b.do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "patterns"}, {"kind": "list"}}})
 	_, desc := b.do("GET", "/v1/connections/c1", nil)
 	_, list := b.do("GET", "/v1/connections", nil)
 	putRaw, _ := json.Marshal(put)
@@ -1102,5 +1102,80 @@ func Test_DET_C31_TermsNeverComeBackOut(t *testing.T) {
 		if strings.Contains(string(raw), deny) || strings.Contains(string(raw), allow) {
 			t.Errorf("%s carries a term: %s", name, raw)
 		}
+	}
+}
+
+func stageKinds(stages []types.Stage) []types.StageKind {
+	out := make([]types.StageKind, len(stages))
+	for i, st := range stages {
+		out[i] = st.Kind
+	}
+	return out
+}
+
+func Test_DET_C46_ABadEntityNameIsRefused(t *testing.T) {
+	r := newRig(t)
+	before := stageKinds(r.vault.conns["c1"].Detection)
+	for _, bad := range []string{"", "email⟩", "Email Address"} {
+		resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{
+			"detection": []map[string]any{{"kind": "patterns", "entities": []string{bad}}},
+		})
+		if resp.StatusCode == http.StatusOK {
+			t.Errorf("entity %q was accepted: %s", bad, raw)
+		}
+	}
+	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) || len(r.vault.conns["c1"].Detection) > 0 && len(r.vault.conns["c1"].Detection[0].Entities) > 0 {
+		t.Errorf("stages changed to %+v", r.vault.conns["c1"].Detection)
+	}
+}
+
+func Test_DET_C40_ExpressionsNeverComeBackOut(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+	const expr = `EMP-SECRET-\d{6}`
+	_, put := b.do("PUT", "/v1/connections/c1/terms", map[string]any{"patterns": []map[string]any{{"label": "employee_id", "expr": expr}}})
+	if got := r.vault.terms["c1"].Patterns; len(got) != 1 || got[0].Expr != expr {
+		t.Fatalf("expression was not stored: %+v", got)
+	}
+	_, desc := b.do("GET", "/v1/connections/c1", nil)
+	_, list := b.do("GET", "/v1/connections", nil)
+	for name, raw := range map[string][]byte{"terms response": put, "describe": desc, "list": list} {
+		if strings.Contains(string(raw), "EMP-SECRET") {
+			t.Errorf("%s carries an expression: %s", name, raw)
+		}
+	}
+}
+
+func Test_DET_C41_AnExpressionThatDoesNotCompileIsRefusedByName(t *testing.T) {
+	r := newRig(t)
+	r.vault.terms["c1"] = ports.Terms{Deny: []string{"kept"}}
+	resp, raw := r.browser().do("PUT", "/v1/connections/c1/terms", map[string]any{
+		"deny":     []string{"replaced"},
+		"patterns": []map[string]any{{"label": "badge", "expr": `EMP-(`}},
+	})
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("an expression that does not compile was accepted: %s", raw)
+	}
+	if !strings.Contains(string(raw), "badge") {
+		t.Errorf("the refusal does not name the expression: %s", raw)
+	}
+	if got := r.vault.terms["c1"]; !slices.Equal(got.Deny, []string{"kept"}) || len(got.Patterns) != 0 {
+		t.Errorf("stored terms changed to %+v", got)
+	}
+}
+
+func Test_DET_C42_AnEmptyMatchOrABadLabelIsRefused(t *testing.T) {
+	r := newRig(t)
+	for _, p := range []map[string]any{
+		{"label": "anything", "expr": `x*`},
+		{"label": "bad⟩label", "expr": `EMP-\d{6}`},
+	} {
+		resp, raw := r.browser().do("PUT", "/v1/connections/c1/terms", map[string]any{"patterns": []map[string]any{p}})
+		if resp.StatusCode == http.StatusOK {
+			t.Errorf("%v was accepted: %s", p, raw)
+		}
+	}
+	if got := r.vault.terms["c1"]; len(got.Patterns) != 0 {
+		t.Errorf("something was stored: %+v", got)
 	}
 }

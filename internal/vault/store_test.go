@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/mtchen/keeper/internal/ports"
@@ -269,5 +270,31 @@ func TestHostsOwnTheirConnections(t *testing.T) {
 	}
 	if hs, _ := v.Hosts(ctx); len(hs) != 0 {
 		t.Errorf("hosts after removal = %+v", hs)
+	}
+}
+
+func Test_DET_C44_TheExportKeepsTermsAndExpressions(t *testing.T) {
+	v, _ := newTestVault(t)
+	ctx := context.Background()
+	conn := testConnection("")
+	conn.HostID = testHost(t, v)
+	if err := v.Register(ctx, &conn, ports.Credential{User: "ro"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	terms := ports.Terms{Deny: []string{"Acme Corp"}, Allow: []string{"support@yourco.com"}, Patterns: []ports.Pattern{{Label: "employee_id", Expr: `EMP-\d{6}`}}}
+	if err := v.SetTerms(ctx, conn.ID, terms); err != nil {
+		t.Fatal(err)
+	}
+	data, err := v.Export(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc document
+	if err := jsonUnmarshalForTest(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	rec := doc.Connections[0]
+	if !slices.Equal(rec.Deny, terms.Deny) || !slices.Equal(rec.Allow, terms.Allow) || !slices.Equal(rec.Patterns, terms.Patterns) {
+		t.Errorf("export lost terms: %+v", rec)
 	}
 }

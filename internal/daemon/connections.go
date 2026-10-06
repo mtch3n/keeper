@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,7 +66,7 @@ type ConnectionDetail struct {
 	CatalogStatus      CatalogStatus           `json:"catalog_status"`
 	PolicySummary      map[types.Policy]int    `json:"policy_summary,omitzero"`
 	Mode               types.Mode              `json:"mode"`
-	Detection          []types.Pass            `json:"detection"`
+	Detection          []types.Stage           `json:"detection"`
 	Limits             types.Limits            `json:"limits"`
 	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
 	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
@@ -285,7 +288,7 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 		Role:        spec.Read.User,
 		CatalogPath: spec.CatalogPath,
 		Mode:        types.ModeAssisted,
-		Detection:   []types.Pass{types.PassPatterns},
+		Detection:   []types.Stage{{Kind: types.KindPatterns}},
 		Limits:      types.DefaultLimits(),
 	}
 	if err := d.deps.Vault.Register(ctx, c, spec.Read, spec.Write); err != nil {
@@ -382,9 +385,9 @@ func (d *Daemon) Audits(ctx context.Context) ([]AuditReport, error) {
 type Patch struct {
 	Mode   *types.Mode
 	Limits *types.Limits
-	// Detection replaces the connection's passes; an empty list turns
+	// Detection replaces the connection's pipeline; an empty list turns
 	// detection off.
-	Detection *[]types.Pass
+	Detection *[]types.Stage
 }
 
 // Update applies a patch.
@@ -400,7 +403,7 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 		c.Mode = *p.Mode
 	}
 	if p.Detection != nil {
-		if err := validPasses(*p.Detection); err != nil {
+		if err := validStages(*p.Detection); err != nil {
 			return nil, err
 		}
 		c.Detection = slices.Clone(*p.Detection)
@@ -510,28 +513,71 @@ func (d *Daemon) Remove(ctx context.Context, id string) error {
 	return nil
 }
 
-// validPasses refuses a pass keeper does not have and a pass named twice.
-func validPasses(ps []types.Pass) error {
-	names := make([]string, len(types.Passes))
-	for i, p := range types.Passes {
-		names[i] = string(p)
+// labelRE is what an entity name or an expression's label may hold: it ends up
+// inside a redaction marker, so it cannot carry the marker's delimiters.
+var labelRE = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// validStages refuses a stage kind keeper does not have, a kind named twice and
+// an entity name that could not be a marker label.
+func validStages(stages []types.Stage) error {
+	kinds := make([]string, len(types.StageKinds))
+	for i, k := range types.StageKinds {
+		kinds[i] = string(k)
 	}
-	for i, p := range ps {
-		if !slices.Contains(types.Passes, p) {
-			return errValidation("detection", "passes must be from: "+strings.Join(names, ", "))
+	for i, st := range stages {
+		if !slices.Contains(types.StageKinds, st.Kind) {
+			return errValidation("detection", "stage kinds must be from: "+strings.Join(kinds, ", "))
 		}
-		if slices.Contains(ps[:i], p) {
-			return errValidation("detection", "names the "+string(p)+" pass twice")
+		if slices.ContainsFunc(stages[:i], func(o types.Stage) bool { return o.Kind == st.Kind }) {
+			return errValidation("detection", "names the "+string(st.Kind)+" stage twice")
+		}
+		for _, e := range st.Entities {
+			if !labelRE.MatchString(e) {
+				return errValidation("detection", "entity "+strconv.Quote(e)+" must be lowercase letters, digits and underscores")
+			}
 		}
 	}
 	return nil
 }
 
-// TermCounts is PUT /v1/connections/{id}/terms. It reports how many terms are
-// stored and never the terms themselves.
+// Limits on the operator's own expressions.
+const (
+	maxPatterns   = 200
+	maxPatternLen = 1000
+)
+
+// validPatterns refuses an expression that does not compile, that matches the
+// empty string — it would match between every character — or whose label could
+// not be a marker label, naming the one at fault.
+func validPatterns(ps []ports.Pattern) error {
+	if len(ps) > maxPatterns {
+		return errValidation("patterns", "hold at most "+strconv.Itoa(maxPatterns)+" expressions")
+	}
+	for _, p := range ps {
+		name := strconv.Quote(cmp.Or(p.Label, p.Expr))
+		if p.Label != "" && !labelRE.MatchString(p.Label) {
+			return errValidation("pattern "+name, "label must be lowercase letters, digits and underscores")
+		}
+		if len(p.Expr) > maxPatternLen {
+			return errValidation("pattern "+name, "is longer than "+strconv.Itoa(maxPatternLen)+" bytes")
+		}
+		re, err := regexp.Compile(p.Expr)
+		if err != nil {
+			return errValidation("pattern "+name, "does not compile")
+		}
+		if re.MatchString("") {
+			return errValidation("pattern "+name, "matches the empty string")
+		}
+	}
+	return nil
+}
+
+// TermCounts is PUT /v1/connections/{id}/terms. It reports how many terms and
+// expressions are stored and never the terms themselves.
 type TermCounts struct {
-	Deny  int `json:"deny"`
-	Allow int `json:"allow"`
+	Deny     int `json:"deny"`
+	Allow    int `json:"allow"`
+	Patterns int `json:"patterns"`
 }
 
 // SetTerms replaces a connection's list-pass terms. Blank terms are dropped:
@@ -549,10 +595,13 @@ func (d *Daemon) SetTerms(ctx context.Context, id string, t ports.Terms) (*TermC
 		}
 		return out
 	}
-	t = ports.Terms{Deny: clean(t.Deny), Allow: clean(t.Allow)}
+	if err := validPatterns(t.Patterns); err != nil {
+		return nil, err
+	}
+	t = ports.Terms{Deny: clean(t.Deny), Allow: clean(t.Allow), Patterns: t.Patterns}
 	if err := d.deps.Vault.SetTerms(ctx, id, t); err != nil {
 		return nil, err
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "terms", "connection_id": id}})
-	return &TermCounts{Deny: len(t.Deny), Allow: len(t.Allow)}, nil
+	return &TermCounts{Deny: len(t.Deny), Allow: len(t.Allow), Patterns: len(t.Patterns)}, nil
 }
