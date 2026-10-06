@@ -1397,3 +1397,44 @@ func Test_WRITE_C6_PreviewedValuesReachOnlyTheApprover(t *testing.T) {
 		}
 	}
 }
+
+func Test_WRITE_C9_AnAgentCancelsItsOwnPendingRequest(t *testing.T) {
+	r := escalatingRig(t)
+	a := r.agent("look at last week's orders")
+	var tk types.Ticket
+	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
+
+	var got struct {
+		State string `json:"state"`
+	}
+	a.mustJSON("POST", "/v1/tickets/"+tk.ID+"/cancel", nil, &got)
+	if got.State != string(types.TicketCancelled) {
+		t.Errorf("cancel answered %q, want cancelled", got.State)
+	}
+	if q := r.d.Approvals(); len(q) != 0 {
+		t.Errorf("a cancelled request is still in the Inbox: %+v", q)
+	}
+	var recorded bool
+	for _, rec := range r.alog.records {
+		recorded = recorded || rec.Decision == types.DecisionCancelled
+	}
+	if !recorded {
+		t.Errorf("Activity has no cancelled record: %+v", r.alog.records)
+	}
+}
+
+func Test_WRITE_C10_AnAgentCannotCancelAnotherSessionsRequest(t *testing.T) {
+	r := escalatingRig(t)
+	owner := r.agent("look at last week's orders")
+	var tk types.Ticket
+	owner.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
+
+	other := r.agent("something else")
+	resp, raw := other.do("POST", "/v1/tickets/"+tk.ID+"/cancel", nil)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("another session cancelled the request: %s", raw)
+	}
+	if q := r.d.Approvals(); len(q) != 1 {
+		t.Errorf("the request left the Inbox: %+v", q)
+	}
+}
