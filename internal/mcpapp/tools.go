@@ -53,6 +53,11 @@ func registerTools(s *mcp.Server, h *daemonHolder) {
 	}, h.getResult)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "cancel",
+		Description: "Withdraw a ticket this session is waiting on, when the statement is no longer needed. It leaves the human's Inbox and is recorded as cancelled.",
+	}, h.cancel)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name: "request_input",
 		Description: "Open a local browser form for a human to enter a sensitive value (an email, a name, ...) that this " +
 			"session must never see directly. Present the returned url to the user, then poll get_input_result.",
@@ -254,6 +259,28 @@ func (h *daemonHolder) query(ctx context.Context, req *mcp.CallToolRequest, in Q
 	}
 	t := outcome.Ticket
 	return nil, QueryOut{Ticket: t.ID, State: t.State, Reason: t.Reason, AuditID: t.AuditID}, nil
+}
+
+// --- cancel ---
+
+type CancelIn struct {
+	Ticket string `json:"ticket" jsonschema:"the ticket query returned"`
+}
+
+type CancelOut struct {
+	State types.TicketState `json:"state"`
+}
+
+func (h *daemonHolder) cancel(ctx context.Context, req *mcp.CallToolRequest, in CancelIn) (*mcp.CallToolResult, CancelOut, error) {
+	cli, err := h.get(ctx, req)
+	if err != nil {
+		return nil, CancelOut{}, err
+	}
+	res, err := cli.CancelTicket(ctx, in.Ticket)
+	if err != nil {
+		return nil, CancelOut{}, err
+	}
+	return nil, CancelOut{State: res.State}, nil
 }
 
 // --- get_result ---

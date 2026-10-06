@@ -132,6 +132,32 @@ func (d *Daemon) Decide(ctx context.Context, ticketID string, dec Decision) erro
 	return nil
 }
 
+// Cancel withdraws a session's own pending request: it leaves the Inbox and
+// Activity records it cancelled. Another session's ticket is unknown to this
+// one, exactly as it is to get_result.
+func (d *Daemon) Cancel(ctx context.Context, s *Session, ticketID string) (*TicketView, error) {
+	d.mu.Lock()
+	tk, ok := d.tickets[ticketID]
+	if !ok || !d.ticketBelongsLocked(tk, s) {
+		d.mu.Unlock()
+		return nil, errTicketUnknown
+	}
+	if tk.t.State != types.TicketPending {
+		d.mu.Unlock()
+		return nil, errNoDecision
+	}
+	d.setTicketStateLocked(tk, types.TicketCancelled, nil, nil)
+	events := d.dequeueLocked(ticketID, "cancelled")
+	view := &TicketView{Ticket: tk.t}
+	d.mu.Unlock()
+
+	d.recordDecisions(ctx, events, types.DecisionCancelled, s.Info().Client.Name)
+	for _, e := range events {
+		d.hub.Publish(e)
+	}
+	return view, nil
+}
+
 // startApproved executes a ticket a human approved, off the decider's request.
 func (d *Daemon) startApproved(tk *ticket) {
 	d.mu.Lock()

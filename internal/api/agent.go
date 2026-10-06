@@ -132,6 +132,15 @@ func (s *Server) ticket(ctx context.Context, rq *reqInfo, _ http.ResponseWriter,
 	return out, nil
 }
 
+// cancelTicket withdraws the session's own pending request.
+func (s *Server) cancelTicket(ctx context.Context, rq *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
+	v, err := s.d.Cancel(ctx, rq.session, r.PathValue("id"))
+	if err != nil {
+		return nil, err
+	}
+	return ticketResponse{Ticket: v.Ticket.ID, State: v.Ticket.State, Tier: v.Ticket.Tier, Reason: v.Ticket.Reason, AuditID: v.Ticket.AuditID}, nil
+}
+
 type localRequestRequest struct {
 	Kind         types.RequestKind `json:"kind"`
 	ConnectionID string            `json:"connection_id"`

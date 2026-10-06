@@ -19,6 +19,7 @@ var wantTools = []string{
 	"explain",
 	"query",
 	"get_result",
+	"cancel",
 	"request_input",
 	"get_input_result",
 	"request_authorization",
