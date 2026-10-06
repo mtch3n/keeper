@@ -46,6 +46,7 @@ var summaries = map[types.Code]string{
 	types.CodeTimeout:           "the statement exceeded this connection's statement timeout",
 	types.CodeApprovalRequired:  "the statement modifies data; writes are approved before they run",
 	types.CodeNoWriteCredential: "this connection has no write credential, so it cannot modify data",
+	types.CodeUnreachable:       "keeper could not connect to this database",
 	types.CodeInternal:          "the database did not complete this statement",
 }
 
@@ -57,6 +58,7 @@ var actions = map[types.Code]string{
 	types.CodeTimeout:           "narrow the statement, or ask an operator to raise statement_timeout",
 	types.CodeApprovalRequired:  "resubmit the statement so it can be previewed and approved",
 	types.CodeNoWriteCredential: "ask an operator to register a write credential for this connection",
+	types.CodeUnreachable:       "check that the server is running and reachable from this machine",
 	types.CodeInternal:          "retry; tell an operator if it persists",
 }
 
@@ -78,6 +80,11 @@ func convert(err error) error {
 	}
 	if pg, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return keeperError(codeForSQLState(pg.Code, pg.Routine))
+	}
+	// A connection that never opened is not a statement that failed. It is
+	// checked before the context, because a connect that times out is both.
+	if _, ok := errors.AsType[*pgconn.ConnectError](err); ok {
+		return keeperError(types.CodeUnreachable)
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

@@ -79,12 +79,16 @@ type DoctorReport struct {
 
 // ConnectionHealth is one connection's line in a doctor report.
 type ConnectionHealth struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Findings     int    `json:"findings"`
-	Unclassified int    `json:"unclassified_columns"`
-	CatalogFresh bool   `json:"catalog_fresh"`
-	FreshKnown   bool   `json:"catalog_freshness_known"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Findings int    `json:"findings"`
+	// State is reachable, unreachable, or unknown when doctor's probe ran out
+	// of time.
+	State string `json:"state"`
+	// Unclassified is nil when doctor did not read the catalog.
+	Unclassified *int `json:"unclassified_columns,omitzero"`
+	CatalogFresh bool `json:"catalog_fresh"`
+	FreshKnown   bool `json:"catalog_freshness_known"`
 }
 
 // GetDoctor fetches the daemon-connected doctor report. cmd/keeper's
