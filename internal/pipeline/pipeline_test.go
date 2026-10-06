@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strconv"
@@ -946,5 +947,50 @@ func Test_WRITE_C13_AFilterOnAnUncataloguedColumnIsFlaggedUnclassified(t *testin
 	want := []types.FilterColumn{{Relation: usersRef, Column: "dob", Flag: "unclassified"}}
 	if !slices.Equal(f.Filters, want) {
 		t.Errorf("filters = %+v, want only dob flagged unclassified (id is allow)", f.Filters)
+	}
+}
+
+func sizedRows(n, size int) [][]any {
+	rows := make([][]any, n)
+	for i := range rows {
+		rows[i] = []any{int64(i), strings.Repeat("x", size)}
+	}
+	return rows
+}
+
+func sizeHarness(t *testing.T, rows [][]any) *harness {
+	return newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1), fromColumn("label", "text", cleanOID, 2)}
+		h.exec.rows = rows
+		h.exec.plan = readPlan(int64(len(rows)), cleanRef)
+	})
+}
+
+func Test_WRITE_C11_AResultIsCutBySizeUnderTheCap(t *testing.T) {
+	h := sizeHarness(t, sizedRows(30, 100<<10)) // 3 MiB
+	if h.authority.conn.Limits.MaxBytes != 1<<20 {
+		t.Fatalf("default size cap = %d, want 1 MiB", h.authority.conn.Limits.MaxBytes)
+	}
+	dec := h.query(t, Request{SQL: "SELECT id, label FROM clean_ids"})
+	if dec.Result == nil {
+		t.Fatalf("no result: %v", dec.Error)
+	}
+	body, _ := json.Marshal(dec.Result.Rows)
+	if len(body) > 1<<20 || len(dec.Result.Rows) == 0 || len(dec.Result.Rows) == 30 {
+		t.Errorf("rows = %d, %d bytes; want some rows, under 1 MiB", len(dec.Result.Rows), len(body))
+	}
+	if !dec.Result.Truncated || dec.Result.TruncatedBy != types.CutBySize || dec.Result.RowCount != len(dec.Result.Rows) {
+		t.Errorf("result says truncated %v by %q with row_count %d; want cut by size", dec.Result.Truncated, dec.Result.TruncatedBy, dec.Result.RowCount)
+	}
+}
+
+func Test_WRITE_C14_ARowLargerThanTheCapLeavesNoRows(t *testing.T) {
+	h := sizeHarness(t, sizedRows(1, 2<<20))
+	dec := h.query(t, Request{SQL: "SELECT id, label FROM clean_ids"})
+	if dec.Result == nil {
+		t.Fatalf("no result: %v", dec.Error)
+	}
+	if len(dec.Result.Rows) != 0 || !dec.Result.Truncated || dec.Result.TruncatedBy != types.CutBySize {
+		t.Errorf("rows = %d, truncated %v by %q; want none, cut by size", len(dec.Result.Rows), dec.Result.Truncated, dec.Result.TruncatedBy)
 	}
 }

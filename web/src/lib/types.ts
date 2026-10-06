@@ -40,6 +40,8 @@ export interface RelationRef {
 
 export interface Limits {
   max_rows_ceiling: number
+  /** bytes of row data per result */
+  max_bytes: number
   /** nanoseconds */
   statement_timeout: number
   scan_sample: number

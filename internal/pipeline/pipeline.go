@@ -15,6 +15,7 @@ package pipeline
 import (
 	"cmp"
 	"context"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -346,6 +347,14 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		return refuse(st, st.tier, asKeeperError(err))
 	}
 
+	var cut types.Cut
+	if raw.Truncated {
+		cut = types.CutByRows
+	}
+	if kept := withinBytes(rows, conn.Limits.MaxBytes); kept < len(rows) {
+		rows, cut = rows[:kept], types.CutBySize
+	}
+
 	st.rowCount = len(rows)
 	st.outputColumns = cols
 
@@ -353,7 +362,8 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		Rows:          rows,
 		Columns:       cols,
 		RowCount:      len(rows),
-		Truncated:     raw.Truncated,
+		Truncated:     cut != "",
+		TruncatedBy:   cut,
 		Transforms:    st.transforms,
 		Tier:          st.tier,
 		AuditID:       st.auditID,
@@ -712,4 +722,21 @@ func flaggedFilters(cat ports.Catalog, refs []ports.ColumnRef) []types.FilterCol
 		}
 	}
 	return out
+}
+
+// withinBytes is how many leading rows fit in limit bytes of row data, measured
+// as the agent receives them: after redaction, encoded as JSON.
+func withinBytes(rows [][]any, limit int) int {
+	total := 0
+	for i, row := range rows {
+		b, err := json.Marshal(row)
+		if err != nil {
+			return i
+		}
+		total += len(b) + 1
+		if total > limit {
+			return i
+		}
+	}
+	return len(rows)
 }

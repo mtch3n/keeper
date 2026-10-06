@@ -144,13 +144,13 @@ func (c *Client) Audit(ctx context.Context) ([]AuditReport, error) {
 	return out, nil
 }
 
-// --max-rows) never implicitly resets the others to zero; a zero value here
-// means "leave this alone", not "set it to zero".
+// PatchConnectionParams is PATCH /v1/connections/{id}. An unset field is left
+// alone; Limits, when set, replaces every limit, so a caller changing one reads
+// the others first.
 type PatchConnectionParams struct {
-	Mode             types.Mode    `json:"mode,omitzero"`
-	MaxRowsCeiling   int           `json:"max_rows_ceiling,omitzero"`
-	StatementTimeout time.Duration `json:"statement_timeout,omitzero"`
-	ScanSample       int           `json:"scan_sample,omitzero"`
+	Mode types.Mode `json:"mode,omitzero"`
+	// Limits replaces all of the connection's limits when set.
+	Limits *types.Limits `json:"limits,omitzero"`
 	// Detection replaces the connection's passes when set; an empty list turns
 	// detection off.
 	Detection *[]types.Stage `json:"detection,omitzero"`
