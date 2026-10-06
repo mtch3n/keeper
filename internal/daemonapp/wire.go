@@ -400,19 +400,14 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 // Query that escalated has already taken a write preview and asking twice would
 // take two.
 func (a *pipelineAdapter) Facts(ctx context.Context, sess types.Session, connID, sql string, params []ports.Param) (*types.ApprovalFacts, error) {
-	res, err := a.Explain(ctx, sess, connID, sql, params)
+	f, kerr, err := a.p.Facts(ctx, a.request(sess, connID, sql, params))
 	if err != nil {
 		return nil, err
 	}
-	return &types.ApprovalFacts{
-		Intent:        sess.Intent,
-		StatementType: res.StatementType,
-		Relations:     res.Relations,
-		EstimatedRows: res.EstimatedRows,
-		EstimatedCost: res.EstimatedCost,
-		Egress:        egressSummary(res.OutputColumns),
-		Reasons:       res.Reasons,
-	}, nil
+	if kerr != nil {
+		return nil, kerr
+	}
+	return f, nil
 }
 
 func (a *pipelineAdapter) PreviewWrite(ctx context.Context, sess types.Session, connID, sql string, params []ports.Param) (*types.WritePreview, error) {
@@ -438,34 +433,6 @@ func (a *pipelineAdapter) CommitWrite(ctx context.Context, sess types.Session, c
 		return nil, fmt.Errorf("keeperd: the approved write did not run")
 	}
 	return res, nil
-}
-
-// egressSummary turns the resolved output columns into the one line §9.2 puts
-// above the SQL: what will be masked, in words rather than policy names.
-func egressSummary(cols []types.ColumnMeta) []string {
-	counts := map[types.Policy]int{}
-	for _, c := range cols {
-		if c.Policy != types.PolicyAllow {
-			counts[c.Policy]++
-		}
-	}
-	if len(counts) == 0 {
-		return nil
-	}
-	phrase := map[types.Policy]string{
-		types.PolicyToken:   "tokenized",
-		types.PolicyPartial: "partially masked",
-		types.PolicyRedact:  "redacted",
-		types.PolicyDrop:    "dropped",
-		types.PolicyScan:    "scanned for PII spans",
-	}
-	var out []string
-	for _, p := range []types.Policy{types.PolicyToken, types.PolicyPartial, types.PolicyRedact, types.PolicyDrop, types.PolicyScan} {
-		if n := counts[p]; n > 0 {
-			out = append(out, fmt.Sprintf("%d column(s) %s", n, phrase[p]))
-		}
-	}
-	return out
 }
 
 // configDir is §4.3's ~/.config/keeper, overridable for tests and for a

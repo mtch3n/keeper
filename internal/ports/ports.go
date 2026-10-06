@@ -331,6 +331,17 @@ type PlanFacts struct {
 	EstimatedCost float64
 	Writes        bool
 	HasFilter     bool
+	// Filters are the columns the plan's conditions name: filters, index and
+	// join conditions.
+	Filters []ColumnRef
+}
+
+// ColumnRef is one column of a relation, by identity and by name.
+type ColumnRef struct {
+	TableOID uint32
+	AttNum   uint16
+	Relation types.RelationRef
+	Column   string
 }
 
 // RawResult is what came back from the server, before G7.

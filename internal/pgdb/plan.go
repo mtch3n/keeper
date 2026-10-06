@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -38,6 +39,7 @@ type planNode struct {
 	Operation    string     `json:"Operation"`
 	RelationName string     `json:"Relation Name"`
 	Schema       string     `json:"Schema"`
+	Alias        string     `json:"Alias"`
 	PlanRows     float64    `json:"Plan Rows"`
 	TotalCost    float64    `json:"Total Cost"`
 	Filter       string     `json:"Filter"`
@@ -58,6 +60,10 @@ func (n *planNode) filtered() bool {
 		n.JoinFilter != "" || n.HashCond != "" || n.MergeCond != ""
 }
 
+func (n *planNode) conditions() []string {
+	return []string{n.Filter, n.IndexCond, n.RecheckCond, n.JoinFilter, n.HashCond, n.MergeCond}
+}
+
 // relRef is one relation named by the plan, before OID resolution. Schema is
 // empty only when the server omitted it, in which case resolution falls back to
 // the session search_path.
@@ -73,8 +79,10 @@ type walkResult struct {
 	targets   []relRef
 	operation string
 	filtered  bool
-	rows      int64
-	cost      float64
+	// filters are the relation columns the plan's conditions name.
+	filters []colRef
+	rows    int64
+	cost    float64
 }
 
 func walkPlan(root *planNode) walkResult {
@@ -84,14 +92,18 @@ func walkPlan(root *planNode) walkResult {
 
 	seenRel := map[relRef]bool{}
 	seenTarget := map[relRef]bool{}
+	aliases := map[string]relRef{}
+	var conds []string
 
 	var visit func(n *planNode, depth int)
 	visit = func(n *planNode, depth int) {
 		if n.filtered() {
 			w.filtered = true
+			conds = append(conds, n.conditions()...)
 		}
 		if n.RelationName != "" {
 			r := relRef{schema: n.Schema, name: n.RelationName}
+			aliases[cmp.Or(n.Alias, n.RelationName)] = r
 			if !seenRel[r] {
 				seenRel[r] = true
 				w.relations = append(w.relations, r)
@@ -116,7 +128,48 @@ func walkPlan(root *planNode) walkResult {
 		}
 	}
 	visit(root, 0)
+	for _, cond := range conds {
+		for _, q := range qualifiedNames(cond) {
+			if r, ok := aliases[q[0]]; ok {
+				if c := (colRef{rel: r, column: q[1]}); !slices.Contains(w.filters, c) {
+					w.filters = append(w.filters, c)
+				}
+			}
+		}
+	}
 	return w
+}
+
+// colRef is one column a plan condition names, before resolution.
+type colRef struct {
+	rel    relRef
+	column string
+}
+
+// qualifiedName is alias.column in a VERBOSE plan condition, either part
+// quoted. A name followed by "(" is a schema-qualified function, not a column.
+var qualifiedName = regexp.MustCompile(`(?:"((?:[^"]|"")+)"|([A-Za-z_][A-Za-z0-9_$]*))\.(?:"((?:[^"]|"")+)"|([A-Za-z_][A-Za-z0-9_$]*))(\s*\()?`)
+
+// literal is a quoted string constant, removed before names are read so a
+// value like 'users.ssn' is not taken for a column.
+var literal = regexp.MustCompile(`'(?:[^']|'')*'`)
+
+// qualifiedNames returns the [qualifier, column] pairs a condition names.
+func qualifiedNames(cond string) [][2]string {
+	var out [][2]string
+	for _, m := range qualifiedName.FindAllStringSubmatch(literal.ReplaceAllString(cond, "''"), -1) {
+		if m[5] != "" {
+			continue
+		}
+		unquote := func(quoted, bare string) string {
+			if quoted != "" {
+				return strings.ReplaceAll(quoted, `""`, `"`)
+			}
+			return bare
+		}
+		out = append(out, [2]string{unquote(m[1], m[2]), unquote(m[3], m[4])})
+	}
+	return out
 }
 
 // explain runs EXPLAIN inside the caller's transaction — the same BEGIN READ
@@ -188,7 +241,51 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 	}
 	facts.RelationNames = names
 	facts.Relations = oids
+	if facts.Filters, err = resolveColumns(ctx, c, w.filters); err != nil {
+		return nil, err
+	}
 	return facts, nil
+}
+
+// resolveColumnsSQL turns (schema, relation, column) names into the
+// (tableOID, attnum) identities the catalog is keyed by.
+const resolveColumnsSQL = `
+SELECT q.s, q.r, q.col, a.attrelid::int8, a.attnum::int4
+FROM unnest($1::text[], $2::text[], $3::text[]) AS q(s, r, col)
+JOIN pg_attribute a
+  ON a.attrelid = to_regclass(CASE WHEN q.s = '' THEN format('%I', q.r) ELSE format('%I.%I', q.s, q.r) END)
+ AND a.attname = q.col AND a.attnum > 0 AND NOT a.attisdropped`
+
+func resolveColumns(ctx context.Context, c *conn, refs []colRef) ([]ports.ColumnRef, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	schemas, rels, cols := make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
+	for i, r := range refs {
+		schemas[i], rels[i], cols[i] = r.rel.schema, r.rel.name, r.column
+	}
+	rows, err := c.tx.Query(ctx, resolveColumnsSQL, schemas, rels, cols)
+	if err != nil {
+		return nil, convert(err)
+	}
+	defer rows.Close()
+	var out []ports.ColumnRef
+	for rows.Next() {
+		var schema, rel, col string
+		var oid int64
+		var att int32
+		if err := rows.Scan(&schema, &rel, &col, &oid, &att); err != nil {
+			return nil, convert(err)
+		}
+		out = append(out, ports.ColumnRef{
+			TableOID: uint32(oid), AttNum: uint16(att),
+			Relation: types.RelationRef{Schema: schema, Relation: rel}, Column: col,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, convert(err)
+	}
+	return out, nil
 }
 
 // resolveRelationsSQL turns the plan's relation names into the identities the

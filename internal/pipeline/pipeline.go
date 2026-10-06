@@ -13,9 +13,11 @@
 package pipeline
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"uuid"
 
@@ -388,17 +390,9 @@ func (p *Pipeline) checkWrite(st *state, conn *types.Connection) *Decision {
 
 // escalate produces the approval facts, and for a write the preview of R4.2d.
 func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decision {
-	facts := types.ApprovalFacts{
-		Intent:        req.Session.Intent,
-		StatementType: st.plan.StatementType,
-		Relations:     st.plan.RelationNames,
-		EstimatedRows: st.plan.EstimatedRows,
-		EstimatedCost: st.plan.EstimatedCost,
-		Egress:        egressSummary(st.cols),
-		Reasons:       st.reasons,
-	}
-	esc := &Escalation{Facts: facts, SQL: req.SQL}
+	esc := &Escalation{SQL: req.SQL}
 	st.outputColumns = publicColumns(st.cols)
+	facts := p.approvalFacts(req, st, false)
 
 	if st.plan.Writes {
 		// R4.2d step 1: the statement runs and the transaction rolls back. The
@@ -430,8 +424,10 @@ func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decisi
 			// the agent.
 			Changes: shownChanges(raw.Changes, raw.CommandTag),
 		}
+		facts.Protection = protection(st.conn, true)
 	}
 
+	esc.Facts = facts
 	return &Decision{Escalation: esc, Error: keeperError(types.CodeApprovalRequired,
 		"this statement needs a human decision before it runs",
 		"a keeper approval is waiting; poll the ticket for the outcome")}
@@ -611,5 +607,109 @@ func shownChanges(c *types.WriteChanges, affected int64) *types.WriteChanges {
 	}
 	out := &types.WriteChanges{Columns: c.Columns, Rows: c.Rows[:min(len(c.Rows), types.PreviewRows)]}
 	out.Omitted = max(affected-int64(len(out.Rows)), 0)
+	return out
+}
+
+// Facts is §9.2's approval payload for a statement, from the dry run: nothing is
+// read and no write is previewed. Like Explain, it is audited.
+func (p *Pipeline) Facts(ctx context.Context, req Request) (*types.ApprovalFacts, *types.Error, error) {
+	st := &state{auditID: newAuditID(), started: p.now(), transforms: map[string]types.Transform{}}
+	_, ke := p.explain(ctx, req, st)
+	if ke != nil {
+		ke.AuditID = st.auditID
+		st.errCode = ke.Code
+	}
+	if err := p.writeAudit(ctx, req, st); err != nil {
+		return nil, nil, err
+	}
+	if ke != nil {
+		return nil, ke, nil
+	}
+	f := p.approvalFacts(req, st, false)
+	return &f, nil, nil
+}
+
+// approvalFacts describes the statement st planned. previewed is set once a
+// write's preview ran, which the server only allows a role that can write.
+func (p *Pipeline) approvalFacts(req Request, st *state, previewed bool) types.ApprovalFacts {
+	f := types.ApprovalFacts{
+		Intent:     req.Session.Intent,
+		Egress:     egressSummary(st.cols),
+		Reasons:    st.reasons,
+		Protection: protection(st.conn, previewed),
+	}
+	if st.plan != nil {
+		f.StatementType = st.plan.StatementType
+		f.Relations = st.plan.RelationNames
+		f.EstimatedRows = st.plan.EstimatedRows
+		f.EstimatedCost = st.plan.EstimatedCost
+		if st.plan.Writes && len(st.plan.RelationNames) > 0 {
+			// internal/pgdb puts the one ModifyTable target first.
+			f.Targets = st.plan.RelationNames[:1]
+		}
+		if st.cat != nil {
+			f.Filters = flaggedFilters(st.cat, st.plan.Filters)
+		}
+	}
+	f.Risk, f.Unreadable = riskOf(f.StatementType)
+	for _, c := range publicColumns(st.cols) {
+		f.Columns = append(f.Columns, c.Name)
+	}
+	return f
+}
+
+// riskOf classes a statement type. MERGE can delete, so it is destructive; a
+// type keeper does not know is destructive and unreadable.
+func riskOf(stmt string) (types.Risk, bool) {
+	switch stmt {
+	case pgdb.StmtSelect:
+		return types.RiskRead, false
+	case pgdb.StmtInsert, pgdb.StmtUpdate:
+		return types.RiskWrite, false
+	case pgdb.StmtDelete, pgdb.StmtMerge:
+		return types.RiskDestructive, false
+	}
+	return types.RiskDestructive, true
+}
+
+// protection is what would stop a write on c. A role that holds a write grant
+// shows it in a read-only profile's audit; a writer's audit does not report its
+// own write grants, so there only a preview that ran can say.
+func protection(c *types.Connection, previewed bool) types.Protection {
+	pr := types.Protection{Writes: cmp.Or(c.Writes, types.WritesOff), RoleWrites: "unknown"}
+	switch {
+	case previewed:
+		pr.RoleWrites = "yes"
+	case c.AuditedAt.IsZero() || c.Writes == types.WritesApprove:
+	default:
+		pr.RoleWrites = "no"
+		for _, f := range c.Findings {
+			if f.Kind == types.FindingRelationWrite || f.ID == "rolsuper" {
+				pr.RoleWrites = "yes"
+			}
+		}
+	}
+	return pr
+}
+
+// flaggedFilters is the filter columns an approver should notice: catalogued
+// ones that are not allow, and ones with no catalog entry.
+func flaggedFilters(cat ports.Catalog, refs []ports.ColumnRef) []types.FilterColumn {
+	var out []types.FilterColumn
+	for _, r := range refs {
+		fc := types.FilterColumn{Relation: r.Relation, Column: r.Column}
+		entry, ok := cat.Lookup(r.TableOID, r.AttNum)
+		switch {
+		case !ok:
+			fc.Flag = "unclassified"
+		case entry.Policy != types.PolicyAllow:
+			fc.Flag, fc.Policy = "sensitive", entry.Policy
+		default:
+			continue
+		}
+		if !slices.Contains(out, fc) {
+			out = append(out, fc)
+		}
+	}
 	return out
 }

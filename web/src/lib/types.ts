@@ -282,6 +282,30 @@ export interface ApprovalFacts {
   estimated_cost: number
   egress?: string[]
   reasons?: string[]
+  /** How much the statement can change; one keeper could not read is destructive. */
+  risk?: Risk
+  unreadable?: boolean
+  /** The relations a write changes. */
+  targets?: RelationRef[]
+  protection?: Protection
+  /** Output columns, SELECT * expanded. */
+  columns?: string[]
+  /** Sensitive or uncatalogued columns the statement filters or joins on. */
+  filters?: FilterColumn[]
+}
+
+export type Risk = 'read' | 'write' | 'destructive'
+
+export interface Protection {
+  writes: Writes
+  role_writes: 'yes' | 'no' | 'unknown'
+}
+
+export interface FilterColumn {
+  relation: RelationRef
+  column: string
+  flag: 'sensitive' | 'unclassified'
+  policy?: Policy
 }
 
 interface WritePreview {
