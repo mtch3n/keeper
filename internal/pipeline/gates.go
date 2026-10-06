@@ -406,10 +406,17 @@ func egressSummary(cols []column) []string {
 			counts[c.entry.Policy]++
 		}
 	}
+	phrase := map[types.Policy]string{
+		types.PolicyDrop:    "dropped",
+		types.PolicyRedact:  "redacted",
+		types.PolicyToken:   "tokenized",
+		types.PolicyPartial: "partially masked",
+		types.PolicyScan:    "scanned for PII spans",
+	}
 	var out []string
 	for _, pol := range []types.Policy{types.PolicyDrop, types.PolicyRedact, types.PolicyToken, types.PolicyPartial, types.PolicyScan} {
 		if n := counts[pol]; n > 0 {
-			out = append(out, strconv.Itoa(n)+" "+string(pol))
+			out = append(out, strconv.Itoa(n)+" column(s) "+phrase[pol])
 		}
 	}
 	return out

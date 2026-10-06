@@ -64,3 +64,33 @@ func TestAWritePreviewReportsTheRowsItChanges(t *testing.T) {
 		})
 	}
 }
+
+// TestThePlanNamesTheColumnsAStatementFiltersOn establishes WRITE-D6's input:
+// the columns a statement filters and joins on, resolved to catalog identities
+// from the server's own plan. If it fails, the Inbox stops flagging a filter on
+// an SSN, which discloses as much as selecting it.
+func TestThePlanNamesTheColumnsAStatementFiltersOn(t *testing.T) {
+	f := New(t)
+	exec, err := pgdb.New(pgdb.Config{DSN: func(context.Context, string) (string, error) { return f.ReadDSN, nil }})
+	if err != nil {
+		t.Fatalf("pgdb.New: %v", err)
+	}
+	t.Cleanup(exec.Shutdown)
+
+	plan, err := exec.Plan(t.Context(), "c", `SELECT u.id FROM users u JOIN orders o ON o.user_email = u.email WHERE u.ssn = 'users.notes' AND lower(o.status) = 'x'`, nil)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	var got []string
+	for _, c := range plan.Filters {
+		if c.TableOID == 0 || c.AttNum == 0 {
+			t.Errorf("unresolved filter column %+v", c)
+		}
+		got = append(got, c.Relation.Relation+"."+c.Column)
+	}
+	slices.Sort(got)
+	want := []string{"orders.status", "orders.user_email", "users.email", "users.ssn"}
+	if !slices.Equal(got, want) {
+		t.Errorf("filter columns = %v, want %v", got, want)
+	}
+}

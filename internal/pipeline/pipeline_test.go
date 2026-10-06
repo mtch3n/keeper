@@ -874,3 +874,77 @@ func Test_WRITE_C5_ALargeWriteShowsTheFirstFiftyRows(t *testing.T) {
 		t.Errorf("preview = %d affected, %d shown, %d omitted; want 500, 50, 450", w.RowCount, len(w.Changes.Rows), w.Changes.Omitted)
 	}
 }
+
+func Test_WRITE_C7_ADeleteIsMarkedDestructiveWithItsTargetAndProtection(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.authority.conn.Writes = types.WritesApprove
+		h.exec.previewTag = 1
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtDelete, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID}, EstimatedRows: 1,
+		}
+	})
+	dec := h.query(t, Request{SQL: "DELETE FROM orders WHERE id = 1"})
+	if dec.Escalation == nil {
+		t.Fatalf("not escalated: %v", dec.Error)
+	}
+	f := dec.Escalation.Facts
+	if f.Risk != types.RiskDestructive || f.StatementType != "DELETE" || !slices.Equal(f.Targets, []types.RelationRef{ordersRef}) {
+		t.Errorf("facts = risk %q, verb %q, targets %v; want destructive DELETE on orders", f.Risk, f.StatementType, f.Targets)
+	}
+	if f.Protection.Writes != types.WritesApprove || f.Protection.RoleWrites != "yes" {
+		t.Errorf("protection = %+v, want writes approve and a role that can write", f.Protection)
+	}
+}
+
+func Test_WRITE_C12_AStatementKeeperCannotClassifyIsDestructive(t *testing.T) {
+	for _, stmt := range []string{"", "COPY", "CALL"} {
+		risk, unreadable := riskOf(stmt)
+		if risk != types.RiskDestructive || !unreadable {
+			t.Errorf("riskOf(%q) = %q, unreadable %v; want destructive and unreadable", stmt, risk, unreadable)
+		}
+	}
+	if risk, unreadable := riskOf(pgdb.StmtSelect); risk != types.RiskRead || unreadable {
+		t.Errorf("a SELECT is %q, unreadable %v", risk, unreadable)
+	}
+}
+
+func filterHarness(t *testing.T, filters ...ports.ColumnRef) *harness {
+	return newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{
+			fromColumn("id", "int8", usersOID, 1), fromColumn("email", "text", usersOID, 2), fromColumn("status", "text", usersOID, 5),
+		}
+		h.exec.plan = readPlan(1, usersRef)
+		h.exec.plan.Filters = filters
+	})
+}
+
+func Test_WRITE_C8_TheCardListsExpandedColumnsAndFlagsASensitiveFilter(t *testing.T) {
+	h := filterHarness(t, ports.ColumnRef{TableOID: usersOID, AttNum: 3, Relation: usersRef, Column: "ssn"})
+	f, kerr, err := h.pipe.Facts(t.Context(), Request{ConnID: "acme_prod", Session: testSession(), SQL: "SELECT * FROM users WHERE ssn = $1"})
+	if err != nil || kerr != nil {
+		t.Fatalf("facts: %v %v", kerr, err)
+	}
+	if !slices.Equal(f.Columns, []string{"id", "email", "status"}) {
+		t.Errorf("columns = %v, want SELECT * expanded", f.Columns)
+	}
+	want := []types.FilterColumn{{Relation: usersRef, Column: "ssn", Flag: "sensitive", Policy: types.PolicyDrop}}
+	if !slices.Equal(f.Filters, want) {
+		t.Errorf("filters = %+v, want ssn flagged sensitive", f.Filters)
+	}
+}
+
+func Test_WRITE_C13_AFilterOnAnUncataloguedColumnIsFlaggedUnclassified(t *testing.T) {
+	h := filterHarness(t,
+		ports.ColumnRef{TableOID: usersOID, AttNum: 9, Relation: usersRef, Column: "dob"},
+		ports.ColumnRef{TableOID: usersOID, AttNum: 1, Relation: usersRef, Column: "id"},
+	)
+	f, kerr, err := h.pipe.Facts(t.Context(), Request{ConnID: "acme_prod", Session: testSession(), SQL: "SELECT id FROM users WHERE dob > $1 AND id > 1"})
+	if err != nil || kerr != nil {
+		t.Fatalf("facts: %v %v", kerr, err)
+	}
+	want := []types.FilterColumn{{Relation: usersRef, Column: "dob", Flag: "unclassified"}}
+	if !slices.Equal(f.Filters, want) {
+		t.Errorf("filters = %+v, want only dob flagged unclassified (id is allow)", f.Filters)
+	}
+}

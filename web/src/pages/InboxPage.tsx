@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Separator } from '@/components/ui/separator'
@@ -11,7 +12,7 @@ import { Lamp } from '@/components/wrappers/Lamp'
 import { decideApproval, listConnections, listHosts, type PendingRequest } from '@/lib/api'
 import { useInbox } from '@/lib/inbox'
 import { age, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
-import type { ApprovalItem, ConnectionSummary, HostView, WriteChanges, Writes } from '@/lib/types'
+import type { ApprovalItem, ConnectionSummary, HostView, Protection, Risk, WriteChanges, Writes } from '@/lib/types'
 
 /**
  * Everything waiting on a human (SPEC R9.1), oldest first. Each item is a card
@@ -101,6 +102,22 @@ function ProfileFact({ profile }: { profile: Profile }) {
   )
 }
 
+const RISK_BADGE = { read: 'outline', write: 'secondary', destructive: 'destructive' } as const
+
+/** What would stop a write on this profile, in one sentence. */
+function protectionLine(p?: Protection) {
+  if (!p) return 'not known'
+  const setting =
+    p.writes === 'approve' ? 'writes are allowed on this profile, each approved here' : 'writes are off on this profile'
+  const role =
+    p.role_writes === 'yes'
+      ? 'its role can write'
+      : p.role_writes === 'no'
+        ? 'its role cannot write'
+        : 'whether its role can write is not known'
+  return `${setting}; ${role}`
+}
+
 /**
  * One statement waiting for approval: facts first, SQL last (SPEC §9.2). A
  * human cannot tell from the text of a query that it returns 50,000 SSNs, so the
@@ -118,6 +135,9 @@ function ApprovalCard({
   onDecide: (decision: 'approve' | 'refuse') => void
 }) {
   const f = item.facts
+  // A card that cannot say how dangerous its statement is says the worst.
+  const risk: Risk = f.risk ?? 'destructive'
+  const targets = f.targets?.length ? f.targets : f.relations
   const homoglyph = (f.relations ?? []).some((r) => suspectHomoglyph(r.relation) || suspectHomoglyph(r.schema))
   const who = item.session.client.name
 
@@ -125,6 +145,7 @@ function ApprovalCard({
     <article aria-label={`${who} — ${f.intent || 'no intent'}`} className="flex flex-col gap-4 border border-border p-6">
       <div className="flex flex-wrap items-center gap-3">
         <Lamp state="waiting" label="waiting for you" />
+        <Badge variant={RISK_BADGE[risk]}>{risk}</Badge>
         <span className="text-sm">{who}</span>
         <span className="text-meta text-muted-foreground">{item.session.client.workspace ?? 'unknown workspace'}</span>
         <span className="ml-auto text-meta text-muted-foreground">
@@ -135,15 +156,34 @@ function ApprovalCard({
         <Fact label="intent">{f.intent || '—'}</Fact>
         <ProfileFact profile={profile} />
         {f.reasons?.length ? <Fact label="why it waits">{f.reasons.join(', ')}</Fact> : null}
+        {f.unreadable || !f.risk ? (
+          <Fact label="warning">
+            <span className="text-blocked">keeper could not read this statement, so it is treated as destructive.</span>
+          </Fact>
+        ) : null}
         {item.write ? (
           <Fact label="impact">
-            {item.write.operation} · {item.write.row_count} rows affected, as of the preview · {relationList(f.relations)}
+            {item.write.operation} on {relationList(targets)} · {item.write.row_count} rows affected, as of the preview
           </Fact>
         ) : (
           <Fact label="impact">
-            {f.statement_type} · about {f.estimated_rows} rows · {relationList(f.relations)}
+            {f.statement_type || 'unknown'} on {relationList(targets)} · about {f.estimated_rows} rows
           </Fact>
         )}
+        {f.columns?.length ? <Fact label="columns">{f.columns.join(', ')}</Fact> : null}
+        {f.filters?.length ? (
+          <Fact label="filters">
+            <span className="flex flex-col">
+              {f.filters.map((c) => (
+                <span key={`${c.relation.schema}.${c.relation.relation}.${c.column}`} className="text-waiting">
+                  filters on {c.relation.schema}.{c.relation.relation}.{c.column} (
+                  {c.flag === 'sensitive' ? `sensitive: ${c.policy}` : 'unclassified'})
+                </span>
+              ))}
+            </span>
+          </Fact>
+        ) : null}
+        <Fact label="protection">{protectionLine(f.protection)}</Fact>
         {f.egress?.length ? <Fact label="masked">{f.egress.join(', ')}</Fact> : null}
         {homoglyph ? (
           <Fact label="warning">
