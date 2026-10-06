@@ -37,9 +37,8 @@ func RuntimeDir() (string, error) {
 	return dir, nil
 }
 
-// SocketPath and LockPath name the two files in the runtime directory.
+// SocketPath names the socket in the runtime directory.
 func SocketPath(dir string) string { return filepath.Join(dir, "keeper.sock") }
-func LockPath(dir string) string   { return filepath.Join(dir, "keeper.lock") }
 
 // LockPathFor derives the lock from the socket a daemon will serve, so the
 // election is scoped to that socket rather than to the machine.

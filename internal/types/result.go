@@ -20,7 +20,7 @@ type Basis string
 
 const (
 	BasisCatalog   Basis = "catalog"   // a human or catalog init classified it
-	BasisRules     Basis = "rules"     // the 100% pattern and dictionary pass
+	BasisRules     Basis = "rules"     // the connection's detection stages, over every row
 	BasisSampled   Basis = "sampled"   // the model layer, over a sample
 	BasisInherited Basis = "inherited" // a computed column, from R7.6
 	BasisParameter Basis = "parameter" // from a token-resolved parameter, R8.4b

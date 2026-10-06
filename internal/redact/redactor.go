@@ -328,7 +328,7 @@ func (r *Redactor) Apply(ctx context.Context, sessionID string, cols []types.Col
 						continue
 					}
 					// A re-tokenized value is counted in SpansRedacted
-					// alongside the rules pass's hits. Both are "a value
+					// alongside the detection stages' hits. Both are "a value
 					// replaced inside this column's text", and the frozen
 					// Transform has no separate field; leaving it uncounted
 					// would make the emission scan invisible in the response.
@@ -612,44 +612,6 @@ func mergeTransform(a, b types.Transform) types.Transform {
 	out.Collisions = a.Collisions + b.Collisions
 	out.SampleSize = max(a.SampleSize, b.SampleSize)
 	return out
-}
-
-// DropColumns removes every column whose transform reports `drop`, from both
-// the column list and every row, and returns the shortened pair.
-//
-// ports.Redactor.Apply cannot do this itself: its cols parameter is a slice
-// header the caller owns, and shortening it here would not shorten the
-// caller's. Apply nils the cells so nothing survives either way; this is what
-// makes the column absent from the response (§8.2).
-//
-// The dropped column keeps its entry in transforms. An agent that selected a
-// column and got no column back needs to be told why, and "policy: drop" is the
-// answer that sends it to the catalog rather than into a retry loop.
-func DropColumns(cols []types.ColumnMeta, rows [][]any, transforms map[string]types.Transform) ([]types.ColumnMeta, [][]any) {
-	keep := make([]int, 0, len(cols))
-	for j, c := range cols {
-		if t, ok := transforms[c.Name]; ok && t.Policy == types.PolicyDrop {
-			continue
-		}
-		keep = append(keep, j)
-	}
-	if len(keep) == len(cols) {
-		return cols, rows
-	}
-	outCols := make([]types.ColumnMeta, 0, len(keep))
-	for _, j := range keep {
-		outCols = append(outCols, cols[j])
-	}
-	for i, row := range rows {
-		nr := make([]any, 0, len(keep))
-		for _, j := range keep {
-			if j < len(row) {
-				nr = append(nr, row[j])
-			}
-		}
-		rows[i] = nr
-	}
-	return outCols, rows
 }
 
 // basisOf is the basis a column reports. A scan column any of whose cells went

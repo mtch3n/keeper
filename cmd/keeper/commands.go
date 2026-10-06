@@ -74,17 +74,24 @@ func catalogInit(ctx context.Context, args []string) error {
 		return printJSON(prop)
 	}
 
-	// The grouping is the point. "Typed scalars → allow" and "name heuristic →
-	// token" are safe to accept without reading; text with no heuristic match is
-	// the review task, because that is where unnamed name and address columns
-	// live and the rule pass cannot find them (SPEC R5.3).
+	// The grouping is the point. "Typed scalars → allow" and a column whose
+	// samples the stages found PII in at the threshold rate are safe to accept
+	// without reading; other text is the review task, because that is where
+	// name and address columns live and no rule-based stage can find them.
+	if len(prop.SafeToBulkAccept)+len(prop.NeedsReview) == 0 {
+		fmt.Println("no proposals: this connection runs no detection stages, or none could examine its samples.")
+		fmt.Println("classify columns with `keeper catalog edit`, or add stages with `keeper connection set --detection`.")
+	}
+	for _, d := range prop.Degradations {
+		fmt.Printf("degraded: %s — %s\n", d.Layer, d.Reason)
+	}
 	fmt.Printf("safe to accept in bulk: %d column(s)\n", len(prop.SafeToBulkAccept))
 	for key, p := range sortedEntries(prop.SafeToBulkAccept) {
 		fmt.Printf("  %-50s %s%s\n", key, p.Policy, policyArgs(p))
 	}
 	fmt.Printf("\nneeds review: %d column(s)\n", len(prop.NeedsReview))
-	fmt.Println("  these are free-text columns no rule matched. A name or an address here")
-	fmt.Println("  is invisible to the pattern pass, so a human decides each one.")
+	fmt.Println("  these are free-text columns no stage matched at the threshold rate. A name or")
+	fmt.Println("  an address here is invisible to rule-based stages, so a human decides each one.")
 	for key, p := range sortedEntries(prop.NeedsReview) {
 		rate := ""
 		if r, ok := prop.SampleRates[key]; ok && r > 0 {

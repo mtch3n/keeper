@@ -14,7 +14,7 @@ import (
 // loser connects to the winner rather than starting a second daemon.
 func TestFlockElectsOneDaemon(t *testing.T) {
 	dir := t.TempDir()
-	path := daemon.LockPath(dir)
+	path := daemon.LockPathFor(daemon.SocketPath(dir))
 
 	first, err := daemon.AcquireLock(path)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestListenSocketReplacesAStaleSocketAndIsPrivate(t *testing.T) {
 		t.Fatalf("the stale socket was not left behind: %v", err)
 	}
 
-	lock, err := daemon.AcquireLock(daemon.LockPath(dir))
+	lock, err := daemon.AcquireLock(daemon.LockPathFor(daemon.SocketPath(dir)))
 	if err != nil {
 		t.Fatal(err)
 	}

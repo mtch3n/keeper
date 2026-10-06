@@ -1,7 +1,6 @@
 package client
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,9 +61,3 @@ func (e *StaleSessionError) Error() string {
 }
 
 func (e *StaleSessionError) Unwrap() error { return e.Cause }
-
-// IsCode reports whether err is a *types.Error carrying the given code.
-func IsCode(err error, code types.Code) bool {
-	kerr, ok := errors.AsType[*types.Error](err)
-	return ok && kerr.Code == code
-}

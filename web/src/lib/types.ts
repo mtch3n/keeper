@@ -14,7 +14,7 @@
 
 export type Mode = 'strict' | 'assisted' | 'permissive'
 
-export type FindingKind =
+type FindingKind =
   | 'attribute'
   | 'membership'
   | 'relation-write'
@@ -38,7 +38,7 @@ export interface RelationRef {
   relation: string
 }
 
-export type WriteOp = 'INSERT' | 'UPDATE' | 'DELETE'
+type WriteOp = 'INSERT' | 'UPDATE' | 'DELETE'
 
 export interface WriteScopeEntry {
   relation: RelationRef
@@ -140,9 +140,9 @@ export interface ColumnPolicy {
 
 // ── result.go ───────────────────────────────────────────────────────────────
 
-export type Tier = 0 | 1 | 2 | 3 | 4
+type Tier = 0 | 1 | 2 | 3 | 4
 
-export type Basis = 'catalog' | 'rules' | 'sampled' | 'inherited' | 'parameter' | 'unknown'
+type Basis = 'catalog' | 'rules' | 'sampled' | 'inherited' | 'parameter' | 'unknown'
 
 export interface Transform {
   policy: Policy
@@ -182,17 +182,7 @@ export interface QueryResult {
   previewed_rows?: number
 }
 
-export interface ExplainResult {
-  statement_type: string
-  relations: RelationRef[]
-  estimated_rows: number
-  estimated_cost: number
-  output_columns: ColumnMeta[]
-  predicted_tier: Tier
-  reasons?: string[]
-}
-
-export type Code =
+type Code =
   | 'syntax'
   | 'multi_statement'
   | 'permission_denied'
@@ -218,7 +208,7 @@ export interface KeeperError {
   audit_id?: string
 }
 
-export interface ClientInfo {
+interface ClientInfo {
   name: string
   version?: string
   pid?: number
@@ -266,42 +256,11 @@ export interface Session {
   connected_at: string
 }
 
-export type TicketState =
-  | 'pending_approval'
-  | 'approved'
-  | 'refused'
-  | 'expired'
-  | 'cancelled'
-  | 'ready'
-  | 'failed'
-
-export interface Ticket {
-  ticket: string
-  state: TicketState
-  reason?: string
-  tier: Tier
-  audit_id: string
-  created_at: string
-}
-
 export type RequestKind = 'input' | 'authorization'
 
 export interface PathRef {
   connection_id: string
   relation: RelationRef
-}
-
-export interface LocalRequest {
-  request_id: string
-  kind: RequestKind
-  connection_id: string
-  namespace?: string
-  path?: PathRef
-  purpose?: string
-  url: string
-  /** "pending_input" | "ready" | "cancelled" | "expired" */
-  state: string
-  expires_at: string
 }
 
 export type GrantLifetime = 'session' | 'standing'
@@ -330,7 +289,7 @@ export interface ApprovalFacts {
   reasons?: string[]
 }
 
-export interface WritePreview {
+interface WritePreview {
   operation: string
   row_count: number
   previewed_at: string

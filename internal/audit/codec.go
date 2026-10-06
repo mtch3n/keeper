@@ -15,14 +15,6 @@ import (
 // The wire form is time.Duration's own string — "250ms", "1.5s" — because the
 // log is a file a human opens. time.ParseDuration is its exact inverse, so the
 // round trip is lossless.
-// DurationOptions is the pair, exported because every other package that
-// encodes a types.AuditRecord — the Activity endpoint, the CLI — hits the same
-// missing representation and must use the same wire form or the log and the API
-// will disagree.
-func DurationOptions() json.Options {
-	return json.JoinOptions(durationMarshaler, durationUnmarshaler)
-}
-
 var (
 	durationMarshaler = json.WithMarshalers(json.MarshalToFunc(
 		func(enc *jsontext.Encoder, d time.Duration) error {

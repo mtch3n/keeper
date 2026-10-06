@@ -37,7 +37,7 @@ func testRelation() ports.Relation {
 		Kind: 'r',
 		Columns: []ports.Column{
 			{Name: "id", AttNum: 1, TypeOID: 23, IsPK: true},                // int4, PK: typed scalar
-			{Name: "email", AttNum: 2, TypeOID: 25},                         // text, name heuristic match
+			{Name: "email", AttNum: 2, TypeOID: 25},                         // text, named like PII, not sampled
 			{Name: "contact", AttNum: 3, TypeOID: 25},                       // text, mis-named, sampled 95%
 			{Name: "notes", AttNum: 4, TypeOID: 25},                         // text, sampled 10%
 			{Name: "fname", AttNum: 5, TypeOID: 25},                         // text, sampled 0%
