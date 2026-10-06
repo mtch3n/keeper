@@ -20,6 +20,7 @@ import type {
   Finding,
   Degradation,
   ApprovalItem,
+  ActivityDetail,
   AuditRecord,
   AuditReport,
   ClientInfo,
@@ -373,12 +374,19 @@ export function getCatalogGrantStatements(connection: string) {
   return post<{ statements: string[] }>(`/v1/catalog/${connection}/grants`)
 }
 
-export function listActivity(params?: { session?: string; connection?: string; tier?: number; since?: string; limit?: number }) {
+export function listActivity(params?: {
+  session?: string
+  connection?: string
+  tier?: number
+  since?: string
+  before?: string
+  limit?: number
+}) {
   return get<AuditRecord[]>(`/v1/activity${query(params)}`)
 }
 
 export function getActivityRecord(auditId: string) {
-  return get<AuditRecord>(`/v1/activity/${auditId}`)
+  return get<ActivityDetail>(`/v1/activity/${auditId}`)
 }
 
 /** Mirrors daemon.DoctorReport. */

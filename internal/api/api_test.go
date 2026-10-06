@@ -914,3 +914,36 @@ func TestAuditReportsFindingsAndGatesNothing(t *testing.T) {
 		t.Fatalf("a connection with findings is not describable: %d %s", resp.StatusCode, raw)
 	}
 }
+
+// A human reviewing Activity sees what the agent received, masked as it was
+// sent. The rows are held in memory beside the audit record, never in it (R10b).
+func TestActivityRecordCarriesTheResultTheAgentSaw(t *testing.T) {
+	r := escalatingRig(t)
+	a := r.agent("reconcile OPS-441")
+	cli := r.socket()
+
+	var tk types.Ticket
+	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
+	cli.mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "approve", "actor": "ming"}, nil)
+	var got struct {
+		Result *types.QueryResult `json:"result"`
+	}
+	a.mustJSON("GET", "/v1/tickets/"+tk.ID+"?wait_ms=2000", nil, &got)
+	if got.Result == nil || got.Result.AuditID == "" {
+		t.Fatalf("no result to review: %+v", got)
+	}
+
+	// The fake pipeline reports an audit id without writing the record; the
+	// real one writes it before it returns.
+	if err := r.alog.Write(t.Context(), &types.AuditRecord{ID: got.Result.AuditID}); err != nil {
+		t.Fatal(err)
+	}
+	var detail struct {
+		ID     string             `json:"id"`
+		Result *types.QueryResult `json:"result"`
+	}
+	cli.mustJSON("GET", "/v1/activity/"+got.Result.AuditID, nil, &detail)
+	if detail.ID != got.Result.AuditID || detail.Result == nil || detail.Result.RowCount != got.Result.RowCount {
+		t.Fatalf("activity detail does not carry the agent's result: %+v", detail)
+	}
+}

@@ -167,6 +167,7 @@ func (d *Daemon) startApproved(tk *ticket) {
 			d.setTicketStateLocked(cur, types.TicketFailed, nil, err)
 			return
 		}
+		d.results.keep(res)
 		d.setTicketStateLocked(cur, types.TicketReady, res, nil)
 	})
 }

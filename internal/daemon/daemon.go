@@ -144,6 +144,8 @@ type Daemon struct {
 	queue    []*queueItem
 	grants   map[string]*types.Grant
 	requests map[string]*localRequest
+
+	results results
 }
 
 // New wires the daemon. It does not open the vault — keeperd does that itself,

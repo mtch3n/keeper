@@ -191,7 +191,7 @@ func (s *Server) suggestGrants(ctx context.Context, _ *reqInfo, _ http.ResponseW
 
 func (s *Server) activity(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
 	q := r.URL.Query()
-	f := ports.AuditFilter{SessionID: q.Get("session"), ConnectionID: q.Get("connection")}
+	f := ports.AuditFilter{SessionID: q.Get("session"), ConnectionID: q.Get("connection"), Before: q.Get("before")}
 	if v := q.Get("tier"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 || n > 4 {

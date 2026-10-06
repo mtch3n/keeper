@@ -87,8 +87,15 @@ func (d *Daemon) Activity(ctx context.Context, f ports.AuditFilter) ([]types.Aud
 	return d.deps.Audit.Query(ctx, f)
 }
 
+// ActivityDetail is one audit record in full and, while the daemon still holds
+// it, the masked result the agent received.
+type ActivityDetail struct {
+	types.AuditRecord
+	Result *types.QueryResult `json:"result,omitzero"`
+}
+
 // ActivityRecord is one audit record in full.
-func (d *Daemon) ActivityRecord(ctx context.Context, id string) (*types.AuditRecord, error) {
+func (d *Daemon) ActivityRecord(ctx context.Context, id string) (*ActivityDetail, error) {
 	r, err := d.deps.Audit.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -96,5 +103,5 @@ func (d *Daemon) ActivityRecord(ctx context.Context, id string) (*types.AuditRec
 	if r == nil {
 		return nil, errTicketUnknown
 	}
-	return r, nil
+	return &ActivityDetail{AuditRecord: *r, Result: d.results.get(id)}, nil
 }
