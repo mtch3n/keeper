@@ -14,6 +14,7 @@ import { getDoctor, getSettings, updateSettings, type DoctorReport } from '@/lib
 import { notificationsOn, setNotificationsOn } from '@/lib/notify'
 import { PermissionsSection } from '@/pages/PermissionsSection'
 import { age } from '@/lib/render'
+import { reachOf } from '@/lib/reach'
 
 /**
  * What this daemon is doing (UI.md §2.3, §2.7).
@@ -23,12 +24,6 @@ import { age } from '@/lib/render'
  * it reports rather than configures, and it carries `doctor`'s output rather
  * than a preferences form.
  */
-/** How each reach state reads: unreachable is the one that needs a person. */
-const REACH = {
-  reachable: { lamp: 'live', label: 'reachable' },
-  unreachable: { lamp: 'blocked', label: 'unreachable' },
-  unknown: { lamp: 'waiting', label: 'no answer yet' },
-} as const
 
 /**
  * The daemon-wide choices: how long the activity log keeps a record, and whether
@@ -225,7 +220,7 @@ export function SettingsPage() {
             </TableHeader>
             <TableBody>
               {report.connections.map((c) => {
-                const reach = REACH[c.state] ?? REACH.unknown
+                const reach = reachOf(c.state)
                 return (
                 <TableRow key={c.id}>
                   <TableCell>
