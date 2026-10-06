@@ -59,7 +59,7 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 
 | Component | Composes | Purpose |
 |-----------|----------|---------|
-| AppShell | `Brand`, `Lamp`, `Badge`, `AgentsIndicator`, `ThemeToggle` | The persistent chrome: one bar with four places — Connections, Inbox, Activity, Settings — the agents indicator and the theme toggle. There is no sidebar: its agent list became the indicator, and its database list was a second route to a connection page that disagreed with the first. Inbox carries a `Badge` with the count of what waits, and the bar raises a notification when something new arrives while the page is out of view. The daemon's `Lamp` appears only while the stream is degraded. The page content is the one `main` landmark |
+| AppShell | `Brand`, `Lamp`, `Badge`, `AgentsIndicator`, `ThemeToggle` | The persistent chrome: one borderless bar with three places — Inbox first, then Activity and Settings — the agents indicator and the theme toggle. Settings carries its own General and Connections tabs, because connections are configuration; a connection's pages keep their `/connections` addresses and show under Settings. There is no sidebar: its agent list became the indicator, and its database list was a second route to a connection page that disagreed with the first. Inbox carries a `Badge` with the count of what waits, and the bar raises a notification when something new arrives while the page is out of view. The daemon's `Lamp` appears only while the stream is degraded. The page content is the one `main` landmark |
 | LiveStatusProvider | React context (`@/lib/live-status`), `subscribeToEvents` | Opens the one `GET /v1/events` subscription for the whole app and carries its state down through context, so `AppShell`'s daemon `Lamp` is reported once rather than every screen opening its own `EventSource` |
 | ThemeToggle | `IconButton` | Flips the `dark` class on `<html>` and persists the choice. `index.html` sets the class before first paint, so there is no flash. Light and dark are one theme, not a second design (UI.md §5) |
 | IconButton | `Button`, `Tooltip` | An icon-only button whose label is both its accessible name and its tooltip |
@@ -113,7 +113,7 @@ lights in `AppShell` are already wired.
 
 | Component | Route | Owns (SPEC) |
 |-----------|-------|-------|
-| ConnectionsPage | `/connections` | Hosts and the databases registered on them (SPEC §4.1) |
+| ConnectionsPage | `/connections`, Settings → Connections | Hosts and the databases registered on them (SPEC §4.1) |
 | InboxPage | `/inbox` | Everything waiting on a human: approvals, input and authorization requests (SPEC §9.1) |
 | ActivityPage | `/activity` | The query log — what ran, what was masked, what left the machine (SPEC §10) |
 | ConnectionPage | `/connections/:id[/detection|catalog|limits|privileges]` | Everything about one database as tabs: Overview, Detection, Catalog (SPEC §5), Limits (mode, row ceiling, statement timeout, scan sample, denylist, write scope — SPEC §4.5) and Privileges (SPEC R4.1) |
