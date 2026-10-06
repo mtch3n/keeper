@@ -6,7 +6,9 @@ package vault
 
 import (
 	"context"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -336,6 +338,17 @@ func (v *Vault) Remove(ctx context.Context, id string) error {
 		return &NotFoundError{ID: id}
 	}
 	return v.persist()
+}
+
+// DeriveKey returns a 32-byte key for one purpose, derived from the master key
+// with HKDF-SHA256 under label. The master key itself never leaves the vault.
+func (v *Vault) DeriveKey(label string) ([]byte, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return nil, errNotOpen()
+	}
+	return hkdf.Key(sha256.New, v.key, nil, label, 32)
 }
 
 // Settings returns the daemon-wide settings, or the defaults if none were saved.

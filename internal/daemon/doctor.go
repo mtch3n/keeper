@@ -30,6 +30,9 @@ type DoctorReport struct {
 	Detector *ports.DetectorIdentity `json:"detector,omitzero"`
 	// LogRetentionDays is how long the activity log keeps a record.
 	LogRetentionDays int `json:"log_retention_days"`
+	// LegacyAuditLog is a plaintext audit.log an earlier keeper left, which
+	// the encrypted log never reads; the operator can delete it.
+	LegacyAuditLog string `json:"legacy_audit_log,omitzero"`
 }
 
 // ConnectionHealth is one connection's line in doctor.
@@ -100,6 +103,7 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 		rep.Detector = &id
 	}
 
+	rep.LegacyAuditLog = d.deps.Audit.LegacyPlaintext()
 	if st, err := d.deps.Vault.Settings(ctx); err == nil {
 		rep.LogRetentionDays = st.LogRetentionDays
 	}

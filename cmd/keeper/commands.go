@@ -604,6 +604,10 @@ func runDoctor(args []string) error {
 	// keeperd opens the vault before it serves and exits if it cannot, so a
 	// daemon that answered this call has an open vault by construction.
 	fmt.Printf("vault         open, key source %s\n", rep.KeySource)
+	fmt.Printf("activity log  encrypted with the vault's key, kept %d day(s)\n", rep.LogRetentionDays)
+	if rep.LegacyAuditLog != "" {
+		fmt.Printf("              a plaintext log from an earlier keeper is still at %s; it is never read — delete it when you no longer need it\n", rep.LegacyAuditLog)
+	}
 	if rep.Detector != nil && rep.Detector.Name != "" {
 		// R8.5g: "what was examining my data, and could it talk to anyone" has
 		// to be answerable after the fact, so it is answerable now.
