@@ -1,3 +1,4 @@
+import { Link, useLocation } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Database, Folder } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -21,7 +22,6 @@ import { Lamp } from '@/components/wrappers/Lamp'
 import { getDoctor, listConnections } from '@/lib/api'
 import { useLiveStatus } from '@/lib/live-status'
 import { useSessionScope } from '@/lib/session-scope'
-import { useConnectionScope } from '@/lib/connection-scope'
 import type { ConnectionSummary, Session } from '@/lib/types'
 
 /** Which of the two scopes the screen in view actually obeys. The other one
@@ -82,7 +82,10 @@ export function AppSidebar({ scope }: { scope: Scope }) {
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const seenWorkspaces = useRef<string[]>([])
   const { sessionId, setSessionId } = useSessionScope()
-  const { connectionId, setConnectionId } = useConnectionScope()
+  const { pathname } = useLocation()
+  // The open connection, and the tab it is open on, come from the route: the
+  // sidebar picks a connection by navigating to it, never by holding state.
+  const [, routeId, routeTab] = /^\/connections\/([^/]+)(?:\/([^/]+))?/.exec(pathname) ?? []
   const { lastEvent } = useLiveStatus()
 
   const refresh = useCallback(() => {
@@ -194,24 +197,31 @@ export function AppSidebar({ scope }: { scope: Scope }) {
         <SidebarGroup className={cn('min-h-0', dim('connection'))}>
           <SidebarGroupLabel className="text-label text-muted-foreground">Databases</SidebarGroupLabel>
           <SidebarGroupContent className="min-h-0 overflow-y-auto">
-            {connections.length === 0 ? (
-              <p className="px-2 text-xs text-muted-foreground">No connections registered.</p>
-            ) : (
-              <SidebarMenu>
-                {connections.map((connection) => (
-                  <SidebarMenuItem key={connection.id}>
-                    <SidebarMenuButton
-                      isActive={connection.id === connectionId}
-                      title={`${connection.role} on ${connection.database}`}
-                      onClick={() => setConnectionId(connection.id)}
-                    >
-                      <Database />
-                      <span className="truncate">{connection.name}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            )}
+            <nav aria-label="Databases">
+              {connections.length === 0 ? (
+                <p className="px-2 text-xs text-muted-foreground">No connections registered.</p>
+              ) : (
+                <SidebarMenu>
+                  {connections.map((connection) => (
+                    <SidebarMenuItem key={connection.id}>
+                      <SidebarMenuButton
+                        isActive={connection.id === routeId}
+                        title={`${connection.role} on ${connection.database}`}
+                        render={
+                          <Link
+                            to={`/connections/${connection.id}${routeTab ? `/${routeTab}` : ''}`}
+                            aria-current={connection.id === routeId ? 'page' : undefined}
+                          />
+                        }
+                      >
+                        <Database />
+                        <span className="truncate">{connection.name}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              )}
+            </nav>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
