@@ -3,6 +3,7 @@ package pipeline
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -823,5 +824,53 @@ func Test_WRITE_C2_AWriteOnAReadOnlyProfileIsRefusedAtOnce(t *testing.T) {
 	}
 	if h.exec.called("PreviewWrite") || h.exec.called("CommitWrite") {
 		t.Error("a write on a read-only profile reached the database")
+	}
+}
+
+func changedRows(n int) *types.WriteChanges {
+	c := &types.WriteChanges{Columns: []string{"id", "user_email"}}
+	for i := range n {
+		c.Rows = append(c.Rows, types.ChangedRow{New: []string{strconv.Itoa(i + 1), "ada@example.com"}})
+	}
+	return c
+}
+
+func writeHarness(t *testing.T, rows int) *harness {
+	return newHarness(t, func(h *harness) {
+		h.authority.conn.Writes = types.WritesApprove
+		h.exec.previewTag = int64(rows)
+		h.exec.changes = changedRows(rows)
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtUpdate, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID}, EstimatedRows: int64(rows),
+		}
+	})
+}
+
+func Test_WRITE_C4_AWaitingWriteCarriesItsChangedRowsInCleartext(t *testing.T) {
+	h := writeHarness(t, 3)
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Escalation == nil || dec.Escalation.Write == nil {
+		t.Fatalf("no write preview: %+v", dec)
+	}
+	w := dec.Escalation.Write
+	if w.RowCount != 3 || w.Changes == nil || len(w.Changes.Rows) != 3 || w.Changes.Omitted != 0 {
+		t.Fatalf("preview = %+v, want 3 affected and 3 changed rows", w)
+	}
+	// user_email is a token column for an agent; the approver sees the value.
+	if got := w.Changes.Rows[0].New[1]; got != "ada@example.com" {
+		t.Errorf("changed value = %q, want the cleartext", got)
+	}
+}
+
+func Test_WRITE_C5_ALargeWriteShowsTheFirstFiftyRows(t *testing.T) {
+	h := writeHarness(t, 500)
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Escalation == nil || dec.Escalation.Write == nil || dec.Escalation.Write.Changes == nil {
+		t.Fatalf("no write preview: %+v", dec)
+	}
+	w := dec.Escalation.Write
+	if w.RowCount != 500 || len(w.Changes.Rows) != types.PreviewRows || w.Changes.Omitted != 450 {
+		t.Errorf("preview = %d affected, %d shown, %d omitted; want 500, 50, 450", w.RowCount, len(w.Changes.Rows), w.Changes.Omitted)
 	}
 }

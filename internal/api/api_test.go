@@ -1366,3 +1366,34 @@ func Test_WRITE_C3_AgentsSeeProfileDetailsButNeverAPassword(t *testing.T) {
 		}
 	}
 }
+
+func Test_WRITE_C6_PreviewedValuesReachOnlyTheApprover(t *testing.T) {
+	const secret = "ada@secret.example"
+	r := escalatingRig(t)
+	r.pipe.facts.StatementType = "UPDATE"
+	r.pipe.preview = &types.WritePreview{
+		Operation: "UPDATE", RowCount: 1, PreviewedAt: time.Now(),
+		Changes: &types.WriteChanges{Columns: []string{"email"}, Rows: []types.ChangedRow{{Old: []string{"old@x"}, New: []string{secret}}}},
+	}
+	a := r.agent("fix an address")
+	cli := r.socket()
+
+	_, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "UPDATE users SET email = 'x'"})
+	var tk types.Ticket
+	if err := json.Unmarshal(raw, &tk); err != nil || tk.ID == "" {
+		t.Fatalf("no ticket: %s", raw)
+	}
+	_, approvals := cli.do("GET", "/v1/approvals", nil)
+	if !strings.Contains(string(approvals), secret) {
+		t.Fatalf("the approver does not see the changed value: %s", approvals)
+	}
+	cli.mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "approve", "actor": "ming"}, nil)
+	_, result := a.do("GET", "/v1/tickets/"+tk.ID+"?wait_ms=2000", nil)
+
+	logged, _ := json.Marshal(r.alog.records)
+	for name, body := range map[string][]byte{"query response": raw, "ticket result": result, "activity log": logged} {
+		if strings.Contains(string(body), secret) || strings.Contains(string(body), "old@x") {
+			t.Errorf("the %s carries a previewed value: %s", name, body)
+		}
+	}
+}

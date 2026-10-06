@@ -148,6 +148,7 @@ type fakeExecutor struct {
 
 	previewTag int64
 	commitTag  int64
+	changes    *types.WriteChanges
 
 	calls []string
 }
@@ -206,7 +207,9 @@ func (e *fakeExecutor) PreviewWrite(context.Context, string, string, []ports.Par
 	if e.previewErr != nil {
 		return nil, e.previewErr
 	}
-	return e.result(e.previewTag), nil
+	r := e.result(e.previewTag)
+	r.Changes = e.changes
+	return r, nil
 }
 
 func (e *fakeExecutor) CommitWrite(context.Context, string, string, []ports.Param) (*ports.RawResult, error) {

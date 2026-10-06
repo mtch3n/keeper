@@ -476,9 +476,20 @@ func (db *DB) write(ctx context.Context, connID, sql string, params []ports.Para
 		if facts.StatementType == StmtDDL {
 			return keeperError(types.CodeDDLRefused)
 		}
+		if mode == previewTx && len(sd.Fields) == 0 {
+			if r, ok := c.previewChanges(ctx, sql, params, facts.StatementType); ok {
+				res = r
+				return nil
+			}
+		}
 		r, err := c.fetch(ctx, sql, params, c.limits.MaxRowsCeiling)
 		if err != nil {
 			return err
+		}
+		if mode == previewTx && len(sd.Fields) > 0 {
+			// The statement's own RETURNING is what the approver can see.
+			r.Changes = changesOf(r, facts.StatementType, false)
+			r.Changes.Rows = r.Changes.Rows[:min(len(r.Changes.Rows), types.PreviewRows)]
 		}
 		res = r
 		return nil
