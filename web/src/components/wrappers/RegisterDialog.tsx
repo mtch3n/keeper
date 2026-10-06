@@ -41,7 +41,7 @@ const EMPTY = {
  * else (internal/daemon/connections.go), and a dropdown with one reachable
  * option is a promise the daemon has not made. For the same reason there is
  * no SSH tunnel section and no read-only switch — keeper has no tunnel, and
- * connection mode is `Policy`'s `RadioGroup` with a sentence of consequence
+ * connection mode is the Limits tab's `RadioGroup` with a sentence of consequence
  * under each option, which a checkbox here would quietly become a third
  * rendering of.
  *

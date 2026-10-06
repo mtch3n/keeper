@@ -7,7 +7,7 @@ test('JDG-C8 the modes are strict and assisted, and neither mentions a model', a
   const d = fakeDaemon()
   d.on('GET', '/v1/connections', () => [200, [summary('c1', 'one')]])
   d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one', '2026-10-06T12:00:00Z', [])])
-  renderApp('/policy')
+  renderApp('/connections/c1/limits')
   const heading = await screen.findByRole('heading', { name: 'Mode' })
   const section = within(heading.closest('section') as HTMLElement)
   const radios = section.getAllByRole('radio')

@@ -1,21 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import {
   auditConnection,
-  getConnection,
-  listConnections,
   setDenylist,
   setTerms,
   updateConnection,
@@ -23,103 +17,7 @@ import {
   type Pattern,
 } from '@/lib/api'
 import { auditedAge } from '@/lib/render'
-import type { ConnectionSummary, Finding, Mode, RelationRef, Stage, StageKind } from '@/lib/types'
-
-/**
- * One connection's posture: what its role can do (SPEC R4.1), its mode (§9.4),
- * the detection pipeline its free text runs through, and its limits (§4.5).
- *
- * `Policy` answers *what may this connection do*; `Settings` answers *what is
- * this daemon doing*. Keeping them apart is why neither screen is a bag of
- * preferences.
- */
-export function PolicyPage() {
-  const [list, setList] = useState<ConnectionSummary[] | null>(null)
-  const [detail, setDetail] = useState<ConnectionDetail | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [params, setParams] = useSearchParams()
-  const wanted = params.get('connection')
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const cs = await listConnections()
-        setList(cs)
-        // A link names the connection it is about; one naming nothing that
-        // exists opens the first rather than an empty page.
-        const open = cs.find((c) => c.id === wanted) ?? cs[0]
-        if (open) setDetail(await getConnection(open.id))
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-      }
-    })()
-  }, [wanted])
-
-  const reload = useCallback(async (id: string) => {
-    try {
-      setDetail(await getConnection(id))
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }, [])
-
-  const select = (id: string) => {
-    setParams({ connection: id }, { replace: true })
-    void reload(id)
-  }
-
-  if (list === null) return <Skeleton className="h-40 w-full" />
-  if (list.length === 0) {
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>No connections</EmptyTitle>
-          <EmptyDescription>Register one first; these settings belong to a connection.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
-
-  return (
-    <div className="flex flex-col gap-8">
-      {error ? <p className="text-sm text-blocked">{error}</p> : null}
-
-      <div className="flex flex-wrap gap-2">
-        {list.map((c) => (
-          <Button
-            key={c.id}
-            variant={detail?.id === c.id ? 'default' : 'outline'}
-            onClick={() => select(c.id)}
-          >
-            {c.name}
-          </Button>
-        ))}
-      </div>
-
-      {detail ? (
-        <>
-          <Privileges detail={detail} onChanged={() => reload(detail.id)} onError={setError} />
-          <Separator />
-          <ModeSelector detail={detail} onChanged={() => void reload(detail.id)} onError={setError} />
-          <Separator />
-          <DetectionEditor
-            key={detail.id}
-            detail={detail}
-            onChanged={() => void reload(detail.id)}
-            onError={setError}
-          />
-          <Separator />
-          <LimitsForm detail={detail} onChanged={() => void reload(detail.id)} onError={setError} />
-          <Separator />
-          <DenylistEditor detail={detail} onChanged={() => void reload(detail.id)} onError={setError} />
-          <Separator />
-          <WriteScope detail={detail} />
-        </>
-      ) : null}
-    </div>
-  )
-}
+import type { Finding, Mode, RelationRef, Stage, StageKind } from '@/lib/types'
 
 /**
  * What this connection's role can do beyond reading (SPEC R4.1), read where
@@ -128,7 +26,7 @@ export function PolicyPage() {
  * runs that statement — it holds the credential the report is about, and a
  * tool that can narrow its own grants is a tool that can widen them.
  */
-function Privileges({
+export function Privileges({
   detail,
   onChanged,
   onError,
@@ -232,7 +130,7 @@ const MODES: { value: Mode; title: string; consequence: string }[] = [
  * keeper's masking or a human — and a control that rendered that as a position
  * on a scale would be lying about what it does.
  */
-function ModeSelector({
+export function ModeSelector({
   detail,
   onChanged,
   onError,
@@ -279,7 +177,7 @@ function ModeSelector({
   )
 }
 
-function LimitsForm({
+export function LimitsForm({
   detail,
   onChanged,
   onError,
@@ -376,7 +274,7 @@ function parsePatterns(text: string): Pattern[] {
  * and never sends one back, so these boxes start empty and a save states the
  * whole set.
  */
-function DetectionEditor({
+export function DetectionEditor({
   detail,
   onChanged,
   onError,
@@ -528,7 +426,7 @@ function DetectionEditor({
   )
 }
 
-function DenylistEditor({
+export function DenylistEditor({
   detail,
   onChanged,
   onError,
@@ -613,7 +511,7 @@ function DenylistEditor({
   )
 }
 
-function WriteScope({ detail }: { detail: ConnectionDetail }) {
+export function WriteScope({ detail }: { detail: ConnectionDetail }) {
   return (
     <section className="flex flex-col gap-4">
       <h2 className="text-heading">Write scope</h2>
