@@ -94,8 +94,9 @@ func defaultVia(sf surface) string {
 }
 
 type patchRequest struct {
-	Mode   *types.Mode   `json:"mode,omitzero"`
-	Limits *types.Limits `json:"limits,omitzero"`
+	Mode      *types.Mode   `json:"mode,omitzero"`
+	Limits    *types.Limits `json:"limits,omitzero"`
+	Detection *[]types.Pass `json:"detection,omitzero"`
 }
 
 func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
@@ -103,7 +104,22 @@ func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.Respons
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Mode: req.Mode, Limits: req.Limits})
+	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Mode: req.Mode, Limits: req.Limits, Detection: req.Detection})
+}
+
+type termsRequest struct {
+	Deny  []string `json:"deny"`
+	Allow []string `json:"allow"`
+}
+
+// putTerms replaces a connection's list-pass terms and answers with counts:
+// the terms are never sent back out.
+func (s *Server) putTerms(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
+	var req termsRequest
+	if err := s.readJSON(w, r, &req); err != nil {
+		return nil, err
+	}
+	return s.d.SetTerms(ctx, r.PathValue("id"), ports.Terms(req))
 }
 
 type denylistRequest struct {

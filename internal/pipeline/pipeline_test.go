@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -870,5 +871,21 @@ func TestDuplicateOutputNamesStayDistinct(t *testing.T) {
 	}
 	if len(dec.Result.Transforms) != 2 {
 		t.Errorf("transforms = %v, want one entry per column", dec.Result.Transforms)
+	}
+}
+
+func Test_DET_C7_AnUnexaminedScanColumnIsReportedAsADegradation(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
+		h.exec.rows = [][]any{{int64(1)}}
+		h.exec.plan = readPlan(10, cleanRef)
+		h.redactor.unexamined = true
+	})
+	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
+	if dec.Result == nil {
+		t.Fatalf("a statement with unexamined free text must still complete: %v", dec.Error)
+	}
+	if !slices.ContainsFunc(dec.Result.Degradations, func(d types.Degradation) bool { return d.Layer == "detector" }) {
+		t.Errorf("degradations = %v, want the detector named", dec.Result.Degradations)
 	}
 }

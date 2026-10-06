@@ -19,8 +19,9 @@ import (
 type Dependencies struct {
 	Introspector Introspector
 	Sampler      ColumnSampler
-	Names        NameHeuristic
-	Rules        RuleMatcher
+	// Detectors returns a connection's chain of passes, which init samples
+	// through. A connection with none gets no proposals.
+	Detectors    ports.DetectorFor
 	Privileges   PrivilegeChecker
 	Fingerprints Fingerprinter
 }

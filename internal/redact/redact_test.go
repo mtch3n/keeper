@@ -3,16 +3,37 @@ package redact
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/mtchen/keeper/internal/rules"
+	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
 // --- fixtures ---------------------------------------------------------------
+
+// emailDetector finds email addresses, standing in for a connection's passes.
+type emailDetector struct{}
+
+var emailRE = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
+
+func (emailDetector) Detect(_ context.Context, texts []string) ([][]ports.Span, error) {
+	out := make([][]ports.Span, len(texts))
+	for i, t := range texts {
+		out[i] = []ports.Span{}
+		for _, m := range emailRE.FindAllStringIndex(t, -1) {
+			out[i] = append(out[i], ports.Span{Start: m[0], End: m[1], Type: "email"})
+		}
+	}
+	return out, nil
+}
+
+func (emailDetector) Identity() ports.DetectorIdentity { return ports.DetectorIdentity{Name: "test"} }
+
+func emailsOnly(context.Context, string) (ports.Detector, error) { return emailDetector{}, nil }
 
 type fakeKeys struct{ version int }
 
@@ -39,7 +60,7 @@ func newRedactor(t *testing.T, cat PolicyLookup, ns map[string]NamespaceRule) *R
 	t.Helper()
 	r, err := New(Config{
 		Keys:       fakeKeys{version: 1},
-		Detector:   rules.New(rules.Config{}),
+		Detectors:  emailsOnly,
 		Policies:   cat,
 		Namespaces: ns,
 	})
@@ -708,10 +729,9 @@ func TestResolveAndDropSession(t *testing.T) {
 func TestBindingsExpire(t *testing.T) {
 	clock := time.Now()
 	r, err := New(Config{
-		Keys:     fakeKeys{version: 1},
-		Detector: rules.New(rules.Config{}),
-		TTL:      time.Minute,
-		Now:      func() time.Time { return clock },
+		Keys: fakeKeys{version: 1},
+		TTL:  time.Minute,
+		Now:  func() time.Time { return clock },
 	})
 	if err != nil {
 		t.Fatal(err)

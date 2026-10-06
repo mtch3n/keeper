@@ -64,6 +64,10 @@ type Vault interface {
 	Update(ctx context.Context, c *types.Connection) error
 	Remove(ctx context.Context, id string) error
 
+	// Terms returns a connection's list-pass terms; SetTerms replaces them.
+	Terms(ctx context.Context, id string) (Terms, error)
+	SetTerms(ctx context.Context, id string, t Terms) error
+
 	// DSN assembles the connection string for a role from the connection's host
 	// and the role's credential, or errors when none exists. There is no
 	// boolean that enables writes: SPEC §4.2.
@@ -167,17 +171,37 @@ type InitProposal struct {
 	// SampleRates reports the measured hit rate per sampled column, so a reviewer
 	// sees why a proposal was made. SPEC R5.3a.
 	SampleRates map[string]float64 `json:"sample_rates,omitzero"`
+	// Degradations names what init could not consult, so a column it proposed
+	// nothing for does not read as a column it found clean.
+	Degradations []types.Degradation `json:"degradations,omitzero"`
 }
 
-// Detector is internal/rules and, optionally, a sidecar. A detector that is
-// unconfigured, unreachable or slow narrows coverage; it never blocks and never
-// widens what is emitted. SPEC R8.5h.
+// Detector finds PII inside free text: one detection pass, or a connection's
+// chain of them (internal/detect). It never decides a column's policy; it only
+// says where in a text the PII is.
 type Detector interface {
-	// Scan returns the spans of text that matched, by byte offset.
-	Scan(ctx context.Context, text string) ([]Span, error)
+	// Detect examines every text and returns one span list per text, by byte
+	// offset. A text whose entry is missing or nil was not examined, and a
+	// caller fails closed on it: an empty, non-nil list is the only answer that
+	// means "examined, nothing found". An error means nothing was examined.
+	Detect(ctx context.Context, texts []string) ([][]Span, error)
 	// Identity reports what is examining the data and whether it can reach the
 	// network, for doctor and the audit log. SPEC R8.5g.
 	Identity() DetectorIdentity
+}
+
+// DetectorFor returns a connection's detector: the chain of passes its
+// operator chose. It is nil, with no error, when the connection runs no
+// passes, and a nil detector examines nothing.
+type DetectorFor func(ctx context.Context, connID string) (Detector, error)
+
+// Terms are a connection's list-pass terms: deny terms are always PII, and a
+// span whose text equals an allow term is never redacted. They exist between
+// the human surface, the vault and the list pass and are never returned by
+// any API.
+type Terms struct {
+	Deny  []string
+	Allow []string
 }
 
 // Span is one detected range, half-open.

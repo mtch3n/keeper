@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -47,9 +48,10 @@ type PolicyLookup interface {
 type Config struct {
 	// Keys supplies the per-connection HMAC key. Required for token policies.
 	Keys KeySource
-	// Detector is the rules pass a scan column runs. Required: a scan column
-	// with no detector would pass free text through unexamined.
-	Detector ports.Detector
+	// Detectors returns the chain of passes a connection's scan columns run.
+	// Optional: without it, and for a connection that runs no passes, no free
+	// text is examined and every scan cell is redacted whole.
+	Detectors ports.DetectorFor
 	// Policies resolves a column's policy arguments. Optional; without it a
 	// token column has no namespace and falls back to redact.
 	Policies PolicyLookup
@@ -75,13 +77,13 @@ const (
 
 // Redactor is G7. Every value keeper emits passes through [Redactor.Apply].
 type Redactor struct {
-	keys     KeySource
-	detector ports.Detector
-	policies PolicyLookup
-	ns       atomic.Pointer[map[string]NamespaceRule]
-	ttl      time.Duration
-	minMatch int
-	now      func() time.Time
+	keys      KeySource
+	detectors ports.DetectorFor
+	policies  PolicyLookup
+	ns        atomic.Pointer[map[string]NamespaceRule]
+	ttl       time.Duration
+	minMatch  int
+	now       func() time.Time
 	// hexLen is TokenHexLen in every build. Tests inside this package shorten it
 	// to reach R8.3c's collision path; the keeper_short_token build tag does the
 	// same for tests that run the daemon.
@@ -95,18 +97,15 @@ var _ ports.Redactor = (*Redactor)(nil)
 
 // New builds a Redactor.
 func New(cfg Config) (*Redactor, error) {
-	if cfg.Detector == nil {
-		return nil, errors.New("redact: a detector is required; a scan column without one emits unexamined free text")
-	}
 	r := &Redactor{
-		keys:     cfg.Keys,
-		detector: cfg.Detector,
-		policies: cfg.Policies,
-		ttl:      cmpOr(cfg.TTL, DefaultTTL),
-		minMatch: cmpOr(cfg.MinMatch, DefaultMinMatch),
-		now:      cfg.Now,
-		hexLen:   TokenHexLen,
-		sessions: map[string]*session{},
+		keys:      cfg.Keys,
+		detectors: cfg.Detectors,
+		policies:  cfg.Policies,
+		ttl:       cmpOr(cfg.TTL, DefaultTTL),
+		minMatch:  cmpOr(cfg.MinMatch, DefaultMinMatch),
+		now:       cfg.Now,
+		hexLen:    TokenHexLen,
+		sessions:  map[string]*session{},
 	}
 	if r.now == nil {
 		r.now = time.Now
@@ -260,6 +259,12 @@ type columnPlan struct {
 
 	spans      int
 	collisions int
+
+	// scan is the statement's free-text examination, shared by every column.
+	scan *scanState
+	// unexamined is set once any of this column's cells was redacted whole
+	// because its free text was not examined.
+	unexamined bool
 }
 
 // Apply rewrites rows in place according to the policies the pipeline resolved,
@@ -287,12 +292,26 @@ func (r *Redactor) Apply(ctx context.Context, sessionID string, cols []types.Col
 		return nil, err
 	}
 
+	scan := &scanState{}
+	for j := range plans {
+		plans[j].scan = scan
+	}
+	if r.collect(ctx, sess, plans, rows, now) {
+		r.examine(ctx, st.ConnectionID, scan)
+	}
+
 	for _, row := range rows {
 		for j := range plans {
 			if j >= len(row) {
 				break
 			}
-			row[j] = r.applyCell(ctx, sess, &plans[j], row[j], now)
+			pl := &plans[j]
+			scan.cellFailed = false
+			row[j] = r.applyCell(ctx, sess, pl, row[j], now)
+			if scan.cellFailed {
+				row[j] = RedactedMarker
+				pl.unexamined = true
+			}
 		}
 	}
 
@@ -451,7 +470,7 @@ func (r *Redactor) applyCell(ctx context.Context, sess *session, pl *columnPlan,
 		return Partial(pl.form, stringOf(v))
 	case types.PolicyScan:
 		return rewriteStrings(v, func(s string) string {
-			out, n := r.redactSpans(ctx, s)
+			out, n := r.redactSpans(pl, s)
 			pl.spans += n
 			return out
 		})
@@ -491,36 +510,42 @@ func (r *Redactor) tokenize(sess *session, pl *columnPlan, value string, now tim
 	return bound.token
 }
 
-// redactSpans replaces the rules pass's matched spans and nothing else (R8.5a).
-// One email in one row of `notes` must not mask every note in the result.
-func (r *Redactor) redactSpans(ctx context.Context, s string) (string, int) {
+// redactSpans replaces the spans the connection's passes found and nothing
+// else (R8.5a): one email in one row of `notes` must not mask every note in the
+// result. Text no pass examined, and a span that cannot be applied as given,
+// mark the cell for whole redaction instead.
+func (r *Redactor) redactSpans(pl *columnPlan, s string) (string, int) {
 	if s == "" {
 		return s, 0
 	}
-	spans, err := r.detector.Scan(ctx, s)
-	if err != nil {
-		// A detector that failed examined nothing, and free text that was not
-		// examined is not free text that is clean. The cell is masked and the
-		// statement completes; R8.5h forbids blocking on a detector.
-		return RedactedMarker, 1
+	sc := pl.scan
+	if sc.collecting {
+		sc.add(s)
+		return s, 0
+	}
+	spans, ok := sc.results[s]
+	if !ok {
+		sc.cellFailed = true
+		return RedactedMarker, 0
 	}
 	if len(spans) == 0 {
 		return s, 0
 	}
-	var b []byte
+	spans = slices.Clone(spans)
+	slices.SortFunc(spans, func(a, b ports.Span) int { return a.Start - b.Start })
+	var out []byte
 	at := 0
-	n := 0
 	for _, sp := range spans {
 		if sp.Start < at || sp.End > len(s) || sp.End <= sp.Start {
-			continue
+			sc.cellFailed = true
+			return RedactedMarker, 0
 		}
-		b = append(b, s[at:sp.Start]...)
-		b = append(b, RedactedSpan(sp.Type)...)
+		out = append(out, s[at:sp.Start]...)
+		out = append(out, RedactedSpan(sp.Type)...)
 		at = sp.End
-		n++
 	}
-	b = append(b, s[at:]...)
-	return string(b), n
+	out = append(out, s[at:]...)
+	return string(out), len(spans)
 }
 
 func stringOf(v any) string {
@@ -557,7 +582,7 @@ func transformsOf(plans []columnPlan) map[string]types.Transform {
 		pl := &plans[i]
 		t := types.Transform{
 			Policy:        pl.policy,
-			Basis:         pl.basis,
+			Basis:         basisOf(pl),
 			SpansRedacted: pl.spans,
 			Collisions:    pl.collisions,
 		}
@@ -625,4 +650,13 @@ func DropColumns(cols []types.ColumnMeta, rows [][]any, transforms map[string]ty
 		rows[i] = nr
 	}
 	return outCols, rows
+}
+
+// basisOf is the basis a column reports. A scan column any of whose cells went
+// out unexamined says so, rather than claiming the rules looked at it.
+func basisOf(pl *columnPlan) types.Basis {
+	if pl.unexamined {
+		return types.BasisUnexamined
+	}
+	return pl.basis
 }

@@ -39,6 +39,7 @@ import type {
   Limits,
   LocalRequest,
   Mode,
+  Pass,
   Session,
   PathRef,
   QueryResult,
@@ -151,6 +152,8 @@ export interface ConnectionDetail {
   catalog_status: CatalogStatus
   policy_summary?: Record<string, number>
   mode: Mode
+  /** The connection's detection passes, in order. Empty is off. */
+  detection: Pass[]
   limits: Limits
   denylist?: RelationRef[]
   write_scope?: WriteScopeEntry[]
@@ -326,8 +329,14 @@ export function listAudits() {
   return get<AuditReport[]>('/v1/audit')
 }
 
-export function updateConnection(id: string, body: { mode?: Mode; limits?: Limits }) {
+export function updateConnection(id: string, body: { mode?: Mode; limits?: Limits; detection?: Pass[] }) {
   return patch<Connection>(`/v1/connections/${id}`, body)
+}
+
+/** Replaces the list pass's terms. Only counts come back: a term is never
+ * sent out of the daemon again. */
+export function setTerms(id: string, body: { deny: string[]; allow: string[] }) {
+  return put<{ deny: number; allow: number }>(`/v1/connections/${id}/terms`, body)
 }
 
 export function setDenylist(id: string, relations: RelationRef[]) {

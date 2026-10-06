@@ -78,6 +78,7 @@ type ConnectionDetail struct {
 	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
 	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
 	HasWriteCredential bool                    `json:"has_write_credential"`
+	Detection          []types.Pass            `json:"detection"`
 	Degradations       []types.Degradation     `json:"degradations,omitzero"`
 }
 
@@ -145,12 +146,35 @@ type PatchConnectionParams struct {
 	MaxRowsCeiling   int           `json:"max_rows_ceiling,omitzero"`
 	StatementTimeout time.Duration `json:"statement_timeout,omitzero"`
 	ScanSample       int           `json:"scan_sample,omitzero"`
+	// Detection replaces the connection's passes when set; an empty list turns
+	// detection off.
+	Detection *[]types.Pass `json:"detection,omitzero"`
 }
 
 // PatchConnection updates a connection's mode and/or limits.
 func (c *Client) PatchConnection(ctx context.Context, id string, p PatchConnectionParams) (*types.Connection, error) {
 	var out types.Connection
 	if err := c.do(ctx, http.MethodPatch, "/v1/connections/"+url.PathEscape(id), p, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// TermCounts is how many list-pass terms a connection holds. The terms
+// themselves never come back from the daemon.
+type TermCounts struct {
+	Deny  int `json:"deny"`
+	Allow int `json:"allow"`
+}
+
+// SetTerms replaces a connection's list-pass deny and allow terms.
+func (c *Client) SetTerms(ctx context.Context, id string, deny, allow []string) (*TermCounts, error) {
+	body := struct {
+		Deny  []string `json:"deny"`
+		Allow []string `json:"allow"`
+	}{Deny: deny, Allow: allow}
+	var out TermCounts
+	if err := c.do(ctx, http.MethodPut, "/v1/connections/"+url.PathEscape(id)+"/terms", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

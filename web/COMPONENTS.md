@@ -142,7 +142,7 @@ lights in `AppShell` are already wired.
 | PermissionsPage | `/permissions` | Per-path grants: what a session or standing rule may read (SPEC R9.3e) |
 | ActivityPage | `/activity` | The query log — what ran, what was masked, what left the machine (SPEC §10) |
 | CatalogPage | `/catalog` | Per-column classification: policy, namespace, partial form, `hide_name`, the unclassified backlog (SPEC §5) |
-| PolicyPage | `/policy` | Per-connection limits: mode, row ceiling, statement timeout, scan sample, denylist, write scope (SPEC §4.5) |
+| PolicyPage | `/policy` | Per-connection limits: mode, detection, row ceiling, statement timeout, scan sample, denylist, write scope (SPEC §4.5) |
 | SettingsPage | `/settings` | `GET /v1/doctor`: daemon state, key source, connection health, catalog freshness. Not one of UI.md §2.3's six screens; added because `AppShell`'s settings control needs a destination and `/v1/doctor` needs a home — reconsider its placement with the product owner |
 | LocalRequestPage | `/r/:requestId` | The one-use local decision page for an input or authorization request (SPEC R8.7g, UI.md §6). Deliberately rendered outside `AppShell` |
 
@@ -206,6 +206,7 @@ it is the row you have selected.
 | PermissionsPage | `Table`, `Button`, `Empty` | The permission list (SPEC §9.3). One row per path, session grants first, and `last used` / `uses` as the columns that decide whether an entry should still exist. No tree, no wildcard, no select-all: R9.3c grants exactly the path named |
 | PolicyPage | `Button`, `Separator` | Per-connection limits and mode. Answers *what may this connection do*, where `Settings` answers *what is this daemon doing* |
 | ModeSelector | radio inputs | Mode as text with a sentence of consequence under each option. Never a pill or a slider: the modes differ in what they let a local model release, and a scale would be lying about that |
+| DetectionEditor | `Field`, `Switch`, `Textarea`, `Button` | The passes a connection's free text runs through, one `Switch` each with what it finds, and the list pass's deny and allow terms. The terms are write-only — the daemon answers a save with counts — so the boxes start empty and a save states the whole set. It never sets a column's policy; the catalog does |
 | LimitsForm | `Input`, `Button` | Row ceiling, statement timeout and scan sample. The ceiling is a privacy control, not a performance one |
 | DenylistEditor | `Table`, `Input`, `Button` | Relations this connection may never read. Evaluated against the plan, so a denied base table is caught through a view; no approval overrides it |
 | WriteScope | `Table`, `Facts` | The write credential's recorded relations, read-only — it is what the credential holds, discovered by the audit, not a setting |

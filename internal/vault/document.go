@@ -31,6 +31,10 @@ type connectionRecord struct {
 	// boolean that enables writes: SPEC §4.2. types.Connection.HasWriteCredential
 	// is derived from this field's presence, never stored independently.
 	Write *credential `json:"write,omitzero"`
+	// Deny and Allow are the list pass's terms. They are as sensitive as the
+	// data they describe and never leave the vault except through Export.
+	Deny  []string `json:"deny,omitzero"`
+	Allow []string `json:"allow,omitzero"`
 	// TokenKeys holds every HMAC key ever minted for this connection, oldest
 	// first. Old keys are never deleted so historical tokens stay interpretable;
 	// the highest Version is current.

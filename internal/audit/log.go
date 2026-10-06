@@ -47,9 +47,9 @@ import (
 type Config struct {
 	// Path is the log file. Empty uses [DefaultPath].
 	Path string
-	// Detector is the rules pass [Log.ScreenIntent] runs. Required: R10c
-	// screens the session intent with the same pass a scan column gets, and
-	// without one there is no screen.
+	// Detector is the patterns pass [Log.ScreenIntent] runs. Required: R10c
+	// screens the session intent, and without one there is no screen. It is
+	// never a connection's chain: an intent belongs to a session.
 	Detector ports.Detector
 	// Now is the clock, for tests.
 	Now func() time.Time
@@ -310,13 +310,17 @@ func (l *Log) ScreenIntent(ctx context.Context, intent string) error {
 	if strings.TrimSpace(intent) == "" {
 		return nil
 	}
-	spans, err := l.detector.Scan(ctx, intent)
+	res, err := l.detector.Detect(ctx, []string{intent})
+	if err == nil && (len(res) == 0 || res[0] == nil) {
+		err = errors.New("the detector did not examine the intent")
+	}
 	if err != nil {
 		// A detector that failed screened nothing. Text that was not screened
 		// is not text that is clean, and the intent is stored and shown to
 		// humans on the approval screen, so it fails closed.
 		return &IntentError{Types: []string{"unscreened text (the detector did not run)"}}
 	}
+	spans := res[0]
 	if len(spans) == 0 {
 		return nil
 	}

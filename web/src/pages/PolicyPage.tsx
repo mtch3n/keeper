@@ -2,17 +2,28 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { Fact, Facts } from '@/components/wrappers/Facts'
-import { getConnection, listConnections, setDenylist, updateConnection, type ConnectionDetail } from '@/lib/api'
-import type { ConnectionSummary, Mode, RelationRef } from '@/lib/types'
+import {
+  getConnection,
+  listConnections,
+  setDenylist,
+  setTerms,
+  updateConnection,
+  type ConnectionDetail,
+} from '@/lib/api'
+import type { ConnectionSummary, Mode, Pass, RelationRef } from '@/lib/types'
 
 /**
- * Per-connection limits (SPEC §4.5) and the mode selector (§9.4).
+ * Per-connection limits (SPEC §4.5), the mode selector (§9.4) and the
+ * detection passes free text runs through.
  *
  * `Policy` answers *what may this connection do*; `Settings` answers *what is
  * this daemon doing*. Keeping them apart is why neither screen is a bag of
@@ -75,6 +86,13 @@ export function PolicyPage() {
       {detail ? (
         <>
           <ModeSelector detail={detail} onChanged={() => void reload(detail.id)} onError={setError} />
+          <Separator />
+          <DetectionEditor
+            key={detail.id}
+            detail={detail}
+            onChanged={() => void reload(detail.id)}
+            onError={setError}
+          />
           <Separator />
           <LimitsForm detail={detail} onChanged={() => void reload(detail.id)} onError={setError} />
           <Separator />
@@ -217,6 +235,130 @@ function LimitsForm({
       <p className="text-meta text-muted-foreground">
         The row ceiling is a privacy control, not a performance one: every row returned is a row sent to a third
         party. An agent can ask for fewer and never for more.
+      </p>
+    </section>
+  )
+}
+
+const PASSES: { value: Pass; title: string; finds: string }[] = [
+  {
+    value: 'patterns',
+    title: 'Patterns',
+    finds:
+      'Emails, card numbers, IBANs, SSNs, phone numbers, IPs and national IDs, by pattern and checksum, in process. It does not find names or addresses.',
+  },
+  {
+    value: 'list',
+    title: 'Your list',
+    finds: 'The deny terms below — customer names, codenames, anything only you know is sensitive.',
+  },
+]
+
+/**
+ * What finds PII inside a `scan` column's free text. Detection never sets a
+ * column's policy: the catalog does. With no pass on, free text is not
+ * examined and every scan cell is redacted whole.
+ *
+ * The terms are write-only. The daemon answers a save with counts and never
+ * sends a term back, so these boxes start empty and a save states the whole set.
+ */
+function DetectionEditor({
+  detail,
+  onChanged,
+  onError,
+}: {
+  detail: ConnectionDetail
+  onChanged: () => void
+  onError: (e: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [deny, setDeny] = useState('')
+  const [allow, setAllow] = useState('')
+  const [saved, setSaved] = useState<{ deny: number; allow: number } | null>(null)
+  const on = detail.detection ?? []
+
+  const toggle = async (pass: Pass, enabled: boolean) => {
+    const next = PASSES.map((p) => p.value).filter((p) => (p === pass ? enabled : on.includes(p)))
+    setBusy(true)
+    try {
+      await updateConnection(detail.id, { detection: next })
+      onChanged()
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const lines = (s: string) =>
+    s
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l !== '')
+
+  const saveTerms = async () => {
+    setBusy(true)
+    try {
+      setSaved(await setTerms(detail.id, { deny: lines(deny), allow: lines(allow) }))
+      setDeny('')
+      setAllow('')
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="text-heading">Detection</h2>
+      <FieldGroup>
+        {PASSES.map((p) => (
+          <Field key={p.value} orientation="horizontal">
+            <Switch
+              id={`pass-${p.value}`}
+              checked={on.includes(p.value)}
+              disabled={busy}
+              onCheckedChange={(v) => void toggle(p.value, v)}
+            />
+            <FieldContent>
+              <FieldLabel htmlFor={`pass-${p.value}`}>{p.title}</FieldLabel>
+              <FieldDescription>{p.finds}</FieldDescription>
+            </FieldContent>
+          </Field>
+        ))}
+      </FieldGroup>
+      {on.length === 0 ? (
+        <p className="text-meta text-muted-foreground">
+          Off: free text is not examined, so every scan cell is redacted whole.
+        </p>
+      ) : null}
+
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="terms-deny">Deny terms, one per line</FieldLabel>
+          <Textarea id="terms-deny" value={deny} onChange={(e) => setDeny(e.target.value)} disabled={busy} />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="terms-allow">Allow terms, one per line</FieldLabel>
+          <Textarea id="terms-allow" value={allow} onChange={(e) => setAllow(e.target.value)} disabled={busy} />
+          <FieldDescription>
+            A value any pass finds is left visible only when it equals an allow term exactly, ignoring case.
+          </FieldDescription>
+        </Field>
+      </FieldGroup>
+      <div className="flex items-center gap-3">
+        <Button disabled={busy} onClick={() => void saveTerms()}>
+          Replace terms
+        </Button>
+        {saved ? (
+          <span className="text-meta text-muted-foreground">
+            stored {saved.deny} deny and {saved.allow} allow term(s)
+          </span>
+        ) : null}
+      </div>
+      <p className="text-meta text-muted-foreground">
+        Terms are never shown again once saved. Saving replaces the whole set, so an empty save clears it.
       </p>
     </section>
   )

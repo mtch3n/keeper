@@ -71,6 +71,9 @@ export interface HostView extends Host {
   connections: string[]
 }
 
+/** Mirrors types.Pass: one detection pass a connection can run. */
+export type Pass = 'patterns' | 'list'
+
 export interface Connection {
   id: string
   host_id: string
@@ -81,6 +84,7 @@ export interface Connection {
   version?: string
   catalog_path: string
   mode: Mode
+  detection?: Pass[]
   limits: Limits
   denylist?: RelationRef[]
   write_scope?: WriteScopeEntry[]

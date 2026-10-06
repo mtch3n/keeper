@@ -350,6 +350,40 @@ func (v *Vault) Remove(ctx context.Context, id string) error {
 	return v.persist()
 }
 
+// Terms returns a connection's list-pass terms.
+func (v *Vault) Terms(ctx context.Context, id string) (ports.Terms, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return ports.Terms{}, errNotOpen()
+	}
+	rec, ok := v.doc.find(id)
+	if !ok {
+		return ports.Terms{}, &NotFoundError{ID: id}
+	}
+	return ports.Terms{Deny: slices.Clone(rec.Deny), Allow: slices.Clone(rec.Allow)}, nil
+}
+
+// SetTerms replaces a connection's list-pass terms.
+func (v *Vault) SetTerms(ctx context.Context, id string, t ports.Terms) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return errNotOpen()
+	}
+	rec, ok := v.doc.find(id)
+	if !ok {
+		return &NotFoundError{ID: id}
+	}
+	prevDeny, prevAllow := rec.Deny, rec.Allow
+	rec.Deny, rec.Allow = slices.Clone(t.Deny), slices.Clone(t.Allow)
+	if err := v.persist(); err != nil {
+		rec.Deny, rec.Allow = prevDeny, prevAllow
+		return err
+	}
+	return nil
+}
+
 // DSN assembles the connection string for a role from the connection's host
 // and that role's credential. There is no boolean that enables writes: an
 // absent write credential is reported as CodeNoWriteCredential, the code the

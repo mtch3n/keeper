@@ -63,6 +63,7 @@ type ConnectionDetail struct {
 	CatalogStatus      CatalogStatus           `json:"catalog_status"`
 	PolicySummary      map[types.Policy]int    `json:"policy_summary,omitzero"`
 	Mode               types.Mode              `json:"mode"`
+	Detection          []types.Pass            `json:"detection"`
 	Limits             types.Limits            `json:"limits"`
 	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
 	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
@@ -100,6 +101,7 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 		AuditedPrivileges:  AuditedPrivileges{AuditedAt: c.AuditedAt, Findings: c.Findings},
 		CatalogStatus:      CatalogStatus{Path: c.CatalogPath},
 		Mode:               c.Mode,
+		Detection:          c.Detection,
 		Limits:             c.Limits,
 		Denylist:           c.Denylist,
 		WriteScope:         c.WriteScope,
@@ -283,6 +285,7 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 		Role:        spec.Read.User,
 		CatalogPath: spec.CatalogPath,
 		Mode:        types.ModeAssisted,
+		Detection:   []types.Pass{types.PassPatterns},
 		Limits:      types.DefaultLimits(),
 	}
 	if err := d.deps.Vault.Register(ctx, c, spec.Read, spec.Write); err != nil {
@@ -379,6 +382,9 @@ func (d *Daemon) Audits(ctx context.Context) ([]AuditReport, error) {
 type Patch struct {
 	Mode   *types.Mode
 	Limits *types.Limits
+	// Detection replaces the connection's passes; an empty list turns
+	// detection off.
+	Detection *[]types.Pass
 }
 
 // Update applies a patch.
@@ -392,6 +398,12 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 			return nil, errValidation("mode", "must be strict, assisted or permissive")
 		}
 		c.Mode = *p.Mode
+	}
+	if p.Detection != nil {
+		if err := validPasses(*p.Detection); err != nil {
+			return nil, err
+		}
+		c.Detection = slices.Clone(*p.Detection)
 	}
 	if p.Limits != nil {
 		if p.Limits.MaxRowsCeiling <= 0 {
@@ -496,4 +508,51 @@ func (d *Daemon) Remove(ctx context.Context, id string) error {
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "removed", "connection_id": id}})
 	return nil
+}
+
+// validPasses refuses a pass keeper does not have and a pass named twice.
+func validPasses(ps []types.Pass) error {
+	names := make([]string, len(types.Passes))
+	for i, p := range types.Passes {
+		names[i] = string(p)
+	}
+	for i, p := range ps {
+		if !slices.Contains(types.Passes, p) {
+			return errValidation("detection", "passes must be from: "+strings.Join(names, ", "))
+		}
+		if slices.Contains(ps[:i], p) {
+			return errValidation("detection", "names the "+string(p)+" pass twice")
+		}
+	}
+	return nil
+}
+
+// TermCounts is PUT /v1/connections/{id}/terms. It reports how many terms are
+// stored and never the terms themselves.
+type TermCounts struct {
+	Deny  int `json:"deny"`
+	Allow int `json:"allow"`
+}
+
+// SetTerms replaces a connection's list-pass terms. Blank terms are dropped:
+// an empty deny term would match everywhere.
+func (d *Daemon) SetTerms(ctx context.Context, id string, t ports.Terms) (*TermCounts, error) {
+	if c, err := d.deps.Vault.Connection(ctx, id); err != nil || c == nil {
+		return nil, errUnknownConnection
+	}
+	clean := func(in []string) []string {
+		out := []string{}
+		for _, s := range in {
+			if s = strings.TrimSpace(s); s != "" && !slices.Contains(out, s) {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	t = ports.Terms{Deny: clean(t.Deny), Allow: clean(t.Allow)}
+	if err := d.deps.Vault.SetTerms(ctx, id, t); err != nil {
+		return nil, err
+	}
+	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "terms", "connection_id": id}})
+	return &TermCounts{Deny: len(t.Deny), Allow: len(t.Allow)}, nil
 }

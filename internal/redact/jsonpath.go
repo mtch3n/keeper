@@ -156,6 +156,12 @@ func (r *Redactor) applyLeaf(ctx context.Context, sess *session, pl *columnPlan,
 	if raw.Kind() == jsontext.KindNull {
 		return raw
 	}
+	if pl.scan != nil && pl.scan.collecting {
+		if policy == types.PolicyScan && raw.Kind() == jsontext.KindString {
+			r.redactSpans(pl, jsonScalarString(raw))
+		}
+		return raw
+	}
 	switch policy {
 	case types.PolicyAllow:
 		return raw
@@ -169,7 +175,7 @@ func (r *Redactor) applyLeaf(ctx context.Context, sess *session, pl *columnPlan,
 		if raw.Kind() != jsontext.KindString {
 			return raw
 		}
-		out, n := r.redactSpans(ctx, jsonScalarString(raw))
+		out, n := r.redactSpans(pl, jsonScalarString(raw))
 		pl.spans += n
 		return quoteJSON(out)
 	default:
