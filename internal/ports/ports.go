@@ -383,6 +383,11 @@ type AuditLog interface {
 	// ScreenIntent rejects a session intent that carries PII, using the same rule
 	// pass as a scan column. SPEC R10c.
 	ScreenIntent(ctx context.Context, intent string) error
+	// Prune deletes every record older than the retention, in whole days.
+	Prune(ctx context.Context, retentionDays int) error
+	// LegacyPlaintext is the path of a plaintext log an earlier keeper left, or
+	// empty. It is reported so the operator can remove it, and never read.
+	LegacyPlaintext() string
 }
 
 // AuditFilter narrows the Activity screen.

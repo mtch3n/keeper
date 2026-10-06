@@ -228,11 +228,17 @@ func (d *Daemon) Close() error {
 func (d *Daemon) sweep() {
 	t := time.NewTicker(d.cfg.Sweep)
 	defer t.Stop()
+	d.pruneLog()
+	pruned := d.now()
 	for {
 		select {
 		case <-d.ctx.Done():
 			return
 		case <-t.C:
+			if d.now().Sub(pruned) >= 24*time.Hour {
+				d.pruneLog()
+				pruned = d.now()
+			}
 			d.expire()
 			d.flushGrants()
 			d.exitIfIdle()
@@ -280,6 +286,16 @@ func (d *Daemon) expire() {
 	for _, e := range append(events, expired...) {
 		d.hub.Publish(e)
 	}
+}
+
+// pruneLog deletes activity older than the operator's retention. A failure
+// leaves the records for the next day's run; it never stops the daemon.
+func (d *Daemon) pruneLog() {
+	st, err := d.deps.Vault.Settings(d.ctx)
+	if err != nil {
+		return
+	}
+	_ = d.deps.Audit.Prune(d.ctx, st.LogRetentionDays)
 }
 
 // RequestShutdown asks the process to stop. It is what `keeper daemon restart`

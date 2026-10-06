@@ -27,15 +27,19 @@ package audit
 import (
 	"bufio"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"uuid"
 
@@ -45,8 +49,13 @@ import (
 
 // Config constructs a [Log].
 type Config struct {
-	// Path is the log file. Empty uses [DefaultPath].
-	Path string
+	// Dir holds one file per UTC day. Its parent is where an older keeper kept
+	// a plaintext audit.log, which this log never reads.
+	Dir string
+	// Key returns the 32-byte key every line is sealed under. keeperd derives
+	// it from the vault's master key, so the log reads only where the vault
+	// opens. Required: there is no plaintext mode.
+	Key func() ([]byte, error)
 	// Detector is the patterns pass [Log.ScreenIntent] runs. Required: R10c
 	// screens the session intent, and without one there is no screen. It is
 	// never a connection's chain: an intent belongs to a session.
@@ -55,76 +64,88 @@ type Config struct {
 	Now func() time.Time
 }
 
-// Log is the append-only JSONL audit log.
+// Log is the append-only activity log: one file per UTC day, each line a
+// record sealed with AES-256-GCM, so lines append without rewriting a file
+// and a file read without the key yields nothing.
 type Log struct {
-	path     string
+	dir      string
+	key      func() ([]byte, error)
 	detector ports.Detector
 	now      func() time.Time
+	legacy   string
 
-	mu sync.Mutex
-	f  *os.File
+	mu         sync.Mutex
+	aead       cipher.AEAD
+	unreadable atomic.Int64
 }
 
 var _ ports.AuditLog = (*Log)(nil)
 
-// DefaultPath is ~/.config/keeper/audit.log, honouring XDG_CONFIG_HOME.
-//
-// SPEC R5.2a: ~/.config/keeper holds only the vault, the daemon's own state and
-// this log. The catalog lives in the project repo, because it is reviewed; this
-// is not.
-func DefaultPath() (string, error) {
-	dir := os.Getenv("XDG_CONFIG_HOME")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("audit: locate config directory: %w", err)
-		}
-		dir = filepath.Join(home, ".config")
-	}
-	return filepath.Join(dir, "keeper", "audit.log"), nil
-}
-
-// New opens the log, creating the directory and file if needed.
+// New prepares the log directory. It opens no key yet: the vault opens after
+// the daemon is wired, and the first write or read asks for the key.
 func New(cfg Config) (*Log, error) {
 	if cfg.Detector == nil {
 		return nil, errors.New("audit: a detector is required to screen session intent (R10c)")
 	}
-	path := cfg.Path
-	if path == "" {
-		p, err := DefaultPath()
-		if err != nil {
-			return nil, err
-		}
-		path = p
+	if cfg.Dir == "" || cfg.Key == nil {
+		return nil, errors.New("audit: a directory and a key are required")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit: create log directory: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("audit: open log: %w", err)
-	}
-	l := &Log{path: path, detector: cfg.Detector, now: cfg.Now, f: f}
+	l := &Log{dir: cfg.Dir, key: cfg.Key, detector: cfg.Detector, now: cfg.Now}
 	if l.now == nil {
 		l.now = time.Now
+	}
+	if p := filepath.Join(filepath.Dir(cfg.Dir), "audit.log"); fileExists(p) {
+		l.legacy = p
 	}
 	return l, nil
 }
 
-// Path reports where the log is, for doctor.
-func (l *Log) Path() string { return l.path }
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
 
-// Close releases the file handle.
-func (l *Log) Close() error {
+// LegacyPlaintext is the path of a plaintext audit.log an earlier keeper left,
+// or empty. It is reported so the operator can remove it, and never read.
+func (l *Log) LegacyPlaintext() string { return l.legacy }
+
+// Unreadable is how many lines the most recent read could not open: a damaged
+// or foreign line is skipped, counted and reported, never fatal.
+func (l *Log) Unreadable() int { return int(l.unreadable.Load()) }
+
+// Close releases nothing: every write opens and closes its day file.
+func (l *Log) Close() error { return nil }
+
+func (l *Log) cipher() (cipher.AEAD, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.f == nil {
-		return nil
+	if l.aead != nil {
+		return l.aead, nil
 	}
-	err := l.f.Close()
-	l.f = nil
-	return err
+	key, err := l.key()
+	if err != nil {
+		return nil, fmt.Errorf("audit: log key: %w", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("audit: log key: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("audit: log key: %w", err)
+	}
+	l.aead = aead
+	return aead, nil
 }
+
+func dayFile(dir string, t time.Time) string {
+	return filepath.Join(dir, t.UTC().Format(dayLayout)+".log")
+}
+
+const dayLayout = "2006-01-02"
 
 // Write appends one record. G9 never skips it.
 //
@@ -174,12 +195,23 @@ func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 		return errors.New("audit: encoded record contains a newline")
 	}
 
+	aead, err := l.cipher()
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("audit: nonce: %w", err)
+	}
+	sealed := base64.StdEncoding.EncodeToString(aead.Seal(nonce, nonce, line, nil))
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.f == nil {
-		return errors.New("audit: log is closed")
+	f, err := os.OpenFile(dayFile(l.dir, r.At), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("audit: open log: %w", err)
 	}
-	if _, err := l.f.Write(append(line, '\n')); err != nil {
+	defer f.Close()
+	if _, err := f.WriteString(sealed + "\n"); err != nil {
 		return fmt.Errorf("audit: append record: %w", err)
 	}
 	return nil
@@ -242,43 +274,119 @@ func matches(r types.AuditRecord, f ports.AuditFilter) bool {
 	return true
 }
 
-// each streams the log. A line that will not parse is skipped rather than
-// failing the read: a truncated final line from a killed process must not make
-// the Activity screen unavailable.
+// each streams every day file, oldest first, opening each line with the key.
+// A line that will not open or parse is skipped and counted rather than
+// failing the read: a truncated final line from a killed process, or one
+// altered on disk, must not make the Activity screen unavailable.
 func (l *Log) each(ctx context.Context, fn func(types.AuditRecord) bool) error {
-	f, err := os.Open(l.path)
+	aead, err := l.cipher()
+	if err != nil {
+		return err
+	}
+	names, err := l.days()
+	if err != nil {
+		return err
+	}
+	bad := 0
+	defer func() { l.unreadable.Store(int64(bad)) }()
+	for _, name := range names {
+		f, err := os.Open(filepath.Join(l.dir, name))
+		if err != nil {
+			return fmt.Errorf("audit: open log: %w", err)
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
+		for sc.Scan() {
+			if err := ctx.Err(); err != nil {
+				f.Close()
+				return err
+			}
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			r, ok := open(aead, line)
+			if !ok {
+				bad++
+				continue
+			}
+			if !fn(r) {
+				f.Close()
+				return nil
+			}
+		}
+		f.Close()
+	}
+	return nil
+}
+
+func open(aead cipher.AEAD, line string) (types.AuditRecord, bool) {
+	var r types.AuditRecord
+	raw, err := base64.StdEncoding.DecodeString(line)
+	if err != nil || len(raw) < aead.NonceSize() {
+		return r, false
+	}
+	plain, err := aead.Open(nil, raw[:aead.NonceSize()], raw[aead.NonceSize():], nil)
+	if err != nil {
+		return r, false
+	}
+	return r, json.Unmarshal(plain, &r, durationUnmarshaler) == nil
+}
+
+// days lists the day files, oldest first.
+func (l *Log) days() ([]string, error) {
+	entries, err := os.ReadDir(l.dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("audit: open log: %w", err)
+		return nil, fmt.Errorf("audit: list log: %w", err)
 	}
-	defer f.Close()
+	var out []string
+	for _, e := range entries {
+		if _, ok := dayOf(e.Name()); ok {
+			out = append(out, e.Name())
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
 
-	br := bufio.NewReader(f)
-	for {
+func dayOf(name string) (time.Time, bool) {
+	base, ok := strings.CutSuffix(name, ".log")
+	if !ok {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(dayLayout, base)
+	return t, err == nil
+}
+
+// Prune deletes every day file wholly older than the retention: a day's file
+// goes once the whole of that day lies more than retentionDays in the past.
+func (l *Log) Prune(ctx context.Context, retentionDays int) error {
+	if retentionDays <= 0 {
+		return errors.New("audit: retention must be at least a day")
+	}
+	cutoff := l.now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -retentionDays)
+	names, err := l.days()
+	if err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, name := range names {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		line, err := br.ReadString('\n')
-		if len(line) > 0 {
-			trimmed := strings.TrimSpace(line)
-			if trimmed != "" {
-				var r types.AuditRecord
-				if json.Unmarshal([]byte(trimmed), &r, durationUnmarshaler) == nil {
-					if !fn(r) {
-						return nil
-					}
-				}
-			}
+		day, _ := dayOf(name)
+		if day.AddDate(0, 0, 1).After(cutoff) {
+			continue
 		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("audit: read log: %w", err)
+		if err := os.Remove(filepath.Join(l.dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("audit: prune %s: %w", name, err)
 		}
 	}
+	return nil
 }
 
 // IntentError is a rejected session intent. It names the kinds of identifier

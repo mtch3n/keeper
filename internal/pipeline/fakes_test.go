@@ -436,3 +436,6 @@ func hasReason(reasons []string, want string) bool {
 	}
 	return false
 }
+
+func (*fakeAudit) Prune(context.Context, int) error { return nil }
+func (*fakeAudit) LegacyPlaintext() string          { return "" }

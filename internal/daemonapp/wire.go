@@ -45,7 +45,14 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	patterns := detect.NewPatterns()
 	detectors := detect.NewFactory(patterns, v)
 
-	alog, err := audit.New(audit.Config{Path: filepath.Join(dir, "audit.log"), Detector: patterns})
+	// The activity log is sealed under a key the vault derives, so it reads
+	// only where the vault opens. The vault opens after wiring, before the
+	// daemon serves, and the log asks for the key on first use.
+	alog, err := audit.New(audit.Config{
+		Dir:      filepath.Join(dir, "activity"),
+		Key:      func() ([]byte, error) { return v.DeriveKey("keeper audit log v1") },
+		Detector: patterns,
+	})
 	if err != nil {
 		return daemon.Deps{}, nil, nil, fmt.Errorf("audit log: %w", err)
 	}
