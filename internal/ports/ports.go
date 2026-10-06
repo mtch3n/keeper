@@ -341,7 +341,9 @@ type RawResult struct {
 	Truncated bool
 	// CommandTag carries the affected-row count for a write.
 	CommandTag int64
-	Duration   time.Duration
+	// Changes is set by PreviewWrite: the rows the write changes, in cleartext.
+	Changes  *types.WriteChanges
+	Duration time.Duration
 }
 
 // Relation is one table, view or matview with its columns, from introspection.

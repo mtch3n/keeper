@@ -5,12 +5,13 @@ import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { decideApproval, listConnections, listHosts, type PendingRequest } from '@/lib/api'
 import { useInbox } from '@/lib/inbox'
 import { age, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
-import type { ApprovalItem, ConnectionSummary, HostView, Writes } from '@/lib/types'
+import type { ApprovalItem, ConnectionSummary, HostView, WriteChanges, Writes } from '@/lib/types'
 
 /**
  * Everything waiting on a human (SPEC R9.1), oldest first. Each item is a card
@@ -136,7 +137,7 @@ function ApprovalCard({
         {f.reasons?.length ? <Fact label="why it waits">{f.reasons.join(', ')}</Fact> : null}
         {item.write ? (
           <Fact label="impact">
-            {item.write.operation} · {item.write.row_count} rows as of the preview · {relationList(f.relations)}
+            {item.write.operation} · {item.write.row_count} rows affected, as of the preview · {relationList(f.relations)}
           </Fact>
         ) : (
           <Fact label="impact">
@@ -150,6 +151,7 @@ function ApprovalCard({
           </Fact>
         ) : null}
       </Facts>
+      {item.write?.changes ? <ChangedRows changes={item.write.changes} /> : null}
       <Separator />
       <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{renderSQL(item.sql)}</pre>
       {item.write ? (
@@ -166,6 +168,50 @@ function ApprovalCard({
         </Button>
       </div>
     </article>
+  )
+}
+
+/**
+ * The rows a write changes, in cleartext, because an approver deciding on a
+ * count alone is deciding blind. A changed value shows what it was, struck
+ * through, beside what it becomes; the agent never receives either.
+ */
+function ChangedRows({ changes }: { changes: WriteChanges }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <Table aria-label="Changed rows">
+        <TableHeader>
+          <TableRow>
+            {changes.columns.map((c, i) => (
+              <TableHead key={i}>{c}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {changes.rows.map((row, r) => (
+            <TableRow key={r}>
+              {changes.columns.map((_, i) => {
+                const before = row.old?.[i]
+                const after = row.new?.[i]
+                return (
+                  <TableCell key={i} className="text-meta">
+                    {before !== undefined && before !== after ? (
+                      <span className="text-muted-foreground line-through">{before}</span>
+                    ) : null}
+                    {before !== undefined && after !== undefined && before !== after ? ' ' : null}
+                    {after !== undefined ? <span>{after}</span> : null}
+                  </TableCell>
+                )
+              })}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <p className="text-meta text-muted-foreground">
+        {changes.omitted ? `${changes.omitted} more rows are not shown. ` : ''}
+        These values are shown to you only: they are not logged and the agent never receives them.
+      </p>
+    </div>
   )
 }
 

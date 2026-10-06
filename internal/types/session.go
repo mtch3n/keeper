@@ -169,4 +169,28 @@ type WritePreview struct {
 	// Returning is the transform summary for a RETURNING clause, which passes
 	// through G7 like any other output. SPEC R4.2e.
 	Returning map[string]Transform `json:"returning,omitzero"`
+	// Changes is what the write changes, for the approver. Nil when the
+	// server could not report rows; RowCount still holds.
+	Changes *WriteChanges `json:"changes,omitzero"`
+}
+
+// PreviewRows is how many changed rows an approval shows.
+const PreviewRows = 50
+
+// WriteChanges is a write's effect, shown to the approver in cleartext. It is
+// held with the ticket in memory: nothing logs it and no response to an agent
+// carries it.
+type WriteChanges struct {
+	Columns []string     `json:"columns"`
+	Rows    []ChangedRow `json:"rows"`
+	// Omitted counts affected rows beyond the ones shown.
+	Omitted int64 `json:"omitted,omitzero"`
+}
+
+// ChangedRow is one row a write touches: its values before the change, where
+// the server reports them, and after. An INSERT has no old values and a
+// DELETE no new ones.
+type ChangedRow struct {
+	Old []string `json:"old,omitzero"`
+	New []string `json:"new,omitzero"`
 }

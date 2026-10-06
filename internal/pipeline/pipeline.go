@@ -425,6 +425,10 @@ func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decisi
 			PreviewedAt: p.now(),
 			Scope:       st.plan.RelationNames,
 			Returning:   st.transforms,
+			// The changed rows are for the approver alone. They are not output
+			// in §8's sense: nothing here passes them to G7, the audit record or
+			// the agent.
+			Changes: shownChanges(raw.Changes, raw.CommandTag),
 		}
 	}
 
@@ -598,3 +602,14 @@ func asKeeperError(err error) *types.Error {
 }
 
 func newAuditID() string { return uuid.NewV7().String() }
+
+// shownChanges keeps the first types.PreviewRows changed rows and counts the
+// rest of the affected rows as omitted.
+func shownChanges(c *types.WriteChanges, affected int64) *types.WriteChanges {
+	if c == nil {
+		return nil
+	}
+	out := &types.WriteChanges{Columns: c.Columns, Rows: c.Rows[:min(len(c.Rows), types.PreviewRows)]}
+	out.Omitted = max(affected-int64(len(out.Rows)), 0)
+	return out
+}

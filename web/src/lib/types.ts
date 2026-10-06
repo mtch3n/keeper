@@ -290,6 +290,17 @@ interface WritePreview {
   previewed_at: string
   scope: RelationRef[]
   returning?: Record<string, Transform>
+  /** What the write changes, for the approver only. Absent when the server
+   * could not report rows; row_count still holds. */
+  changes?: WriteChanges
+}
+
+/** A write's changed rows, in cleartext. Never logged, never sent to an agent. */
+export interface WriteChanges {
+  columns: string[]
+  rows: { old?: string[]; new?: string[] }[]
+  /** Affected rows beyond the ones shown. */
+  omitted?: number
 }
 
 export interface ApprovalItem {
