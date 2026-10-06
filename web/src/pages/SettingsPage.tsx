@@ -167,6 +167,15 @@ export function SettingsPage() {
               <Lamp state="live" label="vault open" /> open
             </span>
           </Fact>
+          <Fact label="activity log">
+            encrypted with the vault's key · kept {report.log_retention_days} day(s)
+            {report.legacy_audit_log ? (
+              <div className="text-meta text-waiting">
+                A plaintext log from an earlier keeper is still at {report.legacy_audit_log}. It is never read; delete it
+                when you no longer need it.
+              </div>
+            ) : null}
+          </Fact>
           <Fact label="key source">{report.key_source}</Fact>
         </Facts>
       </section>

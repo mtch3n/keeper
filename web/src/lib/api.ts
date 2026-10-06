@@ -391,6 +391,8 @@ export interface DoctorReport {
   connections?: ConnectionHealth[]
   /** How many days the activity log keeps a record. */
   log_retention_days: number
+  /** A plaintext log an earlier keeper left, never read; absent when there is none. */
+  legacy_audit_log?: string
   /** What was examining the data, and whether it could reach the network. */
   detector?: { name: string; version?: string; network_posture: string }
 }

@@ -405,3 +405,6 @@ func (fakeDetector) Detect(context.Context, []string) ([][]ports.Span, error) { 
 func (fakeDetector) Identity() ports.DetectorIdentity {
 	return ports.DetectorIdentity{Name: "fake", NetworkPosture: "none"}
 }
+
+func (*fakeAuditLog) Prune(context.Context, int) error { return nil }
+func (*fakeAuditLog) LegacyPlaintext() string          { return "" }
