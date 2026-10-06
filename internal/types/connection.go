@@ -18,18 +18,28 @@ const (
 	ModePermissive Mode = "permissive"
 )
 
-// Pass names one detection pass a connection can run.
-type Pass string
+// StageKind names a detection adapter a stage runs.
+type StageKind string
 
 const (
-	// PassPatterns is in-process pattern and checksum detection.
-	PassPatterns Pass = "patterns"
-	// PassList matches the connection's own deny terms.
-	PassList Pass = "list"
+	// KindPatterns is in-process pattern and checksum detection.
+	KindPatterns StageKind = "patterns"
+	// KindList matches the connection's own deny terms and expressions.
+	KindList StageKind = "list"
 )
 
-// Passes are the passes keeper can run, in the order a description lists them.
-var Passes = []Pass{PassPatterns, PassList}
+// StageKinds are the kinds keeper can run, in the order a description lists them.
+var StageKinds = []StageKind{KindPatterns, KindList}
+
+// Stage is one step of a connection's detection pipeline: an adapter and the
+// options that shape what it keeps and what it is sent.
+type Stage struct {
+	Kind StageKind `json:"kind"`
+	// Entities, when set, keeps only this stage's hits of these entity types.
+	Entities []string `json:"entities,omitzero"`
+	// Raw sends the stage unmasked text: earlier stages' hits left in place.
+	Raw bool `json:"raw,omitzero"`
+}
 
 // Valid reports whether m is a mode keeper knows.
 func (m Mode) Valid() bool { return m == ModeStrict || m == ModeAssisted || m == ModePermissive }
@@ -146,9 +156,9 @@ type Connection struct {
 
 	Mode   Mode   `json:"mode"`
 	Limits Limits `json:"limits"`
-	// Detection is the ordered list of passes a scan column's free text runs
-	// through. Empty is off: free text is redacted whole.
-	Detection  []Pass            `json:"detection,omitzero"`
+	// Detection is the ordered pipeline a scan column's free text runs through.
+	// Empty is off: free text is redacted whole.
+	Detection  []Stage           `json:"detection,omitzero"`
 	Denylist   []RelationRef     `json:"denylist,omitzero"`
 	WriteScope []WriteScopeEntry `json:"write_scope,omitzero"`
 

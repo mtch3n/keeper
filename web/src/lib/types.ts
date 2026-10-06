@@ -71,8 +71,17 @@ export interface HostView extends Host {
   connections: string[]
 }
 
-/** Mirrors types.Pass: one detection pass a connection can run. */
-export type Pass = 'patterns' | 'list'
+/** Mirrors types.StageKind: a detection adapter a stage runs. */
+export type StageKind = 'patterns' | 'list'
+
+/** Mirrors types.Stage: one step of a connection's detection pipeline. */
+export interface Stage {
+  kind: StageKind
+  /** When set, only this stage's hits of these entity types are kept. */
+  entities?: string[]
+  /** Sends the stage unmasked text, earlier stages' hits left in place. */
+  raw?: boolean
+}
 
 export interface Connection {
   id: string
@@ -84,7 +93,7 @@ export interface Connection {
   version?: string
   catalog_path: string
   mode: Mode
-  detection?: Pass[]
+  detection?: Stage[]
   limits: Limits
   denylist?: RelationRef[]
   write_scope?: WriteScopeEntry[]

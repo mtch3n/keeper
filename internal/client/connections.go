@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -78,7 +79,7 @@ type ConnectionDetail struct {
 	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
 	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
 	HasWriteCredential bool                    `json:"has_write_credential"`
-	Detection          []types.Pass            `json:"detection"`
+	Detection          []types.Stage           `json:"detection"`
 	Degradations       []types.Degradation     `json:"degradations,omitzero"`
 }
 
@@ -148,7 +149,7 @@ type PatchConnectionParams struct {
 	ScanSample       int           `json:"scan_sample,omitzero"`
 	// Detection replaces the connection's passes when set; an empty list turns
 	// detection off.
-	Detection *[]types.Pass `json:"detection,omitzero"`
+	Detection *[]types.Stage `json:"detection,omitzero"`
 }
 
 // PatchConnection updates a connection's mode and/or limits.
@@ -163,16 +164,18 @@ func (c *Client) PatchConnection(ctx context.Context, id string, p PatchConnecti
 // TermCounts is how many list-pass terms a connection holds. The terms
 // themselves never come back from the daemon.
 type TermCounts struct {
-	Deny  int `json:"deny"`
-	Allow int `json:"allow"`
+	Deny     int `json:"deny"`
+	Allow    int `json:"allow"`
+	Patterns int `json:"patterns"`
 }
 
-// SetTerms replaces a connection's list-pass deny and allow terms.
-func (c *Client) SetTerms(ctx context.Context, id string, deny, allow []string) (*TermCounts, error) {
+// SetTerms replaces a connection's list-stage terms and expressions.
+func (c *Client) SetTerms(ctx context.Context, id string, t ports.Terms) (*TermCounts, error) {
 	body := struct {
-		Deny  []string `json:"deny"`
-		Allow []string `json:"allow"`
-	}{Deny: deny, Allow: allow}
+		Deny     []string        `json:"deny"`
+		Allow    []string        `json:"allow"`
+		Patterns []ports.Pattern `json:"patterns"`
+	}{Deny: t.Deny, Allow: t.Allow, Patterns: t.Patterns}
 	var out TermCounts
 	if err := c.do(ctx, http.MethodPut, "/v1/connections/"+url.PathEscape(id)+"/terms", body, &out); err != nil {
 		return nil, err

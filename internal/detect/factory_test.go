@@ -19,7 +19,7 @@ func (s source) Terms(context.Context, string) (ports.Terms, error)            {
 
 func Test_DET_C1_AConnectionsPassesAllExamineItsText(t *testing.T) {
 	f := detect.NewFactory(detect.NewPatterns(), source{
-		conn:  types.Connection{ID: "c1", Detection: []types.Pass{types.PassPatterns, types.PassList}},
+		conn:  types.Connection{ID: "c1", Detection: []types.Stage{{Kind: types.KindPatterns}, {Kind: types.KindList}}},
 		terms: ports.Terms{Deny: []string{"Acme Corp"}},
 	})
 	det, err := f.For(t.Context(), "c1")

@@ -340,3 +340,24 @@ func Test_DET_C18_AnIntentIsScreenedByThePatternsPass(t *testing.T) {
 		t.Fatalf("ScreenIntent = %v, want an email_address rejection", err)
 	}
 }
+
+func Test_DET_C19_AnUnscreenedIntentIsRejectedAndNotRecorded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	l, err := New(Config{Path: path, Detector: brokenDetector{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	const intent = "reconcile refunds for OPS-441"
+	if _, ok := errors.AsType[*IntentError](l.ScreenIntent(t.Context(), intent)); !ok {
+		t.Fatal("an intent the detector did not screen was not rejected as one to restate")
+	}
+	// The audit record itself is never dropped; its intent text is withheld.
+	if err := l.Write(t.Context(), &types.AuditRecord{ID: "a1", Intent: intent}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "OPS-441") {
+		t.Errorf("the unscreened intent reached the log: %s", data)
+	}
+}

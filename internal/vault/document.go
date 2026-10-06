@@ -3,6 +3,7 @@ package vault
 import (
 	"slices"
 
+	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -31,10 +32,11 @@ type connectionRecord struct {
 	// boolean that enables writes: SPEC §4.2. types.Connection.HasWriteCredential
 	// is derived from this field's presence, never stored independently.
 	Write *credential `json:"write,omitzero"`
-	// Deny and Allow are the list pass's terms. They are as sensitive as the
+	// Deny, Allow and Patterns are the list stage's terms and expressions. They are as sensitive as the
 	// data they describe and never leave the vault except through Export.
-	Deny  []string `json:"deny,omitzero"`
-	Allow []string `json:"allow,omitzero"`
+	Deny     []string        `json:"deny,omitzero"`
+	Allow    []string        `json:"allow,omitzero"`
+	Patterns []ports.Pattern `json:"patterns,omitzero"`
 	// TokenKeys holds every HMAC key ever minted for this connection, oldest
 	// first. Old keys are never deleted so historical tokens stay interpretable;
 	// the highest Version is current.

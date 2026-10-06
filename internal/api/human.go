@@ -94,9 +94,9 @@ func defaultVia(sf surface) string {
 }
 
 type patchRequest struct {
-	Mode      *types.Mode   `json:"mode,omitzero"`
-	Limits    *types.Limits `json:"limits,omitzero"`
-	Detection *[]types.Pass `json:"detection,omitzero"`
+	Mode      *types.Mode    `json:"mode,omitzero"`
+	Limits    *types.Limits  `json:"limits,omitzero"`
+	Detection *[]types.Stage `json:"detection,omitzero"`
 }
 
 func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
@@ -108,8 +108,9 @@ func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.Respons
 }
 
 type termsRequest struct {
-	Deny  []string `json:"deny"`
-	Allow []string `json:"allow"`
+	Deny     []string        `json:"deny"`
+	Allow    []string        `json:"allow"`
+	Patterns []ports.Pattern `json:"patterns"`
 }
 
 // putTerms replaces a connection's list-pass terms and answers with counts:
