@@ -36,11 +36,27 @@ function daemon(over: { approvals?: unknown[]; sessions?: unknown[] } = {}) {
 const bar = async () => within(await screen.findByRole('navigation', { name: 'Sections' }))
 
 describe('the shell', () => {
-  test('SHELL-C1 the top bar holds four sections and there is no sidebar', async () => {
+  test('SHELL-C1 the top bar holds Inbox, Activity and Settings and there is no sidebar', async () => {
     daemon()
     renderApp('/connections')
-    expect((await bar()).getAllByRole('link').map((l) => l.textContent)).toEqual(['Connections', 'Inbox', 'Activity', 'Settings'])
+    expect((await bar()).getAllByRole('link').map((l) => l.textContent)).toEqual(['Inbox', 'Activity', 'Settings'])
     expect(screen.queryByRole('navigation', { name: 'Databases' })).toBeNull()
+  })
+
+  test('SHELL-C16 keeper opens on the Inbox', async () => {
+    daemon()
+    renderApp('/')
+    expect(await screen.findByText(/nothing is waiting/i)).toBeTruthy()
+    expect((await bar()).getByRole('link', { name: 'Inbox' }).getAttribute('aria-current')).toBe('page')
+  })
+
+  test('SHELL-C17 a connection sits under Settings', async () => {
+    daemon()
+    renderApp('/connections/c1')
+    await screen.findByRole('heading', { name: 'one', level: 1 })
+    expect((await bar()).getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe('page')
+    const tabs = within(screen.getByRole('navigation', { name: 'Settings sections' }))
+    expect(tabs.getByRole('link', { name: 'Connections' }).getAttribute('aria-current')).toBe('page')
   })
 
   test('SHELL-C2 the agents indicator counts and lists connected agents', async () => {
