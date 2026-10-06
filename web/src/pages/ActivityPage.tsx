@@ -106,6 +106,7 @@ export function ActivityPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <h1 className="text-title">Activity</h1>
       {/* A human arriving after a long agent run wants one session's trail.
           Scrolling a merged log to find it is the difference between a screen
           that gets used and one that does not. */}

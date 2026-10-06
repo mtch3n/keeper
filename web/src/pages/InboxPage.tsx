@@ -51,15 +51,18 @@ export function InboxPage() {
 
   if (approvals.length === 0 && requests.length === 0) {
     return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>Nothing is waiting</EmptyTitle>
-          <EmptyDescription>
-            When an agent's statement needs a decision, or it asks for a value only you should type, it arrives
-            here, oldest first.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <div className="flex flex-col gap-6">
+        <h1 className="text-title">Inbox</h1>
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>Nothing is waiting</EmptyTitle>
+            <EmptyDescription>
+              When an agent's statement needs a decision, or it asks for a value only you should type, it arrives
+              here, oldest first.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
     )
   }
 
