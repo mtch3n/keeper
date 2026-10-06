@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mtchen/keeper/internal/ports"
+	"github.com/mtchen/keeper/internal/sealed"
 )
 
 // newTestVault returns an open Vault rooted at a temp directory, using
@@ -198,34 +200,26 @@ func TestRotateMasterRefusesTheEnvSource(t *testing.T) {
 	}
 }
 
-func TestExportReturnsPortableJSON(t *testing.T) {
+// An export carries every credential, so it never leaves the daemon in the
+// clear: it is sealed under the operator's passphrase.
+func TestExportIsSealed(t *testing.T) {
 	v, _ := newTestVault(t)
 	ctx := context.Background()
 	conn := testConnection("")
 	conn.HostID = testHost(t, v)
-	if err := v.Register(ctx, &conn, ports.Credential{User: "rw"}); err != nil {
+	if err := v.Register(ctx, &conn, ports.Credential{User: "rw", Password: "hunter2-secret"}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-
-	data, err := v.Export(ctx)
+	plain, err := v.Export(ctx)
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	if len(data) == 0 {
-		t.Fatal("Export returned no data")
+	data, err := sealed.Seal(plain, "correct horse")
+	if err != nil {
+		t.Fatalf("Export: %v", err)
 	}
-	var doc document
-	if err := jsonUnmarshalForTest(data, &doc); err != nil {
-		t.Fatalf("exported data does not parse as the vault document: %v", err)
-	}
-	if len(doc.Connections) != 1 || doc.Connections[0].Conn.ID != conn.ID {
-		t.Fatalf("exported document missing the registered connection: %+v", doc)
-	}
-	if c := doc.Connections[0].Credential; c.User != "rw" {
-		t.Errorf("exported credential = %+v", c)
-	}
-	if len(doc.Hosts) != 1 || doc.Hosts[0].ID != conn.HostID {
-		t.Errorf("exported hosts = %+v", doc.Hosts)
+	if len(data) == 0 || bytes.Contains(data, []byte("hunter2-secret")) || bytes.Contains(data, []byte(conn.ID)) {
+		t.Errorf("the export is not sealed: %q", data)
 	}
 }
 

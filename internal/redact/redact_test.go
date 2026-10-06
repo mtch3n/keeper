@@ -256,7 +256,7 @@ func TestNormalizationDrivesTokenEquality(t *testing.T) {
 // path, which is how a value gets there without a statement parameter.
 func mintedSession(t *testing.T, r *Redactor, sess, value string) string {
 	t.Helper()
-	tok, err := r.Mint(t.Context(), sess, "c1", "email", value, false)
+	tok, err := r.Mint(t.Context(), sess, "c1", "email", value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestSelectParamOracleIsClosed(t *testing.T) {
 	// without the emission scan the real value comes back in cleartext.
 	const value = "Jane Doe"
 	r := newRedactor(t, fakeCatalog{}, nil)
-	tok, err := r.Mint(t.Context(), "s", "c1", "person", value, false)
+	tok, err := r.Mint(t.Context(), "s", "c1", "person", value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestShortValuesMatchWholeCell(t *testing.T) {
 	// Substring-matching "Li" would rewrite every cell containing it; dropping
 	// it entirely would be a hole.
 	r := newRedactor(t, fakeCatalog{}, nil)
-	tok, err := r.Mint(t.Context(), "s", "c1", "person", "Li", false)
+	tok, err := r.Mint(t.Context(), "s", "c1", "person", "Li")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,10 +520,10 @@ func TestMintReportsCollision(t *testing.T) {
 	r := newRedactor(t, fakeCatalog{}, nil)
 	r.hexLen = 1
 	a, b := findCollision(t, r, "email")
-	if _, err := r.Mint(t.Context(), "s", "c1", "email", a, false); err != nil {
+	if _, err := r.Mint(t.Context(), "s", "c1", "email", a); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Mint(t.Context(), "s", "c1", "email", b, false); err == nil {
+	if _, err := r.Mint(t.Context(), "s", "c1", "email", b); err == nil {
 		t.Error("Mint accepted a colliding value")
 	}
 }
@@ -672,7 +672,7 @@ func TestUnknownColumnRedacts(t *testing.T) {
 
 func TestResolveAndDropSession(t *testing.T) {
 	r := newRedactor(t, fakeCatalog{}, nil)
-	tok, err := r.Mint(t.Context(), "s1", "c1", "email", "  jane@example.com ", false)
+	tok, err := r.Mint(t.Context(), "s1", "c1", "email", "  jane@example.com ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +709,7 @@ func TestBindingsExpire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := r.Mint(t.Context(), "s", "c1", "email", "jane@example.com", false)
+	tok, err := r.Mint(t.Context(), "s", "c1", "email", "jane@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,7 +731,7 @@ func TestBindingsExpire(t *testing.T) {
 func TestNamespaceValidation(t *testing.T) {
 	r := newRedactor(t, fakeCatalog{}, nil)
 	for _, ns := range []string{"", "email1", "a:b", "a" + TokenOpen} {
-		if _, err := r.Mint(t.Context(), "s", "c1", ns, "v", false); err == nil {
+		if _, err := r.Mint(t.Context(), "s", "c1", ns, "v"); err == nil {
 			t.Errorf("Mint accepted namespace %q", ns)
 		}
 	}

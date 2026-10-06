@@ -90,7 +90,7 @@ Usage:
   keeper activity [--session S] [--connection C] [--tier N] [--since D] [--limit N]
   keeper doctor
   keeper update [--check] [--force]
-  keeper vault export | rotate-master
+  keeper vault export > file | import [--replace] file | rotate-master
   keeper daemon start | restart | status
   keeper ui
 

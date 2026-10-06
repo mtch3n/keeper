@@ -23,6 +23,18 @@ problem keeper exists to solve, and going around it re-creates it exactly.
 Call `set_session_intent` once, with a short description of the task — a ticket
 id, or the question you are answering. keeper refuses queries until you do.
 
+Say how long your tokens should live, with `token_scope`:
+
+- `session` (the default) — tokens resolve only in this session. Use it for
+  short work: nothing you hold links to anything another session sees.
+- `persistent` — the same value gets the same token in every session and on
+  every machine holding the vault, so you can keep a token in notes and use it
+  next week. Only where the connection allows it; elsewhere you get session
+  tokens and the result says so in `degradations`.
+
+Pick persistent only when the work needs a token to outlive the session, and say
+so to the user.
+
 It is not bookkeeping. When a statement escalates, a human sees your intent
 beside the SQL and decides on that; "reconcile duplicate accounts OPS-441" gets
 approved and "" does not. Keep credentials and personal data out of it: keeper
@@ -117,9 +129,10 @@ query(conn, "SELECT * FROM orders WHERE email = $1", params: [{"token": "⟨emai
 ```
 
 keeper resolves it on its side and binds it as a parameter. **Never** paste a
-token into the SQL text — pass it in `params`. A token only works in the session
-that minted it, and if the daemon restarts every token you are holding becomes
-permanently unresolvable; re-run the query that produced it.
+token into the SQL text — pass it in `params`. A session token works only in the
+session that minted it, and if the daemon restarts every session token you are
+holding becomes unresolvable; re-run the query that produced it. A persistent
+token (`⟨email1=…⟩`) resolves in any session on that connection.
 
 ## When the task needs a value nobody should type here
 

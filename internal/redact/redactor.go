@@ -169,7 +169,7 @@ func (r *Redactor) DropSession(sessionID string) {
 // Mint stores a value in a session's reverse map and returns its token, for
 // §8.7's local input flow. The raw value never reaches the agent: only the
 // token and its namespace do (R8.7b).
-func (r *Redactor) Mint(ctx context.Context, sessionID, connID, namespace, value string, persistent bool) (string, error) {
+func (r *Redactor) Mint(ctx context.Context, sessionID, connID, namespace, value string) (string, error) {
 	if err := validNamespace(namespace); err != nil {
 		return "", err
 	}
@@ -186,7 +186,8 @@ func (r *Redactor) Mint(ctx context.Context, sessionID, connID, namespace, value
 	stored := Normalize(value, NamespaceRule{})
 	normalized := Normalize(value, r.rule(namespace))
 	now := r.now()
-	token, err := r.mintToken(key, sessionID, persistent, namespace, version, normalized)
+	st, _ := StatementFrom(ctx)
+	token, err := r.mintToken(key, sessionID, st.Persistent, namespace, version, normalized)
 	if err != nil {
 		return "", err
 	}
