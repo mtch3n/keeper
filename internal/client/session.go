@@ -7,9 +7,9 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// SetSessionIntent sets the session's stated intent (SPEC §6.1) and how long
-// its tokens live. Required before any query; shown on approval screens and
-// recorded in the audit log.
+// SetSessionIntent sets the session's optional stated intent (SPEC §6.1) and
+// how long its tokens live. An intent, when given, is shown on approval screens
+// and recorded in the audit log.
 func (c *Client) SetSessionIntent(ctx context.Context, intent string, scope types.TokenScope) error {
 	body := struct {
 		Intent     string           `json:"intent"`
