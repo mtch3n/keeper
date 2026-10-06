@@ -111,3 +111,12 @@ describe('one page per connection', () => {
     expect(counts[0].getAttribute('href')).toBe('/connections/c1/privileges')
   })
 })
+
+test('a catalog that cannot be read leaves the rest of Overview standing', async () => {
+  const d = daemon()
+  d.on('GET', '/v1/catalog/c1', () => [500, { code: 'internal', summary: 'the database did not complete this statement' }])
+  renderApp('/connections/c1')
+  expect(await screen.findByText(/unavailable — the catalog could not be read/)).toBeTruthy()
+  expect(await screen.findByText(/db1 · db.internal:5432/)).toBeTruthy()
+  expect(screen.queryByText('the database did not complete this statement')).toBeNull()
+})
