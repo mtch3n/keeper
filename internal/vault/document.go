@@ -7,22 +7,30 @@ import (
 )
 
 // document is the single JSON value stored, age-encrypted, in vault.age. It
-// holds every connection this daemon knows about: the connection record
-// itself, its read and write DSNs, and its per-connection HMAC token keys.
+// holds every host and connection this daemon knows about: each connection's
+// record, its read and write credentials, and its per-connection HMAC token
+// keys.
 type document struct {
+	Hosts       []types.Host       `json:"hosts,omitzero"`
 	Connections []connectionRecord `json:"connections,omitzero"`
 }
 
+// credential is one role's login at rest.
+type credential struct {
+	User     string `json:"user"`
+	Password string `json:"password,omitzero"`
+}
+
 // connectionRecord is one connection's full state at rest. types.Connection
-// never carries a DSN or a token key, so both live here beside it.
+// never carries a credential or a token key, so both live here beside it.
 type connectionRecord struct {
 	Conn types.Connection `json:"conn"`
-	// ReadDSN is always set once a connection is registered.
-	ReadDSN string `json:"read_dsn,omitzero"`
-	// WriteDSN is empty when the connection holds no write credential. There is
-	// no boolean that enables writes: SPEC §4.2. types.Connection.HasWriteCredential
+	// Read is always set once a connection is registered.
+	Read credential `json:"read"`
+	// Write is nil when the connection holds no write credential. There is no
+	// boolean that enables writes: SPEC §4.2. types.Connection.HasWriteCredential
 	// is derived from this field's presence, never stored independently.
-	WriteDSN string `json:"write_dsn,omitzero"`
+	Write *credential `json:"write,omitzero"`
 	// TokenKeys holds every HMAC key ever minted for this connection, oldest
 	// first. Old keys are never deleted so historical tokens stay interpretable;
 	// the highest Version is current.
@@ -42,6 +50,16 @@ func (d *document) find(id string) (*connectionRecord, bool) {
 	for i := range d.Connections {
 		if d.Connections[i].Conn.ID == id {
 			return &d.Connections[i], true
+		}
+	}
+	return nil, false
+}
+
+// host returns the host with the given id, or false.
+func (d *document) host(id string) (*types.Host, bool) {
+	for i := range d.Hosts {
+		if d.Hosts[i].ID == id {
+			return &d.Hosts[i], true
 		}
 	}
 	return nil, false

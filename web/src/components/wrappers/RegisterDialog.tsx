@@ -12,42 +12,30 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { registerConnection } from '@/lib/api'
-
-/** Assembles the connection string the daemon is given. It is built here and
- * never shown back: the password is in it, and a field that redisplays a
- * credential is a credential on a screen. */
-function toDsn(f: { host: string; port: string; database: string; user: string; password: string; tls: boolean }) {
-  const auth = f.password ? `${encodeURIComponent(f.user)}:${encodeURIComponent(f.password)}` : encodeURIComponent(f.user)
-  const port = f.port.trim() === '' ? '5432' : f.port.trim()
-  const sslmode = f.tls ? 'require' : 'prefer'
-  return `postgres://${auth}@${f.host.trim()}:${port}/${encodeURIComponent(f.database.trim())}?sslmode=${sslmode}`
-}
+import type { Host } from '@/lib/types'
 
 const EMPTY = {
   name: '',
-  host: 'localhost',
-  port: '5432',
   database: '',
   user: '',
   password: '',
-  tls: false,
   writeUser: '',
   writePassword: '',
   catalogPath: '',
-  raw: '',
 }
 
 /**
- * Registering a database, as a modal.
+ * Registering a database on a host, as a modal.
  *
- * It takes host, port, user, password and database separately rather than one
- * connection string, because a pasted DSN is the one field where a typo is
- * invisible and the failure arrives later as a permission error nobody can
- * attribute. The string is assembled here and never rendered back.
+ * The host is already chosen — this dialog opens from its section on
+ * `ConnectionsPage` — so it asks only for what differs per connection:
+ * database, role and password. Each is a separate field rather than one
+ * connection string, because a pasted DSN is where a typo is invisible and the
+ * failure arrives later as a permission error nobody can attribute. The
+ * daemon's vault assembles the string; it is never built or shown here.
  *
  * There is no engine control: registration records `postgres` and nothing
  * else (internal/daemon/connections.go), and a dropdown with one reachable
@@ -59,46 +47,44 @@ const EMPTY = {
  *
  * There is no separate "Test connection" button because storing the
  * connection *is* the test: keeper opens the credential to audit the role, and
- * a credential that cannot connect fails here. What the audit found is read on
- * `Audit` rather than in here — it is a report about the database, not a step
- * in this form, and the connection works either way.
+ * what the audit found is read on `Audit` rather than in here — it is a report
+ * about the database, not a step in this form, and the connection works
+ * either way.
  *
  * Registry search: `pnpm dlx shadcn@latest search @shadcn -q "dialog"`
  * returns `@shadcn/dialog`, used here, and there is no registry item that
- * composes a credential form with the DSN assembly above. This wrapper owns
- * that assembly and the two entry modes.
+ * composes a credential form.
  */
 export function RegisterDialog({
+  host,
   onRegistered,
   onError,
 }: {
+  host: Host
   onRegistered: (c: { id: string }) => Promise<void>
   onError: (e: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [pasted, setPasted] = useState(false)
   const [f, setF] = useState(EMPTY)
   const [busy, setBusy] = useState(false)
 
   const set = <K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) =>
     setF((prev) => ({ ...prev, [key]: value }))
 
-  const ready =
-    f.name.trim() !== '' &&
-    (pasted ? f.raw.trim() !== '' : f.host.trim() !== '' && f.database.trim() !== '' && f.user.trim() !== '')
+  const ready = f.name.trim() !== '' && f.database.trim() !== '' && f.user.trim() !== ''
 
   const submit = async () => {
     setBusy(true)
     try {
-      const dsn = pasted ? f.raw.trim() : toDsn(f)
-      const writeDsn =
-        !pasted && f.writeUser.trim() !== ''
-          ? toDsn({ ...f, user: f.writeUser, password: f.writePassword })
-          : undefined
       const c = await registerConnection({
         name: f.name.trim(),
-        dsn,
-        write_dsn: writeDsn,
+        host_id: host.id,
+        database: f.database.trim(),
+        read: { user: f.user.trim(), password: f.password || undefined },
+        write:
+          f.writeUser.trim() !== ''
+            ? { user: f.writeUser.trim(), password: f.writePassword || undefined }
+            : undefined,
         catalog_path: f.catalogPath.trim() || undefined,
       })
       setF(EMPTY)
@@ -113,18 +99,16 @@ export function RegisterDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="outline" />}>Register a database</DialogTrigger>
-      {/* Wider than the registry's `sm:max-w-sm`. This form pairs host with
-          port and user with password on one row, and at the default width
-          each of those columns is narrower than the value it holds — a port
-          field you cannot read `5432` in is the shape of the typo this dialog
-          exists to prevent. */}
+      <DialogTrigger render={<Button variant="outline" size="sm" />}>Add a database</DialogTrigger>
+      {/* Wider than the registry's `sm:max-w-sm`. This form pairs user with
+          password on one row, and at the default width each of those columns
+          is narrower than the value it holds. */}
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Register a database</DialogTitle>
+          <DialogTitle>Add a database on {host.name}</DialogTitle>
           <DialogDescription>
-            keeper audits the role and reports what it holds. The connection is stored disabled and becomes usable
-            once you have accepted each finding.
+            {host.address}:{host.port}. keeper stores the credential, audits the role and reports what it holds on
+            Audit. The connection works either way.
           </DialogDescription>
         </DialogHeader>
 
@@ -139,98 +123,61 @@ export function RegisterDialog({
             <FieldDescription>What an agent names in a query and what the activity log records.</FieldDescription>
           </Field>
 
-          <Field orientation="horizontal">
-            <FieldLabel htmlFor="register-paste">Paste a connection string instead</FieldLabel>
-            <Switch id="register-paste" checked={pasted} onCheckedChange={setPasted} />
+          <Field>
+            <FieldLabel htmlFor="register-database">Database</FieldLabel>
+            <Input id="register-database" value={f.database} onChange={(e) => set('database', e.target.value)} />
           </Field>
 
-          {pasted ? (
+          <Field orientation="horizontal">
             <Field>
-              <FieldLabel htmlFor="register-raw">Connection string</FieldLabel>
-              <Input
-                id="register-raw"
-                type="password"
-                value={f.raw}
-                onChange={(e) => set('raw', e.target.value)}
-                placeholder="postgres://user:password@host:5432/database"
-              />
-              <FieldDescription>Stored in the vault and never shown again.</FieldDescription>
+              <FieldLabel htmlFor="register-user">User</FieldLabel>
+              <Input id="register-user" value={f.user} onChange={(e) => set('user', e.target.value)} />
             </Field>
-          ) : (
-            <>
-              <Field orientation="horizontal">
-                <Field>
-                  <FieldLabel htmlFor="register-host">Host</FieldLabel>
-                  <Input id="register-host" value={f.host} onChange={(e) => set('host', e.target.value)} />
+            <Field>
+              <FieldLabel htmlFor="register-password">Password</FieldLabel>
+              <Input
+                id="register-password"
+                type="password"
+                value={f.password}
+                onChange={(e) => set('password', e.target.value)}
+              />
+            </Field>
+          </Field>
+
+          <Separator />
+
+          <Collapsible>
+            <CollapsibleTrigger render={<Button variant="ghost" size="sm" />}>
+              Write credential (optional)
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <FieldGroup>
+                <FieldDescription>
+                  A second role on the same host and database. Without one, write mode does not exist for this
+                  connection and no setting here creates it.
+                </FieldDescription>
+                <Field orientation="horizontal">
+                  <Field>
+                    <FieldLabel htmlFor="register-write-user">Write user</FieldLabel>
+                    <Input
+                      id="register-write-user"
+                      value={f.writeUser}
+                      onChange={(e) => set('writeUser', e.target.value)}
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="register-write-password">Write password</FieldLabel>
+                    <Input
+                      id="register-write-password"
+                      type="password"
+                      value={f.writePassword}
+                      onChange={(e) => set('writePassword', e.target.value)}
+                    />
+                  </Field>
                 </Field>
-                <Field>
-                  <FieldLabel htmlFor="register-port">Port</FieldLabel>
-                  <Input id="register-port" value={f.port} onChange={(e) => set('port', e.target.value)} />
-                </Field>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="register-database">Database</FieldLabel>
-                <Input id="register-database" value={f.database} onChange={(e) => set('database', e.target.value)} />
-              </Field>
-
-              <Field orientation="horizontal">
-                <Field>
-                  <FieldLabel htmlFor="register-user">User</FieldLabel>
-                  <Input id="register-user" value={f.user} onChange={(e) => set('user', e.target.value)} />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="register-password">Password</FieldLabel>
-                  <Input
-                    id="register-password"
-                    type="password"
-                    value={f.password}
-                    onChange={(e) => set('password', e.target.value)}
-                  />
-                </Field>
-              </Field>
-
-              <Field orientation="horizontal">
-                <FieldLabel htmlFor="register-tls">Require TLS</FieldLabel>
-                <Switch id="register-tls" checked={f.tls} onCheckedChange={(v) => set('tls', v)} />
-              </Field>
-
-              <Separator />
-
-              <Collapsible>
-                <CollapsibleTrigger render={<Button variant="ghost" size="sm" />}>
-                  Write credential (optional)
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <FieldGroup>
-                    <FieldDescription>
-                      A second role on the same host and database. Without one, write mode does not exist for this
-                      connection and no setting here creates it.
-                    </FieldDescription>
-                    <Field orientation="horizontal">
-                      <Field>
-                        <FieldLabel htmlFor="register-write-user">Write user</FieldLabel>
-                        <Input
-                          id="register-write-user"
-                          value={f.writeUser}
-                          onChange={(e) => set('writeUser', e.target.value)}
-                        />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="register-write-password">Write password</FieldLabel>
-                        <Input
-                          id="register-write-password"
-                          type="password"
-                          value={f.writePassword}
-                          onChange={(e) => set('writePassword', e.target.value)}
-                        />
-                      </Field>
-                    </Field>
-                  </FieldGroup>
-                </CollapsibleContent>
-              </Collapsible>
-            </>
-          )}
+              </FieldGroup>
+            </CollapsibleContent>
+          </Collapsible>
 
           <Field>
             <FieldLabel htmlFor="register-catalog">Catalog path</FieldLabel>

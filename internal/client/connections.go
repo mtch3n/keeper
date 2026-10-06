@@ -91,14 +91,22 @@ func (c *Client) DescribeConnection(ctx context.Context, id string) (*Connection
 	return &out, nil
 }
 
-// RegisterConnectionParams is `keeper connection add`'s body. writeDSN is
-// empty when no _rw credential is being registered (SPEC §4.2: write mode is
-// a separate stored credential, not a flag).
+// Credential is one role's login on a connection's host and database.
+type Credential struct {
+	User     string `json:"user"`
+	Password string `json:"password,omitzero"`
+}
+
+// RegisterConnectionParams is `keeper connection add`'s body. Write is nil
+// when no _rw credential is being registered (SPEC §4.2: write mode is a
+// separate stored credential, not a flag).
 type RegisterConnectionParams struct {
-	Name        string `json:"name"`
-	DSN         string `json:"dsn"`
-	WriteDSN    string `json:"write_dsn,omitzero"`
-	CatalogPath string `json:"catalog_path,omitzero"`
+	Name        string      `json:"name"`
+	HostID      string      `json:"host_id"`
+	Database    string      `json:"database"`
+	Read        Credential  `json:"read"`
+	Write       *Credential `json:"write,omitzero"`
+	CatalogPath string      `json:"catalog_path,omitzero"`
 }
 
 // RegisterConnection stores a connection and audits it once (G0). The

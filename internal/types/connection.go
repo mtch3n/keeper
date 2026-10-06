@@ -97,10 +97,31 @@ func DefaultLimits() Limits {
 	}
 }
 
-// Connection is one registered database. Host, password and connection string
-// never appear in an MCP response; SPEC §6.1 returns the fields marked exposed.
+// Host is one database server, entered once and shared by every connection
+// registered on it. It carries where the server is and nothing about who logs
+// in: credentials belong to a connection. No field here reaches MCP.
+type Host struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	Port    int    `json:"port"`
+	// SSLMode is libpq's sslmode, passed to the server as-is.
+	SSLMode string `json:"sslmode"`
+}
+
+// SSLModes are the sslmode values libpq accepts.
+var SSLModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+
+// Connection is one database and role on a Host: what an agent queries. Host,
+// password and connection string never appear in an MCP response; SPEC §6.1
+// returns the fields marked exposed.
+//
+// It is a connection, not the host, that owns a catalog, token keys and a
+// privilege audit: a (tableOID, attnum) pair means nothing outside its
+// database, and a finding describes one role.
 type Connection struct {
 	ID       string `json:"id"`
+	HostID   string `json:"host_id"`
 	Name     string `json:"name"`   // exposed
 	Engine   string `json:"engine"` // exposed
 	Database string `json:"database"`

@@ -29,6 +29,9 @@ import type {
   ConnectionSummary,
   ExplainResult,
   Grant,
+  Host,
+  HostView,
+  SSLMode,
   GrantLifetime,
   KeeperError,
   KeeperEvent,
@@ -275,12 +278,33 @@ export function cancelLocalRequest(id: string) {
 
 // ── human surface ────────────────────────────────────────────────────────
 
+export function listHosts() {
+  return get<HostView[]>('/v1/hosts')
+}
+
+/** A zero port and an absent sslmode take the daemon's defaults, 5432 and prefer. */
+export function registerHost(body: { name: string; address: string; port?: number; sslmode?: SSLMode }) {
+  return post<Host>('/v1/hosts', body)
+}
+
+/** Refused while any connection is registered on the host. */
+export function removeHost(id: string) {
+  return del<{ state: string }>(`/v1/hosts/${id}`)
+}
+
+export interface Credential {
+  user: string
+  password?: string
+}
+
 export function registerConnection(body: {
   name: string
-  dsn: string
+  host_id: string
+  database: string
+  read: Credential
   /** A separate credential for writes. Without one, write mode does not exist
    * for this connection — there is no flag that turns it on (SPEC §4.2). */
-  write_dsn?: string
+  write?: Credential
   catalog_path?: string
 }) {
   return post<Connection>('/v1/connections', body)

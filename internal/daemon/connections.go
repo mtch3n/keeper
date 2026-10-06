@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -244,11 +243,16 @@ func matchRelation(name, pattern string) bool {
 	}
 }
 
-// RegisterSpec is POST /v1/connections.
+// RegisterSpec is POST /v1/connections: one database and role on a host the
+// operator registered before.
 type RegisterSpec struct {
-	Name        string
-	DSN         string
-	WriteDSN    string
+	Name     string
+	HostID   string
+	Database string
+	Read     ports.Credential
+	// Write is nil when no _rw credential is being registered. There is no
+	// boolean that enables writes: SPEC §4.2.
+	Write       *ports.Credential
 	CatalogPath string
 }
 
@@ -256,61 +260,78 @@ type RegisterSpec struct {
 // something to show. R4.1: the audit reports, it does not gate — a registered
 // connection is usable whatever the audit found, and what to do about a
 // finding is a separate decision the operator makes from the audit surface.
-// Nothing here logs or echoes the DSN.
+// Nothing here logs or echoes a credential.
+//
+// It stores before it audits so the audit reads its DSN from the vault, the
+// one place a DSN is assembled, exactly as a later re-audit does.
 func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connection, error) {
-	if spec.Name == "" || spec.DSN == "" {
-		return nil, errValidation("name and dsn", "are required")
+	if spec.Name == "" || spec.HostID == "" || spec.Database == "" || spec.Read.User == "" {
+		return nil, errValidation("name, host, database and user", "are required")
 	}
-	findings, audited := d.tryAudit(ctx, spec)
-	user, database := dsnIdentity(spec.DSN)
+	if spec.Write != nil && spec.Write.User == "" {
+		return nil, errValidation("write user", "is required with a write credential")
+	}
+	if h, err := d.deps.Vault.Host(ctx, spec.HostID); err != nil || h == nil {
+		return nil, errUnknownHost
+	}
 	c := &types.Connection{
-		ID:                 timeID(),
-		Name:               spec.Name,
-		Engine:             "postgres",
-		Database:           database,
-		Role:               user,
-		CatalogPath:        spec.CatalogPath,
-		Mode:               types.ModeAssisted,
-		Limits:             types.DefaultLimits(),
-		Findings:           findings,
-		AuditedAt:          audited,
-		HasWriteCredential: spec.WriteDSN != "",
+		ID:          timeID(),
+		HostID:      spec.HostID,
+		Name:        spec.Name,
+		Engine:      "postgres",
+		Database:    spec.Database,
+		Role:        spec.Read.User,
+		CatalogPath: spec.CatalogPath,
+		Mode:        types.ModeAssisted,
+		Limits:      types.DefaultLimits(),
 	}
-	if err := d.deps.Vault.Register(ctx, c, spec.DSN, spec.WriteDSN); err != nil {
+	if err := d.deps.Vault.Register(ctx, c, spec.Read, spec.Write); err != nil {
 		return nil, err
+	}
+	// An audit that cannot run is not a connection keeper refuses to hold. G0
+	// reads pg_authid, pg_proc and the ACLs, and a managed server that hides
+	// them, a role without the introspection grants, or a host that is down at
+	// registration all arrived here as "cannot register at all" — which taught
+	// the operator to keep exactly the connections worth masking outside
+	// keeper. R4.1 says the audit reports and does not gate; failing to produce
+	// a report is the strongest form of not gating there is. A zero AuditedAt
+	// is how the connection says it has no report yet.
+	if findings, err := d.auditRoles(ctx, c); err == nil {
+		c.Findings, c.AuditedAt = findings, d.now()
+		if err := d.deps.Vault.Update(ctx, c); err != nil {
+			return nil, err
+		}
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "registered", "connection_id": c.ID}})
 	return c, nil
 }
 
-// tryAudit runs G0 over the credentials being registered and returns what it
-// found, with the time it ran. A zero time means the audit did not complete and
-// this connection has no report yet.
-//
-// An audit that cannot run is not a connection keeper refuses to hold. G0 reads
-// pg_authid, pg_proc and the ACLs, and a managed server that hides them, a role
-// without the introspection grants, or a host that is down at registration all
-// arrived here as "cannot register at all" — which taught the operator to keep
-// exactly the connections worth masking outside keeper. R4.1 says the audit
-// reports and does not gate; failing to produce a report is the strongest form
-// of not gating there is.
+// auditRoles runs G0 over every credential the connection holds.
 //
 // It is all-or-nothing on purpose: a half-collected report rendered beside a
 // timestamp claims a completeness it does not have, and the question the audit
 // surface answers is "what can this role do", which no partial answer answers.
-func (d *Daemon) tryAudit(ctx context.Context, spec RegisterSpec) ([]types.Finding, time.Time) {
-	findings, err := d.deps.Auditor.Audit(ctx, spec.DSN, ports.RoleRead)
+func (d *Daemon) auditRoles(ctx context.Context, c *types.Connection) ([]types.Finding, error) {
+	dsn, err := d.deps.Vault.DSN(ctx, c.ID, ports.RoleRead)
 	if err != nil {
-		return nil, time.Time{}
+		return nil, err
 	}
-	if spec.WriteDSN != "" {
-		wf, werr := d.deps.Auditor.Audit(ctx, spec.WriteDSN, ports.RoleWrite)
-		if werr != nil {
-			return nil, time.Time{}
+	findings, err := d.deps.Auditor.Audit(ctx, dsn, ports.RoleRead)
+	if err != nil {
+		return nil, err
+	}
+	if c.HasWriteCredential {
+		wdsn, err := d.deps.Vault.DSN(ctx, c.ID, ports.RoleWrite)
+		if err != nil {
+			return nil, err
+		}
+		wf, err := d.deps.Auditor.Audit(ctx, wdsn, ports.RoleWrite)
+		if err != nil {
+			return nil, err
 		}
 		findings = append(findings, wf...)
 	}
-	return findings, d.now()
+	return findings, nil
 }
 
 // Audit re-runs G0 and replaces the stored report. R4.1e: it neither disables
@@ -322,22 +343,9 @@ func (d *Daemon) Audit(ctx context.Context, id string) (*types.Connection, error
 	if err != nil || c == nil {
 		return nil, errUnknownConnection
 	}
-	dsn, err := d.deps.Vault.DSN(ctx, id, ports.RoleRead)
+	findings, err := d.auditRoles(ctx, c)
 	if err != nil {
 		return nil, err
-	}
-	findings, err := d.deps.Auditor.Audit(ctx, dsn, ports.RoleRead)
-	if err != nil {
-		return nil, err
-	}
-	if c.HasWriteCredential {
-		if wdsn, werr := d.deps.Vault.DSN(ctx, id, ports.RoleWrite); werr == nil {
-			wf, aerr := d.deps.Auditor.Audit(ctx, wdsn, ports.RoleWrite)
-			if aerr != nil {
-				return nil, aerr
-			}
-			findings = append(findings, wf...)
-		}
 	}
 	c.Findings = findings
 	c.AuditedAt = d.now()
@@ -449,32 +457,6 @@ func (d *Daemon) ExportVault(ctx context.Context) ([]byte, error) {
 // RotateMaster re-encrypts the vault under a fresh master key, in place.
 func (d *Daemon) RotateMaster(ctx context.Context) error {
 	return d.deps.Vault.RotateMaster(ctx)
-}
-
-// dsnIdentity extracts the role and database from a DSN for display. It is
-// deliberately best-effort and deliberately narrow: the role is the username and
-// is disclosed on purpose (§6.1), the database name is not a credential, and
-// nothing else from the DSN is ever read, stored outside the vault or logged.
-func dsnIdentity(dsn string) (user, database string) {
-	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
-		if u.User != nil {
-			user = u.User.Username()
-		}
-		return user, strings.TrimPrefix(u.Path, "/")
-	}
-	for f := range strings.FieldsSeq(dsn) {
-		k, v, ok := strings.Cut(f, "=")
-		if !ok {
-			continue
-		}
-		switch k {
-		case "user":
-			user = v
-		case "dbname":
-			database = v
-		}
-	}
-	return user, database
 }
 
 // freshness asks one connection's catalog whether its fingerprints still match

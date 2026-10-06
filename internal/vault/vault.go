@@ -1,5 +1,5 @@
-// Package vault implements ports.Vault: the age-encrypted store of connection
-// records, credentials and per-connection HMAC token keys, and the key-source
+// Package vault implements ports.Vault: the age-encrypted store of hosts,
+// connection records, credentials and per-connection HMAC token keys, and the key-source
 // chain that opens it. It is the only package that touches the master key,
 // the age file or the OS keychain, and the only place a DSN exists at rest.
 package vault
@@ -10,8 +10,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"sync"
 
 	"encoding/json/jsontext"
@@ -196,15 +200,91 @@ func (v *Vault) Connection(ctx context.Context, id string) (*types.Connection, e
 	return &c, nil
 }
 
-// Register stores a connection and its credentials, minting a fresh
-// per-connection HMAC token key (version 1). Whatever the audit found about the
-// role travels with the connection as a report and enables or disables nothing:
-// SPEC R4.1, R8.3a.
-func (v *Vault) Register(ctx context.Context, c *types.Connection, readDSN, writeDSN string) error {
+// Hosts lists every registered host.
+func (v *Vault) Hosts(ctx context.Context) ([]*types.Host, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return nil, errNotOpen()
+	}
+	out := make([]*types.Host, 0, len(v.doc.Hosts))
+	for _, h := range v.doc.Hosts {
+		out = append(out, &h)
+	}
+	return out, nil
+}
+
+// Host returns one host by id.
+func (v *Vault) Host(ctx context.Context, id string) (*types.Host, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return nil, errNotOpen()
+	}
+	h, ok := v.doc.host(id)
+	if !ok {
+		return nil, &NotFoundError{ID: id}
+	}
+	out := *h
+	return &out, nil
+}
+
+// RegisterHost stores a host. It holds no credential, so nothing is minted.
+func (v *Vault) RegisterHost(ctx context.Context, h *types.Host) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if !v.open {
 		return errNotOpen()
+	}
+	if h.ID == "" {
+		h.ID = uuid.NewV7().String()
+	}
+	if _, exists := v.doc.host(h.ID); exists {
+		return &ConflictError{Subject: h.ID, Reason: "a host with this id is already registered"}
+	}
+	v.doc.Hosts = append(v.doc.Hosts, *h)
+	if err := v.persist(); err != nil {
+		v.doc.Hosts = v.doc.Hosts[:len(v.doc.Hosts)-1]
+		return err
+	}
+	return nil
+}
+
+// RemoveHost deletes a host that no connection is registered on.
+func (v *Vault) RemoveHost(ctx context.Context, id string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return errNotOpen()
+	}
+	i := slices.IndexFunc(v.doc.Hosts, func(h types.Host) bool { return h.ID == id })
+	if i < 0 {
+		return &NotFoundError{ID: id}
+	}
+	if slices.ContainsFunc(v.doc.Connections, func(r connectionRecord) bool { return r.Conn.HostID == id }) {
+		return &ConflictError{Subject: id, Reason: "connections are still registered on this host"}
+	}
+	prev := v.doc.Hosts
+	v.doc.Hosts = slices.Delete(slices.Clone(prev), i, i+1)
+	if err := v.persist(); err != nil {
+		v.doc.Hosts = prev
+		return err
+	}
+	return nil
+}
+
+// Register stores a connection on its host with its credentials, minting a
+// fresh per-connection HMAC token key (version 1). Whatever the audit found
+// about the role travels with the connection as a report and enables or
+// disables nothing: SPEC R4.1, R8.3a.
+func (v *Vault) Register(ctx context.Context, c *types.Connection, read ports.Credential, write *ports.Credential) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return errNotOpen()
+	}
+	if _, ok := v.doc.host(c.HostID); !ok {
+		return &NotFoundError{ID: c.HostID}
 	}
 	if c.ID == "" {
 		c.ID = uuid.NewV7().String()
@@ -213,7 +293,7 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, readDSN, writ
 		return &ConflictError{Subject: c.ID, Reason: "a connection with this id is already registered"}
 	}
 
-	c.HasWriteCredential = writeDSN != ""
+	c.HasWriteCredential = write != nil
 
 	key := make([]byte, tokenKeySize)
 	if _, err := rand.Read(key); err != nil {
@@ -222,9 +302,12 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, readDSN, writ
 
 	rec := connectionRecord{
 		Conn:      *c,
-		ReadDSN:   readDSN,
-		WriteDSN:  writeDSN,
+		Read:      credential(read),
 		TokenKeys: []tokenKeyEntry{{Version: 1, Key: key}},
+	}
+	if write != nil {
+		w := credential(*write)
+		rec.Write = &w
 	}
 	v.doc.Connections = append(v.doc.Connections, rec)
 	if err := v.persist(); err != nil {
@@ -267,9 +350,10 @@ func (v *Vault) Remove(ctx context.Context, id string) error {
 	return v.persist()
 }
 
-// DSN returns the credential for a role. There is no boolean that enables
-// writes: an absent write credential is reported as CodeNoWriteCredential,
-// the code the rest of the system already expects for this case. SPEC §4.2.
+// DSN assembles the connection string for a role from the connection's host
+// and that role's credential. There is no boolean that enables writes: an
+// absent write credential is reported as CodeNoWriteCredential, the code the
+// rest of the system already expects for this case. SPEC §4.2.
 func (v *Vault) DSN(ctx context.Context, id string, role ports.Role) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -280,23 +364,44 @@ func (v *Vault) DSN(ctx context.Context, id string, role ports.Role) (string, er
 	if !ok {
 		return "", &NotFoundError{ID: id}
 	}
+	h, ok := v.doc.host(rec.Conn.HostID)
+	if !ok {
+		return "", fmt.Errorf("vault: connection %s has no host", id)
+	}
 	switch role {
 	case ports.RoleRead:
-		if rec.ReadDSN == "" {
+		if rec.Read.User == "" {
 			return "", fmt.Errorf("vault: connection %s has no read credential", id)
 		}
-		return rec.ReadDSN, nil
+		return dsn(h, rec.Conn.Database, rec.Read), nil
 	case ports.RoleWrite:
-		if rec.WriteDSN == "" {
+		if rec.Write == nil {
 			return "", &types.Error{
 				Code:    types.CodeNoWriteCredential,
 				Summary: "connection " + id + " has no write credential",
 			}
 		}
-		return rec.WriteDSN, nil
+		return dsn(h, rec.Conn.Database, *rec.Write), nil
 	default:
 		return "", fmt.Errorf("vault: unknown role %q", role)
 	}
+}
+
+// dsn is the postgres URL for one credential on a host and database. url.URL
+// does the escaping, so a password holding '@' or '/' cannot move the host.
+func dsn(h *types.Host, database string, c credential) string {
+	user := url.User(c.User)
+	if c.Password != "" {
+		user = url.UserPassword(c.User, c.Password)
+	}
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     user,
+		Host:     net.JoinHostPort(h.Address, strconv.Itoa(h.Port)),
+		Path:     "/" + database,
+		RawQuery: url.Values{"sslmode": {h.SSLMode}}.Encode(),
+	}
+	return u.String()
 }
 
 // TokenKey returns the per-connection HMAC key for a version, and the current

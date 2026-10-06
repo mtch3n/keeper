@@ -21,6 +21,9 @@ func (s *Server) routes() {
 	s.handle("GET /v1/version", accessPublic, s.version)
 
 	// --- human surface, CLI over the socket and the UI over loopback -----
+	s.handle("GET /v1/hosts", accessHuman, s.listHosts)
+	s.handle("POST /v1/hosts", accessHuman, s.registerHost)
+	s.handle("DELETE /v1/hosts/{id}", accessHuman, s.removeHost)
 	s.handle("POST /v1/connections", accessHuman, s.registerConnection)
 	s.handle("GET /v1/audit", accessHuman, s.listAudits)
 	s.handle("POST /v1/connections/{id}/audit", accessHuman, s.auditConnection)

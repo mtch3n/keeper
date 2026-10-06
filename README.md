@@ -104,13 +104,21 @@ Either the CLI or the web UI — the same flow, and the UI is the one designed f
 it:
 
 ```sh
-keeper ui                        # prints a loopback URL; register the database there
+keeper ui                        # prints a loopback URL; add the host and its databases there
 ```
 
+A host is the server, entered once. Each database and role on it is its own
+connection, with its own catalog, mode and audit:
+
 ```sh
-keeper connection add --name prod --dsn 'postgres://…'
-# audits the role and prints every privilege finding with the statement that
-# would narrow it. The connection is usable from this point on.
+keeper host add --name prod-db --address db.internal --sslmode require
+
+keeper connection add --name prod --host prod-db --database app --user app_ro
+# prompts for the password (or reads it from stdin), audits the role and prints
+# every privilege finding with the statement that would narrow it. The
+# connection is usable from this point on.
+
+keeper connection add --name billing --host prod-db --database billing --user analyst
 
 keeper catalog init prod --sample 200
 keeper audit          # the same report, any time, for every connection

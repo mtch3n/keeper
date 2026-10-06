@@ -263,7 +263,7 @@ func TestLoopbackRequiresCSRFToken(t *testing.T) {
 	b := r.browser()
 	b.header.Del("X-Keeper-CSRF")
 
-	register := map[string]any{"name": "x", "dsn": "postgres://u@h/db"}
+	register := map[string]any{"name": "x", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"}}
 
 	resp, raw := b.do("POST", "/v1/connections", register)
 	if resp.StatusCode != http.StatusForbidden {
@@ -292,7 +292,10 @@ func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 		method, path string
 		body         any
 	}{
-		{"POST", "/v1/connections", map[string]any{"name": "x", "dsn": "postgres://u@h/db"}},
+		{"POST", "/v1/connections", map[string]any{"name": "x", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"}}},
+		{"GET", "/v1/hosts", nil},
+		{"POST", "/v1/hosts", map[string]any{"name": "x", "address": "h"}},
+		{"DELETE", "/v1/hosts/h1", nil},
 		{"GET", "/v1/audit", nil},
 		{"PATCH", "/v1/connections/c1", map[string]any{"mode": "permissive"}},
 		{"PUT", "/v1/connections/c1/denylist", map[string]any{"relations": []types.RelationRef{}}},
@@ -566,7 +569,7 @@ func TestRegisterSurvivesAnAuditThatCannotRun(t *testing.T) {
 		AuditedAt time.Time `json:"audited_at"`
 	}
 	b.mustJSON("POST", "/v1/connections", map[string]any{
-		"name": "managed", "dsn": "postgres://u@h/db",
+		"name": "managed", "host_id": "h1", "database": "db", "read": map[string]any{"user": "u"},
 	}, &got)
 	if got.ID == "" || got.Name != "managed" {
 		t.Fatalf("an unauditable connection was refused registration: %+v", got)
@@ -945,5 +948,61 @@ func TestActivityRecordCarriesTheResultTheAgentSaw(t *testing.T) {
 	cli.mustJSON("GET", "/v1/activity/"+got.Result.AuditID, nil, &detail)
 	if detail.ID != got.Result.AuditID || detail.Result == nil || detail.Result.RowCount != got.Result.RowCount {
 		t.Fatalf("activity detail does not carry the agent's result: %+v", detail)
+	}
+}
+
+// One host carries any number of databases, each reached as its own role. A
+// host with a connection on it cannot be removed out from under that
+// connection's credentials.
+func TestHostCarriesSeveralConnections(t *testing.T) {
+	r := newRig(t)
+	b := r.browser()
+
+	var h types.Host
+	b.mustJSON("POST", "/v1/hosts", map[string]any{"name": "prod", "address": "db.internal"}, &h)
+	if h.ID == "" || h.Port != 5432 || h.SSLMode != "prefer" {
+		t.Fatalf("host defaults not applied: %+v", h)
+	}
+
+	for _, p := range []struct{ name, database, user string }{
+		{"orders", "orders", "orders_ro"},
+		{"billing", "billing", "analyst"},
+	} {
+		var c struct {
+			HostID   string `json:"host_id"`
+			Database string `json:"database"`
+			Role     string `json:"role"`
+		}
+		b.mustJSON("POST", "/v1/connections", map[string]any{
+			"name": p.name, "host_id": h.ID, "database": p.database,
+			"read": map[string]any{"user": p.user, "password": "pw"},
+		}, &c)
+		if c.HostID != h.ID || c.Database != p.database || c.Role != p.user {
+			t.Fatalf("connection %s registered as %+v", p.name, c)
+		}
+	}
+
+	var hosts []struct {
+		ID          string   `json:"id"`
+		Connections []string `json:"connections"`
+	}
+	b.mustJSON("GET", "/v1/hosts", nil, &hosts)
+	var onProd int
+	for _, x := range hosts {
+		if x.ID == h.ID {
+			onProd = len(x.Connections)
+		}
+	}
+	if onProd != 2 {
+		t.Fatalf("host lists %d connections, want 2: %+v", onProd, hosts)
+	}
+
+	if resp, _ := b.do("DELETE", "/v1/hosts/"+h.ID, nil); resp.StatusCode == http.StatusOK {
+		t.Fatal("removed a host with connections still registered on it")
+	}
+	if resp, raw := b.do("POST", "/v1/connections", map[string]any{
+		"name": "x", "host_id": "nope", "database": "db", "read": map[string]any{"user": "u"},
+	}); resp.StatusCode == http.StatusOK {
+		t.Fatalf("registered a connection on a host that does not exist: %s", raw)
 	}
 }

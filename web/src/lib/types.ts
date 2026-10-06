@@ -52,8 +52,28 @@ export interface Limits {
   scan_sample: number
 }
 
+/** Mirrors types.Host: one server, entered once, shared by every connection
+ * registered on it. Human surface only — no address reaches MCP. */
+export interface Host {
+  id: string
+  name: string
+  address: string
+  port: number
+  sslmode: SSLMode
+}
+
+/** libpq's sslmode values, as types.SSLModes. */
+export const SSL_MODES = ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'] as const
+export type SSLMode = (typeof SSL_MODES)[number]
+
+/** Mirrors daemon.HostView: a host and the ids of its connections. */
+export interface HostView extends Host {
+  connections: string[]
+}
+
 export interface Connection {
   id: string
+  host_id: string
   name: string
   engine: string
   database: string
