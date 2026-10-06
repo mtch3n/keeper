@@ -1215,3 +1215,49 @@ func Test_JDG_C6_DoctorReportsNoJudge(t *testing.T) {
 		t.Errorf("doctor still reports a judge: %s", raw)
 	}
 }
+
+type doctorRow struct {
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	Unclassified *int   `json:"unclassified_columns"`
+}
+
+func doctorRows(t *testing.T, r *rig) map[string]doctorRow {
+	t.Helper()
+	var rep struct {
+		Connections []doctorRow `json:"connections"`
+	}
+	r.browser().mustJSON("GET", "/v1/doctor", nil, &rep)
+	out := map[string]doctorRow{}
+	for _, c := range rep.Connections {
+		out[c.ID] = c
+	}
+	return out
+}
+
+func Test_HLT_C3_DoctorSaysWhichConnectionsItCanReach(t *testing.T) {
+	r := newRig(t)
+	r.cat.unclass = []string{"public.t.a", "public.t.b"}
+	r.vault.conns["c2"] = &types.Connection{ID: "c2", Name: "down", Mode: types.ModeAssisted, Limits: types.DefaultLimits()}
+	r.open["c2"] = func() error {
+		return &types.Error{Code: types.CodeUnreachable, Summary: "keeper could not connect to this database"}
+	}
+	rows := doctorRows(t, r)
+	if up := rows["c1"]; up.State != "reachable" || up.Unclassified == nil || *up.Unclassified != 2 {
+		t.Errorf("reachable row = %+v, want reachable with 2 unclassified", up)
+	}
+	if down := rows["c2"]; down.State != "unreachable" || down.Unclassified != nil {
+		t.Errorf("unreachable row = %+v, want unreachable with no count", down)
+	}
+}
+
+func Test_HLT_C4_AProbeThatOutlastsDoctorIsUnknown(t *testing.T) {
+	r := newRig(t)
+	r.open["c1"] = func() error {
+		time.Sleep(5 * time.Second)
+		return nil
+	}
+	if row := doctorRows(t, r)["c1"]; row.State != "unknown" || row.Unclassified != nil {
+		t.Errorf("slow row = %+v, want unknown with no count", row)
+	}
+}

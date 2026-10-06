@@ -156,6 +156,10 @@ type rig struct {
 	ui      *httptest.Server
 	uiOrig  string
 	conn    *types.Connection
+
+	// open makes opening one connection's catalog fail or stall, the way an
+	// unreachable or a slow server does.
+	open map[string]func() error
 }
 
 func newRig(t *testing.T) *rig {
@@ -175,12 +179,20 @@ func newRig(t *testing.T) *rig {
 		pipe:  &fakePipeline{},
 		aud:   &fakeAuditor{},
 		conn:  conn,
+		open:  map[string]func() error{},
 	}
 
 	d, err := daemon.New(daemon.Config{Version: "test"}, daemon.Deps{
-		Vault:        r.vault,
-		Auditor:      r.aud,
-		Catalogs:     func(string) (ports.Catalog, error) { return r.cat, nil },
+		Vault:   r.vault,
+		Auditor: r.aud,
+		Catalogs: func(id string) (ports.Catalog, error) {
+			if f := r.open[id]; f != nil {
+				if err := f(); err != nil {
+					return nil, err
+				}
+			}
+			return r.cat, nil
+		},
 		CatalogStore: r.cat,
 		Executor:     r.exec,
 		Redactor:     r.red,
