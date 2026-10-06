@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
@@ -12,17 +11,16 @@ import {
   getCatalog,
   getCatalogGrantStatements,
   initCatalog,
-  listConnections,
   updateCatalogColumns,
   type InitProposal,
 } from '@/lib/api'
-import type { ColumnPolicy, ConnectionSummary, PartialForm, Policy } from '@/lib/types'
+import type { ColumnPolicy, PartialForm, Policy } from '@/lib/types'
 
 const POLICIES: Policy[] = ['allow', 'scan', 'partial', 'token', 'redact', 'drop']
 const FORMS: PartialForm[] = ['email_domain', 'card_bin_last4', 'phone_country_area', 'ip_network']
 
 /**
- * The classification workhorse (SPEC §5, UI.md §2.3).
+ * One connection's catalog: the classification workhorse (SPEC §5, UI.md §2.3).
  *
  * It is a table, not a grid of cards: it shows hundreds of columns and is
  * designed for bulk operation over them rather than one-at-a-time editing. Cards
@@ -32,34 +30,23 @@ const FORMS: PartialForm[] = ['email_domain', 'card_bin_last4', 'phone_country_a
  * redacts, which is safe and useless, and nobody fixes a backlog they cannot see
  * in one place.
  */
-export function CatalogPage() {
-  const [list, setList] = useState<ConnectionSummary[] | null>(null)
-  const [connId, setConnId] = useState<string | null>(null)
+export function CatalogTab({ connId }: { connId: string }) {
   const [entries, setEntries] = useState<Record<string, ColumnPolicy>>({})
-  const [unclassified, setUnclassified] = useState<string[]>([])
+  const [unclassified, setUnclassified] = useState(0)
   const [proposal, setProposal] = useState<InitProposal | null>(null)
   const [grants, setGrants] = useState<string[] | null>(null)
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const cs = await listConnections()
-        setList(cs)
-        if (cs.length > 0) setConnId(cs[0].id)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-      }
-    })()
-  }, [])
+  const [loaded, setLoaded] = useState(false)
 
   const reload = useCallback(async (id: string) => {
     try {
       const cat = await getCatalog(id)
       setEntries(cat.entries)
-      setUnclassified(cat.unclassified ?? [])
+      // The count is the daemon's; the list beside it may be a sample.
+      setUnclassified(cat.unclassified_count ?? cat.unclassified?.length ?? 0)
+      setLoaded(true)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -67,11 +54,10 @@ export function CatalogPage() {
   }, [])
 
   useEffect(() => {
-    if (connId) void reload(connId)
+    void reload(connId)
   }, [connId, reload])
 
   const put = async (key: string, policy: ColumnPolicy) => {
-    if (!connId) return
     setBusy(true)
     try {
       await updateCatalogColumns(connId, { [key]: policy })
@@ -83,17 +69,7 @@ export function CatalogPage() {
     }
   }
 
-  if (list === null) return <Skeleton className="h-40 w-full" />
-  if (list.length === 0) {
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>No connections</EmptyTitle>
-          <EmptyDescription>A catalog classifies one database's columns; register one first.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
+  if (!loaded && !error) return <Skeleton className="h-40 w-full" />
 
   const shown = Object.entries(entries).filter(([key]) => key.includes(filter))
 
@@ -102,11 +78,6 @@ export function CatalogPage() {
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
 
       <div className="flex flex-wrap items-end gap-3">
-        {list.map((c) => (
-          <Button key={c.id} variant={connId === c.id ? 'default' : 'outline'} onClick={() => setConnId(c.id)}>
-            {c.name}
-          </Button>
-        ))}
         <Input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -115,11 +86,11 @@ export function CatalogPage() {
         />
         <Button
           variant="outline"
-          disabled={busy || !connId}
+          disabled={busy}
           onClick={async () => {
             setBusy(true)
             try {
-              setProposal(await initCatalog(connId!, 200))
+              setProposal(await initCatalog(connId, 200))
             } catch (e) {
               setError(e instanceof Error ? e.message : String(e))
             } finally {
@@ -131,10 +102,10 @@ export function CatalogPage() {
         </Button>
         <Button
           variant="outline"
-          disabled={busy || !connId}
+          disabled={busy}
           onClick={async () => {
             try {
-              setGrants((await getCatalogGrantStatements(connId!)).statements)
+              setGrants((await getCatalogGrantStatements(connId)).statements)
             } catch (e) {
               setError(e instanceof Error ? e.message : String(e))
             }
@@ -144,9 +115,9 @@ export function CatalogPage() {
         </Button>
       </div>
 
-      {unclassified.length > 0 ? (
+      {unclassified > 0 ? (
         <p className="text-sm">
-          <span className="text-waiting">{unclassified.length} column(s) unclassified.</span> Each one redacts
+          <span className="text-waiting">{unclassified} column(s) unclassified.</span> Each one redacts
           until you decide, which is safe and not useful.
         </p>
       ) : null}

@@ -16,33 +16,25 @@ export type Section =
   | 'approvals'
   | 'permissions'
   | 'activity'
-  | 'catalog'
-  | 'policy'
   | 'settings'
 
-/** Which scope a screen reads. `Approvals`, `Permissions` and `Activity` are
- * read one agent at a time (SPEC R9.1, R9.3e, §10); `Catalog` and `Policy`
- * are per-connection (UI.md §2.3). `Connections`, `Audit` and `Settings` are
- * about the daemon rather than either scope, so neither group is dimmed for
- * them — `Audit` covers every connection at once, which is the point of it
- * being its own screen. */
+/** Which sidebar group a screen reads. `Approvals`, `Permissions` and
+ * `Activity` are read one agent at a time (SPEC R9.1, R9.3e, §10); a
+ * connection's page is picked from `Databases`. `Settings` is about the
+ * daemon, so neither group is dimmed for it. */
 const SCOPE: Record<Section, Scope> = {
-  connections: null,
+  connections: 'connection',
   approvals: 'session',
   permissions: 'session',
   activity: 'session',
-  catalog: 'connection',
-  policy: 'connection',
   settings: null,
 }
 
 const SECTIONS: { section: Section; label: string; to: string }[] = [
   { section: 'connections', label: 'Connections', to: '/connections' },
   { section: 'approvals', label: 'Approvals', to: '/approvals' },
-  { section: 'permissions', label: 'Permissions', to: '/permissions' },
   { section: 'activity', label: 'Activity', to: '/activity' },
-  { section: 'catalog', label: 'Catalog', to: '/catalog' },
-  { section: 'policy', label: 'Policy', to: '/policy' },
+  { section: 'permissions', label: 'Permissions', to: '/permissions' },
 ]
 
 /**
@@ -103,7 +95,7 @@ export function AppShell({ section, children }: { section?: Section; children: R
             same component, never both at once. */}
         <Brand className="md:hidden" />
 
-        <nav className="-ml-2 flex min-w-0 overflow-x-auto">
+        <nav aria-label="Sections" className="-ml-2 flex min-w-0 overflow-x-auto">
           {SECTIONS.map((item) => (
             <Link
               key={item.section}
@@ -151,7 +143,7 @@ export function AppShell({ section, children }: { section?: Section; children: R
           that takes the space a table wants without stretching to the edge
           of an ultra-wide monitor (UI.md — keeper is tables and facts, not
           a page of prose). */}
-      <main className="mx-auto w-full max-w-page px-6 pt-8 pb-16 lg:px-8">{children}</main>
+      <div className="mx-auto w-full max-w-page px-6 pt-8 pb-16 lg:px-8">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   )

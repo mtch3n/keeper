@@ -4,7 +4,6 @@ import { vi } from 'vitest'
 
 import App from '@/App'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { ConnectionScopeProvider } from '@/components/wrappers/ConnectionScopeProvider'
 import { LiveStatusProvider } from '@/components/wrappers/LiveStatus'
 import { SessionScopeProvider } from '@/components/wrappers/SessionScopeProvider'
 import type { Finding } from '@/lib/types'
@@ -36,7 +35,6 @@ export function fakeDaemon(): FakeDaemon {
 export function renderApp(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <ConnectionScopeProvider>
         <SessionScopeProvider>
           <LiveStatusProvider>
             <TooltipProvider delay={400}>
@@ -44,7 +42,6 @@ export function renderApp(path: string) {
             </TooltipProvider>
           </LiveStatusProvider>
         </SessionScopeProvider>
-      </ConnectionScopeProvider>
     </MemoryRouter>,
   )
 }
