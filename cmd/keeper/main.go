@@ -72,7 +72,7 @@ Usage:
   keeper host add --name H --address A [--port 5432] [--sslmode prefer]
   keeper host ls
   keeper host rm <name>
-  keeper connection add --name X --host H --database D --user U [--write-user W] [--catalog path]
+  keeper connection add --name X --host H --database D --user U [--writes off|approve] [--catalog path]
       passwords are prompted for, or read one per line from stdin
   keeper connection ls
   keeper connection show <name>

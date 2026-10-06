@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strings"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
@@ -95,7 +97,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	res, tmpl, err := d.deps.Pipeline.Query(ctx, info, connID, sql, bound, maxRows, "")
 	switch {
 	case err != nil:
-		return nil, nil, err
+		return nil, nil, d.withWriters(ctx, connID, err)
 	case res != nil:
 		d.results.keep(res)
 		return res, nil, nil
@@ -143,4 +145,35 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	facts.Intent = info.Intent
 	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, preview)
 	return nil, tk, nil
+}
+
+// withWriters adds to a writes-off refusal the profiles on the same host and
+// database that allow writes. keeper never switches to one: the agent resubmits
+// naming it, so what runs is always the profile the agent asked for.
+func (d *Daemon) withWriters(ctx context.Context, connID string, err error) error {
+	var kerr *types.Error
+	if !errors.As(err, &kerr) || kerr.Code != types.CodeWritesOff {
+		return err
+	}
+	c, cerr := d.deps.Vault.Connection(ctx, connID)
+	if cerr != nil || c == nil {
+		return err
+	}
+	cs, cerr := d.deps.Vault.Connections(ctx)
+	if cerr != nil {
+		return err
+	}
+	var names []string
+	for _, o := range cs {
+		if o.ID != c.ID && o.HostID == c.HostID && o.Database == c.Database && o.Writes == types.WritesApprove {
+			names = append(names, o.Name)
+		}
+	}
+	if len(names) == 0 {
+		return err
+	}
+	slices.Sort(names)
+	out := *kerr
+	out.Action = "resubmit on a profile for this database that allows writes: " + strings.Join(names, ", ")
+	return &out
 }

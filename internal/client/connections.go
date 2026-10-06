@@ -10,17 +10,25 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
+// Profile mirrors daemon.Profile: where a connection logs in and as whom, and
+// whether it may write. The password never appears here or anywhere else.
+type Profile struct {
+	Host     string       `json:"host"`
+	Address  string       `json:"address"`
+	Port     int          `json:"port"`
+	Database string       `json:"database"`
+	Username string       `json:"username"`
+	Writes   types.Writes `json:"writes"`
+}
+
 // ConnectionSummary is one row of list_connections / `keeper connection ls`
-// (CONTRACT §3: GET /v1/connections). It deliberately carries none of the
-// registration or credential detail full describe does — host, password and
-// connection string never appear here or anywhere else (SPEC §6.1).
+// (CONTRACT §3: GET /v1/connections).
 type ConnectionSummary struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Engine   string     `json:"engine"`
-	Database string     `json:"database"`
-	Role     string     `json:"role"`
-	Mode     types.Mode `json:"mode"`
+	ID     string     `json:"id"`
+	Name   string     `json:"name"`
+	Engine string     `json:"engine"`
+	Mode   types.Mode `json:"mode"`
+	Profile
 }
 
 // ListConnections lists every registered connection.
@@ -62,25 +70,22 @@ type CatalogStatus struct {
 
 // ConnectionDetail mirrors daemon.ConnectionDetail. It is deliberately not
 // types.Connection: describe_connection returns what §6.1 lists and no more, so
-// host, password and connection string have nowhere to appear.
+// password and connection string have nowhere to appear.
 type ConnectionDetail struct {
-	ID                 string                  `json:"id"`
-	Name               string                  `json:"name"`
-	Engine             string                  `json:"engine"`
-	Version            string                  `json:"version,omitzero"`
-	Database           string                  `json:"database"`
-	Schemas            []string                `json:"schemas,omitzero"`
-	Role               string                  `json:"role"`
-	AuditedPrivileges  AuditedPrivileges       `json:"audited_privileges"`
-	CatalogStatus      CatalogStatus           `json:"catalog_status"`
-	PolicySummary      map[types.Policy]int    `json:"policy_summary,omitzero"`
-	Mode               types.Mode              `json:"mode"`
-	Limits             types.Limits            `json:"limits"`
-	Denylist           []types.RelationRef     `json:"denylist,omitzero"`
-	WriteScope         []types.WriteScopeEntry `json:"write_scope,omitzero"`
-	HasWriteCredential bool                    `json:"has_write_credential"`
-	Detection          []types.Stage           `json:"detection"`
-	Degradations       []types.Degradation     `json:"degradations,omitzero"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Engine  string `json:"engine"`
+	Version string `json:"version,omitzero"`
+	Profile
+	Schemas           []string             `json:"schemas,omitzero"`
+	AuditedPrivileges AuditedPrivileges    `json:"audited_privileges"`
+	CatalogStatus     CatalogStatus        `json:"catalog_status"`
+	PolicySummary     map[types.Policy]int `json:"policy_summary,omitzero"`
+	Mode              types.Mode           `json:"mode"`
+	Limits            types.Limits         `json:"limits"`
+	Denylist          []types.RelationRef  `json:"denylist,omitzero"`
+	Detection         []types.Stage        `json:"detection"`
+	Degradations      []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // DescribeConnection returns describe_connection's field set for one
@@ -93,22 +98,21 @@ func (c *Client) DescribeConnection(ctx context.Context, id string) (*Connection
 	return &out, nil
 }
 
-// Credential is one role's login on a connection's host and database.
+// Credential is a profile's login on its host and database.
 type Credential struct {
 	User     string `json:"user"`
 	Password string `json:"password,omitzero"`
 }
 
-// RegisterConnectionParams is `keeper connection add`'s body. Write is nil
-// when no _rw credential is being registered (SPEC §4.2: write mode is a
-// separate stored credential, not a flag).
+// RegisterConnectionParams is `keeper connection add`'s body: one profile, one
+// credential, and whether its sessions may write.
 type RegisterConnectionParams struct {
-	Name        string      `json:"name"`
-	HostID      string      `json:"host_id"`
-	Database    string      `json:"database"`
-	Read        Credential  `json:"read"`
-	Write       *Credential `json:"write,omitzero"`
-	CatalogPath string      `json:"catalog_path,omitzero"`
+	Name        string       `json:"name"`
+	HostID      string       `json:"host_id"`
+	Database    string       `json:"database"`
+	Credential  Credential   `json:"credential"`
+	Writes      types.Writes `json:"writes,omitzero"`
+	CatalogPath string       `json:"catalog_path,omitzero"`
 }
 
 // RegisterConnection stores a connection and audits it once (G0). The
@@ -150,6 +154,7 @@ type PatchConnectionParams struct {
 	// Detection replaces the connection's passes when set; an empty list turns
 	// detection off.
 	Detection *[]types.Stage `json:"detection,omitzero"`
+	Writes    types.Writes   `json:"writes,omitzero"`
 }
 
 // PatchConnection updates a connection's mode and/or limits.

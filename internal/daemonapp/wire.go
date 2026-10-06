@@ -58,9 +58,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	}
 
 	exec, err := pgdb.New(pgdb.Config{
-		DSN: func(ctx context.Context, connID string, role ports.Role) (string, error) {
-			return v.DSN(ctx, connID, role)
-		},
+		DSN:    v.DSN,
 		Limits: limitsFrom(ctx, v),
 	})
 	if err != nil {

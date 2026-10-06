@@ -29,8 +29,7 @@ import (
 // internal/daemon satisfies it. It is declared here because it is consumed here.
 type Authority interface {
 	// Connection returns the registered connection. Mode, Limits, Denylist and
-	// WriteScope all come from it, so R4.5's denylist and R4.2b's write scope
-	// have exactly one source and cannot drift apart.
+	// the writes setting all come from it, so each has exactly one source.
 	Connection(ctx context.Context, connID string) (*types.Connection, error)
 
 	// Grant returns the live grant covering exactly path, or false. SPEC R9.3c:
@@ -279,7 +278,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	// A statement is a write because the plan says so, not because the agent
 	// said so.
 	if plan.Writes {
-		if dec := p.checkWrite(st, conn, plan); dec != nil {
+		if dec := p.checkWrite(st, conn); dec != nil {
 			return dec
 		}
 	}
@@ -369,34 +368,17 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	return &Decision{Result: result}
 }
 
-// checkWrite is R4.2a–f. It returns a Decision when the write is refused.
-func (p *Pipeline) checkWrite(st *state, conn *types.Connection, plan *ports.PlanFacts) *Decision {
+// checkWrite is R4.2a–f. It returns a Decision when the write is refused. A
+// write is bounded by the profile's writes setting, its approval and the
+// database's own grants; keeper never runs it as another profile.
+func (p *Pipeline) checkWrite(st *state, conn *types.Connection) *Decision {
 	st.reason(ReasonWrite)
 
-	if !conn.HasWriteCredential {
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeNoWriteCredential,
-			"this connection has no write credential, so it cannot modify data",
-			"ask an operator to register a write credential for this connection"))
-	}
-
-	// internal/pgdb puts the plan's ModifyTable target first and refuses a plan
-	// with more than one, so index 0 is the relation R4.2b names.
-	if len(plan.RelationNames) == 0 {
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeOutOfWriteScope,
-			"keeper could not identify the relation this statement writes",
-			"rewrite the statement so it names one relation to modify"))
-	}
-	target := plan.RelationNames[0]
-	op := types.WriteOp(plan.StatementType)
-
-	if !inWriteScope(conn.WriteScope, target, op) {
-		// Refused before G3 would refuse it, so the agent receives a keeper code
-		// naming the relation rather than a sanitised permission error it cannot
-		// act on (SPEC R4.2b, the trap R5.5 describes).
-		st.reason(ReasonOutOfScope)
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeOutOfWriteScope,
-			string(op)+" on "+target.String()+" is outside the scope recorded for this connection's write credential",
-			"ask an operator to re-audit the connection if the credential's privileges changed"))
+	if conn.Writes != types.WritesApprove {
+		st.reason(ReasonWritesOff)
+		return refuse(st, types.Tier4Refuse, keeperError(types.CodeWritesOff,
+			"writes are off for this profile, so its sessions are read-only",
+			"use a profile on this database that allows writes, or ask an operator to allow them on this one"))
 	}
 
 	// R4.2f: no mode and no allow rule authorizes a write. Tier 3, always.
@@ -524,9 +506,9 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 	if plan.Writes {
 		st.reason(ReasonWrite)
 		st.raise(types.Tier3Approve)
-		if len(plan.RelationNames) > 0 && !inWriteScope(conn.WriteScope, plan.RelationNames[0], types.WriteOp(plan.StatementType)) {
+		if conn.Writes != types.WritesApprove {
 			st.tier = types.Tier4Refuse
-			st.reason(ReasonOutOfScope)
+			st.reason(ReasonWritesOff)
 		}
 	}
 

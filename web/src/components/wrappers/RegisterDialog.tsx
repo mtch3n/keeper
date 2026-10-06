@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -10,10 +9,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Switch } from '@/components/ui/switch'
 import { registerConnection } from '@/lib/api'
 import type { Host } from '@/lib/types'
 
@@ -22,8 +22,7 @@ const EMPTY = {
   database: '',
   user: '',
   password: '',
-  writeUser: '',
-  writePassword: '',
+  writes: false,
   catalogPath: '',
 }
 
@@ -40,10 +39,9 @@ const EMPTY = {
  * There is no engine control: registration records `postgres` and nothing
  * else (internal/daemon/connections.go), and a dropdown with one reachable
  * option is a promise the daemon has not made. For the same reason there is
- * no SSH tunnel section and no read-only switch — keeper has no tunnel, and
- * connection mode is the Limits tab's `RadioGroup` with a sentence of consequence
- * under each option, which a checkbox here would quietly become a third
- * rendering of.
+ * no SSH tunnel section — keeper has none. One profile is one credential;
+ * the writes switch says whether its sessions may write at all, and every
+ * write still waits for a human.
  *
  * There is no separate "Test connection" button because storing the
  * connection *is* the test: keeper opens the credential to audit the role, and
@@ -80,11 +78,8 @@ export function RegisterDialog({
         name: f.name.trim(),
         host_id: host.id,
         database: f.database.trim(),
-        read: { user: f.user.trim(), password: f.password || undefined },
-        write:
-          f.writeUser.trim() !== ''
-            ? { user: f.writeUser.trim(), password: f.writePassword || undefined }
-            : undefined,
+        credential: { user: f.user.trim(), password: f.password || undefined },
+        writes: f.writes ? 'approve' : 'off',
         catalog_path: f.catalogPath.trim() || undefined,
       })
       setF(EMPTY)
@@ -112,9 +107,9 @@ export function RegisterDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* The field list is taller than a short laptop viewport once the
-            write credential is open, and a dialog whose title and decision
-            scroll off the top and bottom is a dialog you cannot act on. */}
+        {/* The field list is taller than a short laptop viewport, and a dialog
+            whose title and decision scroll off the top and bottom is a dialog
+            you cannot act on. */}
         <ScrollArea className="max-h-dialog-body pr-4">
         <FieldGroup>
           <Field>
@@ -146,38 +141,19 @@ export function RegisterDialog({
 
           <Separator />
 
-          <Collapsible>
-            <CollapsibleTrigger render={<Button variant="ghost" size="sm" />}>
-              Write credential (optional)
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <FieldGroup>
-                <FieldDescription>
-                  A second role on the same host and database. Without one, write mode does not exist for this
-                  connection and no setting here creates it.
-                </FieldDescription>
-                <Field orientation="horizontal">
-                  <Field>
-                    <FieldLabel htmlFor="register-write-user">Write user</FieldLabel>
-                    <Input
-                      id="register-write-user"
-                      value={f.writeUser}
-                      onChange={(e) => set('writeUser', e.target.value)}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="register-write-password">Write password</FieldLabel>
-                    <Input
-                      id="register-write-password"
-                      type="password"
-                      value={f.writePassword}
-                      onChange={(e) => set('writePassword', e.target.value)}
-                    />
-                  </Field>
-                </Field>
-              </FieldGroup>
-            </CollapsibleContent>
-          </Collapsible>
+          <Field orientation="horizontal">
+            <Switch id="register-writes" checked={f.writes} onCheckedChange={(on) => set('writes', on)} />
+            <FieldContent>
+              <FieldLabel htmlFor="register-writes">Allow writes</FieldLabel>
+              <FieldDescription>
+                Off, this profile's sessions are read-only at the server. On, an agent may send writes as this user,
+                and each one waits in the Inbox showing what it changes.
+              </FieldDescription>
+            </FieldContent>
+          </Field>
+
+          <Separator />
+
 
           <Field>
             <FieldLabel htmlFor="register-catalog">Catalog path</FieldLabel>

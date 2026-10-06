@@ -10,7 +10,7 @@ import { Lamp } from '@/components/wrappers/Lamp'
 import { decideApproval, listConnections, listHosts, type PendingRequest } from '@/lib/api'
 import { useInbox } from '@/lib/inbox'
 import { age, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
-import type { ApprovalItem, ConnectionSummary, HostView } from '@/lib/types'
+import type { ApprovalItem, ConnectionSummary, HostView, Writes } from '@/lib/types'
 
 /**
  * Everything waiting on a human (SPEC R9.1), oldest first. Each item is a card
@@ -64,7 +64,7 @@ export function InboxPage() {
   const profile = (id: string) => {
     const c = connections.find((x) => x.id === id)
     const h = hosts.find((x) => x.connections.includes(id))
-    return { name: c?.name ?? id, role: c?.role, database: c?.database, host: h }
+    return { name: c?.name ?? id, username: c?.username, database: c?.database, writes: c?.writes, host: h }
   }
 
   return (
@@ -87,14 +87,14 @@ export function InboxPage() {
   )
 }
 
-type Profile = { name: string; role?: string; database?: string; host?: HostView }
+type Profile = { name: string; username?: string; database?: string; writes?: Writes; host?: HostView }
 
 function ProfileFact({ profile }: { profile: Profile }) {
   return (
     <Fact label="profile">
       {profile.name}
       {profile.host ? ` · ${profile.host.name} (${profile.host.address}:${profile.host.port})` : ''}
-      {profile.role ? ` · user ${profile.role}` : ''}
+      {profile.username ? ` · user ${profile.username}` : ''}
       {profile.database ? ` · database ${profile.database}` : ''}
     </Fact>
   )

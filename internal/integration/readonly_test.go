@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/mtchen/keeper/internal/pgdb"
-	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -67,22 +66,16 @@ func TestReadOnlySessionRefusesAWriteCapableRole(t *testing.T) {
 
 // TestKeeperReadsWithAWriteCapableCredential is the case this install is made
 // of: the DSN an operator registers names the application's read-write login,
-// because that is the login they have. SPEC §4.2 says write mode does not
-// exist without a separate write credential, and this is what makes that true
-// of the account and not only of the statement keeper meant to send.
+// because that is the login they have. A read session must still be read-only
+// at the server, of the account and not only of the statement keeper meant to
+// send.
 func TestKeeperReadsWithAWriteCapableCredential(t *testing.T) {
 	f := New(t)
 	ctx := t.Context()
 
 	exec, err := pgdb.New(pgdb.Config{
-		// app_rw registered as the read credential, and no write credential at
-		// all — exactly what `keeper connection add` without --write-dsn stores.
-		DSN: func(_ context.Context, _ string, role ports.Role) (string, error) {
-			if role == ports.RoleWrite {
-				return "", &types.Error{Code: types.CodeNoWriteCredential, Summary: "no write credential"}
-			}
-			return f.WriteDSN, nil
-		},
+		// app_rw registered as the profile's one credential.
+		DSN: func(context.Context, string) (string, error) { return f.WriteDSN, nil },
 	})
 	if err != nil {
 		t.Fatalf("pgdb.New: %v", err)

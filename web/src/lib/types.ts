@@ -38,13 +38,6 @@ export interface RelationRef {
   relation: string
 }
 
-type WriteOp = 'INSERT' | 'UPDATE' | 'DELETE'
-
-export interface WriteScopeEntry {
-  relation: RelationRef
-  operations: WriteOp[]
-}
-
 export interface Limits {
   max_rows_ceiling: number
   /** nanoseconds */
@@ -96,20 +89,31 @@ export interface Connection {
   detection?: Stage[]
   limits: Limits
   denylist?: RelationRef[]
-  write_scope?: WriteScopeEntry[]
   findings?: Finding[]
   audited_at: string
-  has_write_credential: boolean
+  writes: Writes
+}
+
+/** A profile's write setting: off makes its sessions read-only; approve lets
+ * an agent send writes, each of which waits for a human. */
+export type Writes = 'off' | 'approve'
+
+/** Where a profile logs in and as whom. Never a password. */
+export interface Profile {
+  host: string
+  address: string
+  port: number
+  database: string
+  username: string
+  writes: Writes
 }
 
 /** The list-view shape `GET /v1/connections` returns — a narrower projection
  * than `Connection`, per CONTRACT.md §3. */
-export interface ConnectionSummary {
+export interface ConnectionSummary extends Profile {
   id: string
   name: string
   engine: string
-  database: string
-  role: string
   mode: Mode
 }
 
@@ -178,8 +182,7 @@ type Code =
   | 'unclassified'
   | 'denylisted'
   | 'ddl_refused'
-  | 'out_of_write_scope'
-  | 'no_write_credential'
+  | 'writes_off'
   | 'approval_required'
   | 'approval_refused'
   | 'ticket_unknown'

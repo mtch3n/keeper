@@ -139,7 +139,7 @@ func TestListConnections(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusOK, []ConnectionSummary{
-			{ID: "c1", Name: "prod", Engine: "postgresql", Database: "app", Role: "app_ro", Mode: types.ModeAssisted},
+			{ID: "c1", Name: "prod", Engine: "postgresql", Mode: types.ModeAssisted, Profile: Profile{Database: "app", Username: "app_ro"}},
 		})
 	})
 	sock, _ := newTestServer(t, mux)

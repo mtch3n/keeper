@@ -11,7 +11,7 @@ const (
 	Tier1Record    Tier = 1 // runs, recorded prominently: anything was masked
 	Tier2Uncertain Tier = 2 // near a cap, or a changed view: runs in assisted, waits in strict
 	Tier3Approve   Tier = 3 // any write, or mode-dependent uncertainty
-	Tier4Refuse    Tier = 4 // denylisted, DDL, out of write scope, multi-statement
+	Tier4Refuse    Tier = 4 // denylisted, DDL, writes off, multi-statement
 )
 
 // Basis says which layer decided a transform, so the agent can tell what it may
@@ -102,22 +102,21 @@ type ExplainResult struct {
 type Code string
 
 const (
-	CodeSyntax            Code = "syntax"             // the agent's statement did not parse
-	CodeMultiStatement    Code = "multi_statement"    // more than one statement
-	CodePermissionDenied  Code = "permission_denied"  // G3 refused; Invariant A working
-	CodeUnclassified      Code = "unclassified"       // a column needs a catalog entry
-	CodeDenylisted        Code = "denylisted"         // SPEC R4.5
-	CodeDDLRefused        Code = "ddl_refused"        // SPEC R4.2c
-	CodeOutOfWriteScope   Code = "out_of_write_scope" // SPEC R4.2b
-	CodeNoWriteCredential Code = "no_write_credential"
-	CodeApprovalRequired  Code = "approval_required"
-	CodeApprovalRefused   Code = "approval_refused"
-	CodeTicketUnknown     Code = "ticket_unknown"
-	CodeTimeout           Code = "timeout"
-	CodeRowCap            Code = "row_cap"
-	CodeStaleToken        Code = "stale_token" // the daemon restarted; SPEC R3.4d
-	CodeUnreachable       Code = "unreachable" // keeper could not connect to the database
-	CodeInternal          Code = "internal"
+	CodeSyntax           Code = "syntax"            // the agent's statement did not parse
+	CodeMultiStatement   Code = "multi_statement"   // more than one statement
+	CodePermissionDenied Code = "permission_denied" // G3 refused; Invariant A working
+	CodeUnclassified     Code = "unclassified"      // a column needs a catalog entry
+	CodeDenylisted       Code = "denylisted"        // SPEC R4.5
+	CodeDDLRefused       Code = "ddl_refused"       // SPEC R4.2c
+	CodeWritesOff        Code = "writes_off"        // the profile's sessions are read-only
+	CodeApprovalRequired Code = "approval_required"
+	CodeApprovalRefused  Code = "approval_refused"
+	CodeTicketUnknown    Code = "ticket_unknown"
+	CodeTimeout          Code = "timeout"
+	CodeRowCap           Code = "row_cap"
+	CodeStaleToken       Code = "stale_token" // the daemon restarted; SPEC R3.4d
+	CodeUnreachable      Code = "unreachable" // keeper could not connect to the database
+	CodeInternal         Code = "internal"
 )
 
 // Error is the only error shape that reaches an agent. Every field PostgreSQL

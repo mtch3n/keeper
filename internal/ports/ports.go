@@ -17,8 +17,8 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// Role distinguishes the two credentials a connection may hold. A single
-// credential may serve both: SPEC §4.2 permits a master account.
+// Role is the kind of session keeper opens with a profile's one credential: a
+// read session is read-only at the server, a write session is not.
 type Role string
 
 const (
@@ -26,7 +26,7 @@ const (
 	RoleWrite Role = "write"
 )
 
-// Credential is one role's login on a connection's host and database. It
+// Credential is a profile's login on its host and database. It
 // exists between the human surface and the vault and nowhere else.
 type Credential struct {
 	User     string
@@ -58,9 +58,8 @@ type Vault interface {
 
 	Connections(ctx context.Context) ([]*types.Connection, error)
 	Connection(ctx context.Context, id string) (*types.Connection, error)
-	// Register stores a connection on c.HostID with its credentials. write is
-	// nil when the connection holds no write credential: SPEC §4.2.
-	Register(ctx context.Context, c *types.Connection, read Credential, write *Credential) error
+	// Register stores a connection on c.HostID with its one credential.
+	Register(ctx context.Context, c *types.Connection, cred Credential) error
 	Update(ctx context.Context, c *types.Connection) error
 	Remove(ctx context.Context, id string) error
 
@@ -72,10 +71,9 @@ type Vault interface {
 	Terms(ctx context.Context, id string) (Terms, error)
 	SetTerms(ctx context.Context, id string, t Terms) error
 
-	// DSN assembles the connection string for a role from the connection's host
-	// and the role's credential, or errors when none exists. There is no
-	// boolean that enables writes: SPEC §4.2.
-	DSN(ctx context.Context, id string, role Role) (string, error)
+	// DSN assembles the connection string from the connection's host and its
+	// credential.
+	DSN(ctx context.Context, id string) (string, error)
 
 	// TokenKey is the per-connection HMAC key and its version. It never leaves
 	// the vault and is never sent to a model: SPEC R8.3a.

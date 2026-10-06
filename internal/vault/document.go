@@ -29,12 +29,8 @@ type credential struct {
 // never carries a credential or a token key, so both live here beside it.
 type connectionRecord struct {
 	Conn types.Connection `json:"conn"`
-	// Read is always set once a connection is registered.
-	Read credential `json:"read"`
-	// Write is nil when the connection holds no write credential. There is no
-	// boolean that enables writes: SPEC §4.2. types.Connection.HasWriteCredential
-	// is derived from this field's presence, never stored independently.
-	Write *credential `json:"write,omitzero"`
+	// Credential is the profile's one login; its writes setting is on Conn.
+	Credential credential `json:"credential"`
 	// Deny, Allow and Patterns are the list stage's terms and expressions. They are as sensitive as the
 	// data they describe and never leave the vault except through Export.
 	Deny     []string        `json:"deny,omitzero"`

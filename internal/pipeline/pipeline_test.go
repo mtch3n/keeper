@@ -313,63 +313,12 @@ func TestDDLIsRefusedEvenWithAnApprovalInEveryMode(t *testing.T) {
 	}
 }
 
-// --- R4.2b: a write outside the recorded scope ------------------------------
-
-func TestWriteOutsideTheRecordedScopeIsRefusedNamingTheRelation(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.authority.conn.HasWriteCredential = true
-		h.authority.conn.WriteScope = []types.WriteScopeEntry{
-			{Relation: usersRef, Operations: []types.WriteOp{types.WriteUpdate}},
-		}
-		h.exec.cols = nil
-		h.exec.plan = &ports.PlanFacts{
-			StatementType: pgdb.StmtUpdate,
-			Writes:        true,
-			RelationNames: []types.RelationRef{ordersRef},
-			Relations:     []uint32{ordersOID},
-			EstimatedRows: 3,
-		}
-	})
-
-	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
-
-	if dec.Error == nil || dec.Error.Code != types.CodeOutOfWriteScope {
-		t.Fatalf("got %v, want out_of_write_scope", dec.Error)
-	}
-	if !strings.Contains(dec.Error.Summary, ordersRef.String()) {
-		t.Errorf("the refusal must name the relation; got %q", dec.Error.Summary)
-	}
-	if dec.Tier != types.Tier4Refuse {
-		t.Errorf("tier = %d, want 4", dec.Tier)
-	}
-	// Refused before the database would refuse it.
-	if h.exec.called("PreviewWrite") || h.exec.called("CommitWrite") {
-		t.Errorf("the write reached the database: %v", h.exec.calls)
-	}
-}
-
-func TestWriteWithoutACredentialIsRefused(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.plan = &ports.PlanFacts{
-			StatementType: pgdb.StmtUpdate, Writes: true,
-			RelationNames: []types.RelationRef{usersRef}, Relations: []uint32{usersOID},
-		}
-	})
-	dec := h.query(t, Request{SQL: "UPDATE users SET status = 'x'"})
-	if dec.Error == nil || dec.Error.Code != types.CodeNoWriteCredential {
-		t.Fatalf("got %v, want no_write_credential", dec.Error)
-	}
-}
-
 // --- R4.2d–f: the write path ------------------------------------------------
 
 func TestWriteEscalatesToTierThreeWithAPreviewAndCommitsOnlyOnApproval(t *testing.T) {
 	setup := func(h *harness) {
 		h.authority.conn.Mode = types.ModeAssisted
-		h.authority.conn.HasWriteCredential = true
-		h.authority.conn.WriteScope = []types.WriteScopeEntry{
-			{Relation: ordersRef, Operations: []types.WriteOp{types.WriteUpdate}},
-		}
+		h.authority.conn.Writes = types.WritesApprove
 		// UPDATE ... RETURNING user_email: rows exist, and they are output in
 		// exactly the sense §8 means.
 		h.exec.cols = []types.ColumnMeta{fromColumn("user_email", "text", ordersOID, 3)}
@@ -833,5 +782,46 @@ func Test_JDG_C5_AStoredPermissiveModeBehavesAsStrict(t *testing.T) {
 	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
 	if dec.Tier != types.Tier3Approve || dec.Result != nil {
 		t.Errorf("tier = %d, result = %v; want it waiting for approval as strict would", dec.Tier, dec.Result)
+	}
+}
+
+func Test_WRITE_C1_AnAllowedWriteWaitsThenRunsOnApproval(t *testing.T) {
+	setup := func(h *harness) {
+		h.authority.conn.Writes = types.WritesApprove
+		h.exec.previewTag, h.exec.commitTag = 2, 2
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtUpdate, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID}, EstimatedRows: 2,
+		}
+	}
+	h := newHarness(t, setup)
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Escalation == nil || dec.Tier != types.Tier3Approve {
+		t.Fatalf("an allowed write did not wait for approval: tier %d, err %v", dec.Tier, dec.Error)
+	}
+	if h.exec.called("CommitWrite") {
+		t.Fatal("the write ran before its approval")
+	}
+	h2 := newHarness(t, setup)
+	dec2 := h2.query(t, Request{SQL: "UPDATE orders SET status = 'x'", Approval: &Approval{TicketID: "tk", Approver: "ming"}})
+	if dec2.Result == nil || !h2.exec.called("CommitWrite") {
+		t.Fatalf("an approved write did not run: %v", dec2.Error)
+	}
+}
+
+func Test_WRITE_C2_AWriteOnAReadOnlyProfileIsRefusedAtOnce(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.authority.conn.Writes = types.WritesOff
+		h.exec.plan = &ports.PlanFacts{
+			StatementType: pgdb.StmtUpdate, Writes: true,
+			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID},
+		}
+	})
+	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
+	if dec.Error == nil || dec.Error.Code != types.CodeWritesOff || dec.Escalation != nil {
+		t.Fatalf("decision = %+v, want an immediate writes_off refusal with nothing waiting", dec)
+	}
+	if h.exec.called("PreviewWrite") || h.exec.called("CommitWrite") {
+		t.Error("a write on a read-only profile reached the database")
 	}
 }
