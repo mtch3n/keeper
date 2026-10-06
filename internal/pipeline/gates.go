@@ -252,7 +252,14 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 			resolved = append(resolved, ports.ResolvedParam{Ordinal: i + 1, Policy: pol})
 		}
 	}
-	ctx = ports.WithStatement(ctx, ports.Statement{ConnectionID: req.ConnID, Params: resolved})
+	// Tokens persist only where the agent declared it and the connection allows
+	// it; otherwise they are session tokens, and the result says so.
+	persistent := req.Session.TokenScope == types.ScopePersistent
+	if persistent && (st.conn == nil || !st.conn.PersistentTokens) {
+		persistent = false
+		st.degrade("token", "persistent tokens are off for this connection; these are session tokens")
+	}
+	ctx = ports.WithStatement(ctx, ports.Statement{ConnectionID: req.ConnID, Params: resolved, Persistent: persistent})
 
 	transforms, err := p.redactor.Apply(ctx, req.Session.ID, metas, rows)
 	if err != nil {

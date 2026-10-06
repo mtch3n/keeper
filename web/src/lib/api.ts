@@ -138,6 +138,8 @@ export interface ConnectionDetail extends Profile {
   /** The connection's detection pipeline, in order. Empty is off. */
   detection: Stage[]
   limits: Limits
+  /** Whether an agent declaring persistent scope gets tokens that outlive its session. */
+  persistent_tokens: boolean
   denylist?: RelationRef[]
   degradations?: Degradation[]
 }
@@ -257,7 +259,7 @@ export function auditConnection(id: string) {
 
 export function updateConnection(
   id: string,
-  body: { mode?: Mode; limits?: Limits; detection?: Stage[]; writes?: Writes },
+  body: { mode?: Mode; limits?: Limits; detection?: Stage[]; writes?: Writes; persistent_tokens?: boolean },
 ) {
   return patch<Connection>(`/v1/connections/${id}`, body)
 }

@@ -17,6 +17,7 @@ import {
   LimitsForm,
   ModeSelector,
   Privileges,
+  TokensSetting,
   WritesSelector,
 } from '@/pages/connection/sections'
 
@@ -124,6 +125,8 @@ export function ConnectionPage() {
             <ModeSelector detail={detail} onChanged={changed} onError={setError} />
             <Separator />
             <WritesSelector detail={detail} onChanged={changed} onError={setError} />
+            <Separator />
+            <TokensSetting detail={detail} onChanged={changed} onError={setError} />
             <Separator />
             <LimitsForm detail={detail} onChanged={changed} onError={setError} />
             <Separator />

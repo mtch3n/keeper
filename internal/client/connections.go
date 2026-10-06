@@ -83,6 +83,7 @@ type ConnectionDetail struct {
 	PolicySummary     map[types.Policy]int `json:"policy_summary,omitzero"`
 	Mode              types.Mode           `json:"mode"`
 	Limits            types.Limits         `json:"limits"`
+	PersistentTokens  bool                 `json:"persistent_tokens"`
 	Denylist          []types.RelationRef  `json:"denylist,omitzero"`
 	Detection         []types.Stage        `json:"detection"`
 	Degradations      []types.Degradation  `json:"degradations,omitzero"`
@@ -153,8 +154,9 @@ type PatchConnectionParams struct {
 	Limits *types.Limits `json:"limits,omitzero"`
 	// Detection replaces the connection's passes when set; an empty list turns
 	// detection off.
-	Detection *[]types.Stage `json:"detection,omitzero"`
-	Writes    types.Writes   `json:"writes,omitzero"`
+	Detection        *[]types.Stage `json:"detection,omitzero"`
+	Writes           types.Writes   `json:"writes,omitzero"`
+	PersistentTokens *bool          `json:"persistent_tokens,omitzero"`
 }
 
 // PatchConnection updates a connection's mode and/or limits.

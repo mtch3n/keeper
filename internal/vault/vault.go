@@ -26,6 +26,7 @@ import (
 	"uuid"
 
 	"github.com/mtchen/keeper/internal/ports"
+	"github.com/mtchen/keeper/internal/sealed"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -562,5 +563,38 @@ func (v *Vault) RotateMaster(ctx context.Context) error {
 		return fmt.Errorf("vault: write %s: %w", vaultFileName, err)
 	}
 	v.key = newKey
+	return nil
+}
+
+// Import replaces this vault with an export sealed under passphrase, keys and
+// all, so a persistent token minted where it was exported resolves here. The
+// vault is left as it was unless the export opens, parses, and is whole: every
+// connection on a host it carries, with a login and a token key.
+func (v *Vault) Import(ctx context.Context, data []byte, passphrase string) error {
+	plain, err := sealed.Open(data, passphrase)
+	if err != nil {
+		return &types.Error{Code: types.CodeSyntax, Summary: "the export is damaged or sealed under another passphrase"}
+	}
+	var doc document
+	if err := json.Unmarshal(plain, &doc, jsonOptions...); err != nil {
+		return &types.Error{Code: types.CodeSyntax, Summary: "the export is not a keeper vault"}
+	}
+	for _, rec := range doc.Connections {
+		if _, ok := doc.host(rec.Conn.HostID); !ok || rec.Credential.User == "" || len(rec.TokenKeys) == 0 {
+			return &types.Error{Code: types.CodeSyntax, Summary: "the export is not a whole keeper vault"}
+		}
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open {
+		return errNotOpen()
+	}
+	prev := v.doc
+	v.doc = &doc
+	if err := v.persist(); err != nil {
+		v.doc = prev
+		return err
+	}
 	return nil
 }

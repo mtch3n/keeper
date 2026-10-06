@@ -151,8 +151,9 @@ func (v *fakeVault) SetTerms(_ context.Context, id string, t ports.Terms) error 
 func (v *fakeVault) TokenKey(context.Context, string, int) ([]byte, int, error) {
 	return []byte("k"), 1, nil
 }
-func (v *fakeVault) Export(context.Context) ([]byte, error) { return nil, nil }
-func (v *fakeVault) RotateMaster(context.Context) error     { return nil }
+func (v *fakeVault) Export(context.Context) ([]byte, error)       { return nil, nil }
+func (v *fakeVault) Import(context.Context, []byte, string) error { return nil }
+func (v *fakeVault) RotateMaster(context.Context) error           { return nil }
 
 // ---------------------------------------------------------------- auditor
 
@@ -326,7 +327,7 @@ func (r *fakeRedactor) Mint(_ context.Context, sessionID, _, namespace, value st
 	return tok, nil
 }
 
-func (r *fakeRedactor) Resolve(_ context.Context, sessionID, token string) (string, types.Policy, error) {
+func (r *fakeRedactor) Resolve(_ context.Context, sessionID, _, token string) (string, types.Policy, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	v, ok := r.minted[sessionID+"|"+token]

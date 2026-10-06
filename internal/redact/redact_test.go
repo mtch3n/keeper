@@ -98,9 +98,8 @@ func TestTokenDeterminismAndShape(t *testing.T) {
 	}
 
 	a := run("s1", "jane@example.com")
-	b := run("s2", "jane@example.com") // a different session, same key
-	if a != b {
-		t.Errorf("token is not deterministic across sessions: %q vs %q", a, b)
+	if b := run("s1", "jane@example.com"); a != b {
+		t.Errorf("token is not deterministic within a session: %q vs %q", a, b)
 	}
 	if c := run("s1", "john@example.com"); c == a {
 		t.Error("different values produced the same token")
@@ -508,7 +507,7 @@ func TestCollisionRedactsTheCellAndKeepsTheFirstBinding(t *testing.T) {
 		t.Errorf("collisions = %d, want 1", tr["email"].Collisions)
 	}
 	// The binding still resolves to the first value, not the second.
-	got, _, err := r.Resolve(t.Context(), "s", tokenA)
+	got, _, err := r.Resolve(t.Context(), "s", "c1", tokenA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,9 +529,11 @@ func TestMintReportsCollision(t *testing.T) {
 }
 
 // findCollision returns two distinct values whose truncated tags are equal.
+// findCollision finds two values whose session tokens collide in session "s".
 func findCollision(t *testing.T, r *Redactor, namespace string) (string, string) {
 	t.Helper()
-	key, _, err := r.key(t.Context(), "c1")
+	connKey, _, err := r.key(t.Context(), "c1")
+	key := sessionKey(connKey, "s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +676,7 @@ func TestResolveAndDropSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, p, err := r.Resolve(t.Context(), "s1", tok)
+	v, p, err := r.Resolve(t.Context(), "s1", "c1", tok)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,14 +687,14 @@ func TestResolveAndDropSession(t *testing.T) {
 		t.Errorf("policy = %s, want token", p)
 	}
 	// A different session cannot resolve it: the map is per session (§8.4).
-	if _, _, err := r.Resolve(t.Context(), "s2", tok); err == nil {
+	if _, _, err := r.Resolve(t.Context(), "s2", "c1", tok); err == nil {
 		t.Error("a different session resolved the token")
 	}
 	r.DropSession("s1")
-	if _, _, err := r.Resolve(t.Context(), "s1", tok); err == nil {
+	if _, _, err := r.Resolve(t.Context(), "s1", "c1", tok); err == nil {
 		t.Error("DropSession did not clear the map")
 	}
-	if _, _, err := r.Resolve(t.Context(), "s1", "not a token"); err == nil {
+	if _, _, err := r.Resolve(t.Context(), "s1", "c1", "not a token"); err == nil {
 		t.Error("a non-token resolved")
 	}
 }
@@ -713,7 +714,7 @@ func TestBindingsExpire(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock = clock.Add(2 * time.Minute)
-	if _, _, err := r.Resolve(t.Context(), "s", tok); err == nil {
+	if _, _, err := r.Resolve(t.Context(), "s", "c1", tok); err == nil {
 		t.Error("an expired binding resolved")
 	}
 	// And it no longer participates in the emission scan.

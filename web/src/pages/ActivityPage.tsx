@@ -279,6 +279,7 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
         <Fact label="relations">{relationList(record.relations)}</Fact>
         <Fact label="duration">{durationMs(record.duration)}</Fact>
         <Fact label="authorization">{record.authorization || 'tier 0'}</Fact>
+        {record.token_scope ? <Fact label="tokens">{record.token_scope}</Fact> : null}
         {record.approver ? <Fact label="approver">{record.approver}</Fact> : null}
         {record.error_code ? <Fact label="error">{record.error_code}</Fact> : null}
         {record.collisions ? (
