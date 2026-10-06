@@ -17,20 +17,19 @@ import { tabPath } from '@/pages/connection/tabs'
  */
 export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onError: (e: string) => void }) {
   const [host, setHost] = useState<HostView | null>(null)
-  const [unclassified, setUnclassified] = useState<number | null>(null)
+  // null while loading; 'unavailable' when the catalog could not be read, which
+  // is that row's state and not the page's.
+  const [unclassified, setUnclassified] = useState<number | 'unavailable' | null>(null)
   const navigate = useNavigate()
   const id = detail.id
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const [hosts, cat] = await Promise.all([listHosts(), getCatalog(id)])
-        setHost(hosts.find((h) => h.connections.includes(id)) ?? null)
-        setUnclassified(cat.unclassified_count ?? cat.unclassified?.length ?? 0)
-      } catch (e) {
-        onError(e instanceof Error ? e.message : String(e))
-      }
-    })()
+    listHosts()
+      .then((hosts) => setHost(hosts.find((h) => h.connections.includes(id)) ?? null))
+      .catch((e) => onError(e instanceof Error ? e.message : String(e)))
+    getCatalog(id)
+      .then((cat) => setUnclassified(cat.unclassified_count ?? cat.unclassified?.length ?? 0))
+      .catch(() => setUnclassified('unavailable'))
   }, [id, onError])
 
   const findings = detail.audited_privileges.findings?.length ?? 0
@@ -57,6 +56,8 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
         <Fact label="catalog">
           {unclassified === null ? (
             '…'
+          ) : unclassified === 'unavailable' ? (
+            <span className="text-muted-foreground">unavailable — the catalog could not be read from the database</span>
           ) : (
             <Link to={tabPath(id, 'catalog')} className={link}>
               {unclassified} unclassified columns
@@ -79,12 +80,14 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
 
       <Separator />
 
-      <RemoveConnection
-        id={id}
-        name={detail.name}
-        onRemoved={async () => navigate('/connections')}
-        onError={onError}
-      />
+      <div className="flex">
+        <RemoveConnection
+          id={id}
+          name={detail.name}
+          onRemoved={async () => navigate('/connections')}
+          onError={onError}
+        />
+      </div>
     </div>
   )
 }
