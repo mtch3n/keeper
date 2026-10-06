@@ -28,6 +28,8 @@ type DoctorReport struct {
 	Connections []ConnectionHealth `json:"connections,omitzero"`
 
 	Detector *ports.DetectorIdentity `json:"detector,omitzero"`
+	// LogRetentionDays is how long the activity log keeps a record.
+	LogRetentionDays int `json:"log_retention_days"`
 }
 
 // ConnectionHealth is one connection's line in doctor.
@@ -98,6 +100,9 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 		rep.Detector = &id
 	}
 
+	if st, err := d.deps.Vault.Settings(ctx); err == nil {
+		rep.LogRetentionDays = st.LogRetentionDays
+	}
 	cs, err := d.deps.Vault.Connections(ctx)
 	if err != nil {
 		return rep

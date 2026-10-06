@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { listGrants, revokeGrant, subscribeToEvents } from '@/lib/api'
@@ -23,7 +22,7 @@ import type { Grant } from '@/lib/types'
  * rule's inverse however convenient it looked on a schema with four hundred
  * relations.
  */
-export function PermissionsPage() {
+export function PermissionsSection() {
   const [grants, setGrants] = useState<Grant[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -43,33 +42,27 @@ export function PermissionsPage() {
     })
   }, [refresh])
 
-  if (grants === null) return <Skeleton className="h-40 w-full" />
-
-  if (grants.length === 0) {
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>No allow rules</EmptyTitle>
-          <EmptyDescription>
-            Approving an escalation can leave a rule here so keeper stops asking the same question. Each one
-            covers exactly the path it names.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
-
   // Session grants first: they are the narrower kind and they die with the
   // session, so they belong at the top where their impermanence reads.
-  const ordered = [...grants].sort((a, b) => {
+  const ordered = [...(grants ?? [])].sort((a, b) => {
     if (a.lifetime !== b.lifetime) return a.lifetime === 'session' ? -1 : 1
     return a.created_at.localeCompare(b.created_at)
   })
 
   return (
-    <div className="flex flex-col gap-6">
+    <section aria-labelledby="permissions-heading" className="flex flex-col gap-4">
+      <h2 id="permissions-heading" className="text-heading">
+        Permissions
+      </h2>
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
-
+      {grants === null ? (
+        <Skeleton className="h-24 w-full" />
+      ) : grants.length === 0 ? (
+        <p className="text-meta text-muted-foreground">
+          No allow rules. Approving an escalation can leave one so keeper stops asking the same question; each covers
+          exactly the path it names.
+        </p>
+      ) : (
       <Table>
         <TableHeader>
           <TableRow>
@@ -123,11 +116,11 @@ export function PermissionsPage() {
           ))}
         </TableBody>
       </Table>
-
+      )}
       <p className="text-meta text-muted-foreground">
         A rule covers exactly the path it names. A join reaching one relation you granted and one you did not
         still escalates, and a view is its own path even when its base table is granted.
       </p>
-    </div>
+    </section>
   )
 }

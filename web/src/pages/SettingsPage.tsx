@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { Button } from '@/components/ui/button'
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
-import { getDoctor, type DoctorReport } from '@/lib/api'
+import { getDoctor, getSettings, updateSettings, type DoctorReport } from '@/lib/api'
+import { notificationsOn, setNotificationsOn } from '@/lib/notify'
+import { PermissionsSection } from '@/pages/PermissionsSection'
 import { age } from '@/lib/render'
 
 /**
@@ -23,6 +29,79 @@ const REACH = {
   unreachable: { lamp: 'blocked', label: 'unreachable' },
   unknown: { lamp: 'waiting', label: 'no answer yet' },
 } as const
+
+/**
+ * The daemon-wide choices: how long the activity log keeps a record, and whether
+ * this browser raises a notification when something new waits in the Inbox.
+ */
+function Preferences() {
+  const [days, setDays] = useState('')
+  const [saved, setSaved] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notify, setNotify] = useState(notificationsOn())
+  const [permission, setPermission] = useState(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission)
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setDays(String(s.log_retention_days)))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [])
+
+  const save = async () => {
+    try {
+      const s = await updateSettings({ log_retention_days: Number(days) })
+      setDays(String(s.log_retention_days))
+      setSaved('Saved')
+      setError(null)
+    } catch (e) {
+      setSaved(null)
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  return (
+    <section aria-labelledby="preferences-heading" className="flex flex-col gap-4">
+      <h2 id="preferences-heading" className="text-heading">
+        Preferences
+      </h2>
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="retention">Keep the activity log for (days)</FieldLabel>
+          <div className="flex items-center gap-3">
+            <Input id="retention" value={days} onChange={(e) => setDays(e.target.value)} className="w-32" />
+            <Button onClick={() => void save()}>Save</Button>
+            {saved ? <span className="text-meta text-muted-foreground">{saved}</span> : null}
+          </div>
+          <FieldDescription>Records older than this are deleted every day. The log is encrypted with the vault's key.</FieldDescription>
+          {error ? <p className="text-sm text-blocked">{error}</p> : null}
+        </Field>
+        <Field orientation="horizontal">
+          <Switch
+            id="notify"
+            checked={notify}
+            onCheckedChange={(on) => {
+              setNotificationsOn(on)
+              setNotify(on)
+              if (on && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+                void Notification.requestPermission().then(setPermission)
+              }
+            }}
+          />
+          <FieldContent>
+            <FieldLabel htmlFor="notify">Notify me when something waits in the Inbox</FieldLabel>
+            <FieldDescription>
+              {permission === 'denied'
+                ? 'This browser has blocked notifications for keeper; allow them in its site settings.'
+                : permission === 'unsupported'
+                  ? 'This browser cannot show notifications.'
+                  : 'Only while keeper is open in a tab you are not looking at.'}
+            </FieldDescription>
+          </FieldContent>
+        </Field>
+      </FieldGroup>
+    </section>
+  )
+}
 
 export function SettingsPage() {
   const [report, setReport] = useState<DoctorReport | null>(null)
@@ -41,11 +120,21 @@ export function SettingsPage() {
     void refresh()
   }, [refresh])
 
-  if (report === null) return <Skeleton className="h-64 w-full" />
-
   return (
     <div className="flex flex-col gap-8">
+      <h1 className="text-title">Settings</h1>
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
+      <Preferences />
+      <Separator />
+      <PermissionsSection />
+      <Separator />
+      {report === null ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-meta text-muted-foreground">Checking the daemon and every connection…</p>
+          <Skeleton className="h-40 w-full" />
+        </div>
+      ) : (
+      <>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-heading">Daemon</h2>
@@ -199,7 +288,8 @@ export function SettingsPage() {
           </section>
         </>
       ) : null}
+      </>
+      )}
     </div>
   )
 }
-

@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"net"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/mtchen/keeper/internal/types"
@@ -399,4 +401,20 @@ func (d *Daemon) answerableLocked(r *localRequest) error {
 		return errAlreadyUsed
 	}
 	return nil
+}
+
+// PendingRequests is GET /v1/requests: every local request still waiting on a
+// human, oldest first, for the Inbox. It carries what the request page shows
+// and nothing a session supplied beyond its screened purpose.
+func (d *Daemon) PendingRequests() []types.LocalRequest {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []types.LocalRequest{}
+	for _, r := range d.requests {
+		if r.r.State == statePending {
+			out = append(out, r.r)
+		}
+	}
+	slices.SortFunc(out, func(a, b types.LocalRequest) int { return strings.Compare(a.ID, b.ID) })
+	return out
 }

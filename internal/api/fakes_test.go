@@ -17,6 +17,7 @@ type fakeVault struct {
 	hosts      map[string]*types.Host
 	conns      map[string]*types.Connection
 	terms      map[string]ports.Terms
+	settings   *types.Settings
 	registered []*types.Connection
 }
 
@@ -117,6 +118,22 @@ func (v *fakeVault) Remove(_ context.Context, id string) error {
 
 func (v *fakeVault) DSN(_ context.Context, id string, _ ports.Role) (string, error) {
 	return "postgres://" + id, nil
+}
+
+func (v *fakeVault) Settings(context.Context) (types.Settings, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.settings == nil {
+		return types.DefaultSettings(), nil
+	}
+	return *v.settings, nil
+}
+
+func (v *fakeVault) SetSettings(_ context.Context, s types.Settings) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.settings = &s
+	return nil
 }
 
 func (v *fakeVault) Terms(_ context.Context, id string) (ports.Terms, error) {

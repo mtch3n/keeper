@@ -12,6 +12,9 @@ import (
 // record, its read and write credentials, and its per-connection HMAC token
 // keys.
 type document struct {
+	// Settings is nil until an operator first saves one; reads fall back to
+	// types.DefaultSettings.
+	Settings    *types.Settings    `json:"settings,omitzero"`
 	Hosts       []types.Host       `json:"hosts,omitzero"`
 	Connections []connectionRecord `json:"connections,omitzero"`
 }
