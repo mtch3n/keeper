@@ -26,10 +26,6 @@ var (
 		"no local request with that id belongs to this session",
 		"open a new request")
 
-	errIntentRequired = keeperErr(types.CodePermissionDenied,
-		"this session has not declared an intent, and every statement is recorded against one",
-		"call set_session_intent before querying")
-
 	errIntentScreened = keeperErr(types.CodePermissionDenied,
 		"the intent text matched a sensitive-data rule and was not recorded",
 		"restate the intent without identifying values")

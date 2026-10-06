@@ -17,7 +17,7 @@ import (
 func registerTools(s *mcp.Server, h *daemonHolder) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_session_intent",
-		Description: "Set this session's stated task intent. Required before any query; shown on approval screens and recorded in the audit log.",
+		Description: "Optionally state this session's task, shown to the human beside anything that waits for approval, and declare how long its tokens live (token_scope). Queries do not require it.",
 	}, h.setSessionIntent)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -83,7 +83,7 @@ func registerTools(s *mcp.Server, h *daemonHolder) {
 // --- set_session_intent ---
 
 type SetSessionIntentIn struct {
-	Intent     string           `json:"intent" jsonschema:"the session's stated task, e.g. 'reconciliation investigation OPS-441'"`
+	Intent     string           `json:"intent,omitzero" jsonschema:"optional: the session's task, e.g. 'reconciliation investigation OPS-441'"`
 	TokenScope types.TokenScope `json:"token_scope,omitzero" jsonschema:"session (default): tokens resolve only in this session; persistent: tokens mean the same value across sessions and machines, where the connection allows it"`
 }
 

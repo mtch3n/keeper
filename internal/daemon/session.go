@@ -139,9 +139,6 @@ func (d *Daemon) Sessions() []types.Session {
 // stage, in process, because the intent is user-supplied text that reaches the
 // approval queue and the audit log.
 func (d *Daemon) SetIntent(ctx context.Context, s *Session, intent string, scope types.TokenScope) error {
-	if intent == "" {
-		return errValidation("intent", "is required")
-	}
 	switch scope {
 	case "":
 		scope = types.ScopeSession
@@ -149,8 +146,10 @@ func (d *Daemon) SetIntent(ctx context.Context, s *Session, intent string, scope
 	default:
 		return errValidation("token_scope", "must be session or persistent")
 	}
-	if err := d.deps.Audit.ScreenIntent(ctx, intent); err != nil {
-		return errIntentScreened
+	if intent != "" {
+		if err := d.deps.Audit.ScreenIntent(ctx, intent); err != nil {
+			return errIntentScreened
+		}
 	}
 	s.setIntent(intent, scope)
 	d.hub.Publish(Event{Type: EventSession, Data: SessionEvent{Action: "intent", Session: s.Info()}})
