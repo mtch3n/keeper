@@ -27,14 +27,14 @@ func isWrite(statementType string) bool { return slices.Contains(writeStatements
 // resolveParams turns token parameters into bound values against the calling
 // session's reverse map. keeper never substitutes a resolved value into
 // statement text (R6.2): a token becomes a bound parameter or the call fails.
-func (d *Daemon) resolveParams(ctx context.Context, sessionID string, params []Param) ([]ports.Param, error) {
+func (d *Daemon) resolveParams(ctx context.Context, sessionID, connID string, params []Param) ([]ports.Param, error) {
 	out := make([]ports.Param, 0, len(params))
 	for _, p := range params {
 		if p.Token == "" {
 			out = append(out, ports.Param{Value: p.Value})
 			continue
 		}
-		v, _, err := d.deps.Redactor.Resolve(ctx, sessionID, p.Token)
+		v, _, err := d.deps.Redactor.Resolve(ctx, sessionID, connID, p.Token)
 		if err != nil {
 			// R3.4d: the reverse map is memory only, so an unresolvable token is
 			// not "retry" but "every token you hold is dead, re-run the queries
@@ -64,7 +64,7 @@ func (d *Daemon) Explain(ctx context.Context, s *Session, connID, sql string, pa
 	if _, err := d.usableConnection(ctx, connID); err != nil {
 		return nil, err
 	}
-	bound, err := d.resolveParams(ctx, s.ID(), params)
+	bound, err := d.resolveParams(ctx, s.ID(), connID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	if _, err := d.usableConnection(ctx, connID); err != nil {
 		return nil, nil, err
 	}
-	bound, err := d.resolveParams(ctx, info.ID, params)
+	bound, err := d.resolveParams(ctx, info.ID, connID, params)
 	if err != nil {
 		return nil, nil, err
 	}

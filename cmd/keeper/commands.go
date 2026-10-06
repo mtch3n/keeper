@@ -690,7 +690,7 @@ func daemonlessDoctor(sock string, dialErr error, asJSON bool) error {
 
 func runVault(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("vault: expected a subcommand (export, rotate-master)")
+		return fmt.Errorf("vault: expected a subcommand (export, import, rotate-master)")
 	}
 	ctx := context.Background()
 	cli, err := connectDaemon(ctx)
@@ -701,12 +701,55 @@ func runVault(args []string) error {
 
 	switch args[0] {
 	case "export":
-		out, err := cli.ExportVault(ctx)
+		// Losing the keychain item without an export loses every connection.
+		in := newSecretReader()
+		pass, err := in.read("passphrase to seal the export")
 		if err != nil {
 			return err
 		}
-		// Losing the keychain item without an export loses every connection.
-		return printJSON(out)
+		again, err := in.read("the passphrase again")
+		if err != nil {
+			return err
+		}
+		if pass == "" || pass != again {
+			return fmt.Errorf("vault export: the passphrases are empty or differ")
+		}
+		out, err := cli.ExportVault(ctx, pass)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(out.Data)
+		return err
+
+	case "import":
+		fs := flag.NewFlagSet("vault import", flag.ExitOnError)
+		replace := fs.Bool("replace", false, "replace a vault that already holds connections")
+		if err := parseFlags(fs, args[1:]); err != nil {
+			return err
+		}
+		if fs.Arg(0) == "" {
+			return fmt.Errorf("vault import: expected the export file")
+		}
+		data, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		conns, err := cli.ListConnections(ctx)
+		if err != nil {
+			return err
+		}
+		if len(conns) > 0 && !*replace {
+			return fmt.Errorf("vault import: this vault holds %d connection(s); pass --replace to replace them with the export", len(conns))
+		}
+		pass, err := newSecretReader().read("passphrase the export was sealed with")
+		if err != nil {
+			return err
+		}
+		if err := cli.ImportVault(ctx, data, pass); err != nil {
+			return err
+		}
+		fmt.Println("vault imported")
+		return nil
 
 	case "rotate-master":
 		if err := cli.RotateMaster(ctx); err != nil {

@@ -154,6 +154,7 @@ function ApprovalCard({
       </div>
       <Facts>
         <Fact label="intent">{f.intent || '—'}</Fact>
+        <Fact label="tokens">{item.session.token_scope ?? 'session'}</Fact>
         <ProfileFact profile={profile} />
         {f.reasons?.length ? <Fact label="why it waits">{f.reasons.join(', ')}</Fact> : null}
         {f.unreadable || !f.risk ? (

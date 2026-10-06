@@ -1438,3 +1438,17 @@ func Test_WRITE_C10_AnAgentCannotCancelAnotherSessionsRequest(t *testing.T) {
 		t.Errorf("the request left the Inbox: %+v", q)
 	}
 }
+
+func Test_TOKEN_C9_AnUnknownTokenScopeIsRefusedNamingBoth(t *testing.T) {
+	r := newRig(t)
+	a := r.agent("")
+	resp, raw := a.do("POST", "/v1/session/intent", map[string]any{"intent": "look around", "token_scope": "forever"})
+	if resp.StatusCode == http.StatusOK || !strings.Contains(string(raw), "session") || !strings.Contains(string(raw), "persistent") {
+		t.Fatalf("scope forever: %d %s; want a refusal naming session and persistent", resp.StatusCode, raw)
+	}
+	a.mustJSON("POST", "/v1/session/intent", map[string]any{"intent": "look around", "token_scope": "persistent"}, nil)
+	sessions := r.d.Sessions()
+	if len(sessions) != 1 || sessions[0].TokenScope != types.ScopePersistent {
+		t.Errorf("sessions = %+v, want token_scope persistent", sessions)
+	}
+}

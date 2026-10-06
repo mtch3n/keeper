@@ -83,7 +83,8 @@ func registerTools(s *mcp.Server, h *daemonHolder) {
 // --- set_session_intent ---
 
 type SetSessionIntentIn struct {
-	Intent string `json:"intent" jsonschema:"the session's stated task, e.g. 'reconciliation investigation OPS-441'"`
+	Intent     string           `json:"intent" jsonschema:"the session's stated task, e.g. 'reconciliation investigation OPS-441'"`
+	TokenScope types.TokenScope `json:"token_scope,omitzero" jsonschema:"session (default): tokens resolve only in this session; persistent: tokens mean the same value across sessions and machines, where the connection allows it"`
 }
 
 type OkOut struct {
@@ -95,7 +96,7 @@ func (h *daemonHolder) setSessionIntent(ctx context.Context, req *mcp.CallToolRe
 	if err != nil {
 		return nil, OkOut{}, err
 	}
-	if err := cli.SetSessionIntent(ctx, in.Intent); err != nil {
+	if err := cli.SetSessionIntent(ctx, in.Intent, in.TokenScope); err != nil {
 		return nil, OkOut{}, err
 	}
 	return nil, OkOut{OK: true}, nil

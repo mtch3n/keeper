@@ -55,10 +55,11 @@ func (s *Server) routes() {
 	s.handle("POST /v1/daemon/shutdown", accessHuman, s.shutdown)
 
 	// The vault opens itself and never locks, so these two are all that is left
-	// of its surface: take a copy, and change the key it is under. Both are
+	// of its surface: take a copy, restore one, and change the key it is under. All are
 	// human-only — an agent that could export the vault would be carrying off
 	// every connection keeper exists to stand in front of.
 	s.handle("POST /v1/vault/export", accessHuman, s.exportVault)
+	s.handle("POST /v1/vault/import", accessHuman, s.importVault)
 	s.handle("POST /v1/vault/rotate-master", accessHuman, s.rotateMaster)
 
 	s.raw("GET /v1/events", accessHuman, s.events)

@@ -225,6 +225,7 @@ func (d *Daemon) recordDecisions(ctx context.Context, events []Event, decision t
 			Approver:      actor,
 			Decision:      decision,
 			ErrorCode:     decisionCode[decision],
+			TokenScope:    it.Session.TokenScope,
 		}
 		// A record that cannot be written does not undo the decision: the
 		// ticket's state is already settled and the agent already told.

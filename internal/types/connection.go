@@ -155,6 +155,9 @@ type Connection struct {
 	// Writes is whether this profile's sessions may write at all. Every write
 	// still waits for approval; there is no standing approval of a write.
 	Writes Writes `json:"writes"`
+	// PersistentTokens lets an agent that declares persistent scope receive
+	// tokens that outlive its session. Off, it gets session tokens.
+	PersistentTokens bool `json:"persistent_tokens,omitzero"`
 }
 
 // Writes is a profile's write setting. Off is the default: its sessions are

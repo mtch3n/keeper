@@ -531,6 +531,54 @@ export function DenylistEditor({
 }
 
 /**
+ * Whether an agent that declares persistent token scope gets tokens that
+ * outlive its session. Off by default: a pseudonym that lives for months links
+ * records across all of them.
+ */
+export function TokensSetting({
+  detail,
+  onChanged,
+  onError,
+}: {
+  detail: ConnectionDetail
+  onChanged: () => void
+  onError: (e: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="text-heading">Tokens</h2>
+      <Field orientation="horizontal">
+        <Switch
+          id="persistent-tokens"
+          checked={detail.persistent_tokens}
+          disabled={busy}
+          onCheckedChange={async (on) => {
+            setBusy(true)
+            try {
+              await updateConnection(detail.id, { persistent_tokens: on })
+              onChanged()
+            } catch (e) {
+              onError(e instanceof Error ? e.message : String(e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
+        <FieldContent>
+          <FieldLabel htmlFor="persistent-tokens">Allow persistent tokens</FieldLabel>
+          <FieldDescription>
+            Off, every agent gets session tokens, which resolve only in the session that saw them. On, an agent that
+            declares persistent scope gets tokens that mean the same value in every session and on every machine
+            holding this vault.
+          </FieldDescription>
+        </FieldContent>
+      </Field>
+    </section>
+  )
+}
+
+/**
  * Whether this profile's sessions may write, as text with a sentence of
  * consequence under each option, like Mode. Allowing writes never approves
  * one: each still waits in the Inbox.

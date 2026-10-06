@@ -52,7 +52,8 @@ func (s *Server) openSession(ctx context.Context, _ *reqInfo, w http.ResponseWri
 }
 
 type intentRequest struct {
-	Intent string `json:"intent"`
+	Intent     string           `json:"intent"`
+	TokenScope types.TokenScope `json:"token_scope,omitzero"`
 }
 
 type okResponse struct {
@@ -64,7 +65,7 @@ func (s *Server) setIntent(ctx context.Context, rq *reqInfo, w http.ResponseWrit
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	if err := s.d.SetIntent(ctx, rq.session, req.Intent); err != nil {
+	if err := s.d.SetIntent(ctx, rq.session, req.Intent, req.TokenScope); err != nil {
 		return nil, err
 	}
 	return okResponse{OK: true}, nil
