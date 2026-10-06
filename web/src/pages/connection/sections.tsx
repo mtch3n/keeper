@@ -73,37 +73,113 @@ export function Privileges({
       ) : findings.length === 0 ? (
         <p className="text-sm">This role holds nothing keeper would report.</p>
       ) : (
-        <div className="flex flex-col gap-5">
-          {findings.map((f) => (
-            <FindingRow key={f.id} finding={f} />
-          ))}
-        </div>
+        <FindingGroups findings={findings} />
       )}
     </section>
   )
 }
 
-/** One finding: what it is, what it means in a sentence, and the fix. The fix
- * is shown in full rather than behind a disclosure — a statement you have to
- * click to see is one you will not paste. */
-function FindingRow({ finding }: { finding: Finding }) {
+/** What each kind of finding means, said once for its group. */
+const KIND_MEANING: Record<string, string> = {
+  attribute: 'Role attributes beyond reading, such as superuser.',
+  membership: 'Membership in built-in roles that read files or other roles\' data.',
+  'relation-write': 'Tables and views this role can change.',
+  'schema-create': 'Schemas this role can create objects in.',
+  'function-exec': 'Functions that read or write files, or run programs.',
+  'security-definer': 'Functions that run with their owner\'s rights.',
+}
+
+type FindingGroup = { key: string; title: string; meaning?: string; findings: Finding[]; script: string }
+
+/**
+ * Findings grouped by kind, rarest first, because the one unusual grant is the
+ * one to read and forty identical REVOKEs are one decision, not forty. Each
+ * group's statements are shown in full as one block — a statement you have to
+ * click to see is one you will not paste — and Copy all fixes joins every
+ * group into one transaction. keeper never runs any of it: it holds the
+ * credential the report is about, and a tool that can narrow its own grants is
+ * a tool that can widen them.
+ */
+function groupFindings(findings: Finding[]): FindingGroup[] {
+  const byKind = new Map<string, Finding[]>()
+  const loose: Finding[] = []
+  for (const f of findings) {
+    if (!f.narrower) {
+      loose.push(f)
+      continue
+    }
+    byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f])
+  }
+  const groups: FindingGroup[] = [...byKind.entries()]
+    .sort(([a, x], [b, y]) => x.length - y.length || a.localeCompare(b))
+    .map(([kind, fs]) => ({
+      key: kind,
+      title: `${kind} · ${fs.length}`,
+      meaning: KIND_MEANING[kind],
+      findings: fs,
+      script: fs.map((f) => f.narrower).join('\n'),
+    }))
+  if (loose.length > 0) {
+    groups.push({ key: 'loose', title: `No single statement removes these · ${loose.length}`, findings: loose, script: '' })
+  }
+  return groups
+}
+
+function FindingGroups({ findings }: { findings: Finding[] }) {
+  const groups = groupFindings(findings)
+  const all = groups.filter((g) => g.script !== '')
+  const [copied, setCopied] = useState<string | null>(null)
+  const copy = async (key: string, text: string) => {
+    await navigator.clipboard.writeText(text)
+    setCopied(key)
+  }
+
   return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <div className="flex items-baseline gap-3">
-        <span className="text-meta">{finding.id}</span>
-        <span className="text-label text-muted-foreground">{finding.kind}</span>
-      </div>
-      <span className="text-sm">{finding.detail}</span>
-      {finding.narrower ? (
-        <>
-          <span className="text-label text-muted-foreground">suggested fix</span>
-          <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{finding.narrower}</pre>
-        </>
-      ) : (
-        <span className="text-meta text-muted-foreground">
-          No single statement removes this one — it may be a vendor-owned object you cannot revoke on.
-        </span>
-      )}
+    <div className="flex flex-col gap-8">
+      {all.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={() => void copy('all', `BEGIN;\n${all.map((g) => g.script).join('\n')}\nCOMMIT;\n`)}>
+            Copy all fixes
+          </Button>
+          <span className="text-meta text-muted-foreground" aria-live="polite">
+            {copied === 'all' ? 'Copied — run it as an owner of these objects; keeper never runs it.' : ''}
+          </span>
+        </div>
+      ) : null}
+      {groups.map((g) => (
+        <section key={g.key} className="flex min-w-0 flex-col gap-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h3 className="text-label">{g.title}</h3>
+            {g.script ? (
+              <Button variant="outline" size="sm" onClick={() => void copy(g.key, g.script)}>
+                {copied === g.key ? 'Copied' : 'Copy'}
+              </Button>
+            ) : null}
+          </div>
+          {g.meaning ? <p className="text-sm text-muted-foreground">{g.meaning}</p> : null}
+          {g.key === 'loose' ? (
+            <p className="text-sm text-muted-foreground">
+              They may be vendor-owned objects you cannot revoke on. Read each and decide.
+            </p>
+          ) : null}
+          <ul className="flex flex-col gap-1">
+            {g.findings.map((f) => (
+              <li key={f.id} className="text-sm">
+                {f.detail}
+              </li>
+            ))}
+          </ul>
+          {g.script ? (
+            <pre aria-label={`${g.key} statements`} className="overflow-x-auto text-meta whitespace-pre-wrap">
+              {g.findings.map((f) => (
+                <span key={f.id} className="block">
+                  {f.narrower}
+                </span>
+              ))}
+            </pre>
+          ) : null}
+        </section>
+      ))}
     </div>
   )
 }

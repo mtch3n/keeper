@@ -68,3 +68,47 @@ describe('the Connections list', () => {
     expect(screen.queryByText('prod-db')).toBeNull()
   })
 })
+
+function audited(findings: ReturnType<typeof finding>[]) {
+  const d = fakeDaemon()
+  d.on('GET', '/v1/connections', () => [200, [summary('c1', 'one')]])
+  d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one', '2026-10-06T12:00:00Z', findings)])
+  return d
+}
+
+const writeOn = (t: string) =>
+  finding(`relation-write:public.${t}`, `This role can change rows in public.${t}.`, `REVOKE INSERT, UPDATE, DELETE ON public.${t} FROM app_ro;`)
+
+describe('the Privileges tab', () => {
+  test('POL-C5 findings are grouped by kind with one statement per group and one script for all', async () => {
+    const user = userEvent.setup()
+    const schema = { ...finding('schema-create:public', 'This role can create objects in schema public.', 'REVOKE CREATE ON SCHEMA public FROM app_ro;'), kind: 'schema-create' }
+    audited([writeOn('orders'), writeOn('users'), writeOn('items'), schema])
+    renderApp('/connections/c1/privileges')
+    const p = within(await screen.findByRole('region', { name: 'Privileges' }))
+    const groups = p.getAllByRole('heading', { level: 3 }).map((h) => h.textContent ?? '')
+    expect(groups[0]).toMatch(/schema-create/)
+    expect(groups[1]).toMatch(/relation-write.*3/)
+    const writes = p.getByLabelText('relation-write statements')
+    for (const t of ['orders', 'users', 'items']) expect(writes.textContent).toContain(`public.${t}`)
+
+    await user.click(p.getByRole('button', { name: /copy all fixes/i }))
+    const script = await navigator.clipboard.readText()
+    expect(script.trim().startsWith('BEGIN;')).toBe(true)
+    expect(script.trim().endsWith('COMMIT;')).toBe(true)
+    for (const s of ['public.orders', 'public.users', 'public.items', 'CREATE ON SCHEMA public']) expect(script).toContain(s)
+  })
+
+  test('POL-C6 a finding no statement removes is set apart and left out of the script', async () => {
+    const user = userEvent.setup()
+    const vendor = { ...finding('security-definer:pg_catalog.azure_fn', 'A vendor function runs with its owner\'s rights.', ''), kind: 'security-definer', narrower: undefined }
+    audited([writeOn('orders'), vendor])
+    renderApp('/connections/c1/privileges')
+    const p = within(await screen.findByRole('region', { name: 'Privileges' }))
+    expect(p.getByRole('heading', { level: 3, name: /no single statement removes/i })).toBeTruthy()
+    await user.click(p.getByRole('button', { name: /copy all fixes/i }))
+    const script = await navigator.clipboard.readText()
+    expect(script).toContain('public.orders')
+    expect(script).not.toContain('azure_fn')
+  })
+})
