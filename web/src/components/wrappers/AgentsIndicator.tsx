@@ -36,7 +36,7 @@ export function AgentsIndicator() {
     <Sheet>
       <SheetTrigger render={<Button variant="ghost" size="sm" aria-label={label} />}>
         <Lamp state={n === 0 ? 'idle' : 'live'} label={label} />
-        <span className="text-meta">{label}</span>
+        <span className="text-meta max-sm:hidden">{label}</span>
       </SheetTrigger>
       <SheetContent side="right">
         <SheetHeader>

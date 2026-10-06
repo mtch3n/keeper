@@ -15,6 +15,8 @@ import { notificationsOn, setNotificationsOn } from '@/lib/notify'
 import { PermissionsSection } from '@/pages/PermissionsSection'
 import { age } from '@/lib/render'
 import { reachOf } from '@/lib/reach'
+import { positiveInt, useSave } from '@/lib/save'
+import { SettingSection } from '@/components/wrappers/SettingSection'
 
 /**
  * What this daemon is doing (UI.md §2.3, §2.7).
@@ -31,44 +33,55 @@ import { reachOf } from '@/lib/reach'
  */
 function Preferences() {
   const [days, setDays] = useState('')
-  const [saved, setSaved] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [stored, setStored] = useState('')
+  const save = useSave()
   const [notify, setNotify] = useState(notificationsOn())
   const [permission, setPermission] = useState(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission)
 
   useEffect(() => {
     getSettings()
-      .then((s) => setDays(String(s.log_retention_days)))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .then((s) => {
+        setDays(String(s.log_retention_days))
+        setStored(String(s.log_retention_days))
+      })
+      .catch(() => undefined)
   }, [])
 
-  const save = async () => {
-    try {
-      const s = await updateSettings({ log_retention_days: Number(days) })
-      setDays(String(s.log_retention_days))
-      setSaved('Saved')
-      setError(null)
-    } catch (e) {
-      setSaved(null)
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
+  const parsed = positiveInt(days)
+  const invalid = days !== '' && parsed === null
 
   return (
-    <section aria-labelledby="preferences-heading" className="flex flex-col gap-4">
-      <h2 id="preferences-heading" className="text-heading">
-        Preferences
-      </h2>
+    <SettingSection title="Preferences" save={save}>
       <FieldGroup>
-        <Field>
+        <Field data-invalid={invalid || undefined}>
           <FieldLabel htmlFor="retention">Keep the activity log for (days)</FieldLabel>
           <div className="flex items-center gap-3">
-            <Input id="retention" value={days} onChange={(e) => setDays(e.target.value)} className="w-32" />
-            <Button onClick={() => void save()}>Save</Button>
-            {saved ? <span className="text-meta text-muted-foreground">{saved}</span> : null}
+            <Input
+              id="retention"
+              inputMode="numeric"
+              value={days}
+              aria-invalid={invalid}
+              onChange={(e) => setDays(e.target.value)}
+              className="w-32"
+            />
+            <Button
+              disabled={save.busy || parsed === null || days.trim() === stored}
+              onClick={() =>
+                void save.run(async () => {
+                  const s = await updateSettings({ log_retention_days: parsed! })
+                  setDays(String(s.log_retention_days))
+                  setStored(String(s.log_retention_days))
+                })
+              }
+            >
+              Save
+            </Button>
           </div>
-          <FieldDescription>Records older than this are deleted every day. The log is encrypted with the vault's key.</FieldDescription>
-          {error ? <p className="text-sm text-blocked">{error}</p> : null}
+          {invalid ? (
+            <FieldDescription className="text-blocked">Enter a whole number above 0.</FieldDescription>
+          ) : (
+            <FieldDescription>Records older than this are deleted every day. The log is encrypted with the vault's key.</FieldDescription>
+          )}
         </Field>
         <Field orientation="horizontal">
           <Switch
@@ -94,7 +107,7 @@ function Preferences() {
           </FieldContent>
         </Field>
       </FieldGroup>
-    </section>
+    </SettingSection>
   )
 }
 
