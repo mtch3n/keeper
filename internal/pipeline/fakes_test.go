@@ -126,7 +126,7 @@ func (r *fakeRedactor) Apply(ctx context.Context, _ string, cols []types.ColumnM
 	return out, nil
 }
 
-func (r *fakeRedactor) Mint(context.Context, string, string, string, string, bool) (string, error) {
+func (r *fakeRedactor) Mint(context.Context, string, string, string, string) (string, error) {
 	return "⟨e1:000000⟩", nil
 }
 

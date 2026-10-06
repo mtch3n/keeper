@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mtchen/keeper/internal/ports"
+	"github.com/mtchen/keeper/internal/sealed"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -499,8 +500,25 @@ func (d *Daemon) OpenVault(ctx context.Context) (string, error) {
 // derive the master key, so a keychain item lost to a reinstall or a profile
 // reset takes every registered connection with it unless an export exists. That
 // is the trade the automatic open makes, and this is the other half of it.
-func (d *Daemon) ExportVault(ctx context.Context) ([]byte, error) {
-	return d.deps.Vault.Export(ctx)
+func (d *Daemon) ExportVault(ctx context.Context, passphrase string) ([]byte, error) {
+	if passphrase == "" {
+		return nil, errValidation("passphrase", "is required")
+	}
+	plain, err := d.deps.Vault.Export(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return sealed.Seal(plain, passphrase)
+}
+
+// ImportVault replaces this daemon's vault with an export, keys included, so a
+// persistent token minted on another machine resolves here.
+func (d *Daemon) ImportVault(ctx context.Context, data []byte, passphrase string) error {
+	if err := d.deps.Vault.Import(ctx, data, passphrase); err != nil {
+		return err
+	}
+	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "imported"}})
+	return nil
 }
 
 // RotateMaster re-encrypts the vault under a fresh master key, in place.

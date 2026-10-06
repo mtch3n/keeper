@@ -151,8 +151,9 @@ func (v *fakeVault) SetTerms(_ context.Context, id string, t ports.Terms) error 
 func (v *fakeVault) TokenKey(context.Context, string, int) ([]byte, int, error) {
 	return []byte("k"), 1, nil
 }
-func (v *fakeVault) Export(context.Context) ([]byte, error) { return nil, nil }
-func (v *fakeVault) RotateMaster(context.Context) error     { return nil }
+func (v *fakeVault) Export(context.Context) ([]byte, error)       { return nil, nil }
+func (v *fakeVault) Import(context.Context, []byte, string) error { return nil }
+func (v *fakeVault) RotateMaster(context.Context) error           { return nil }
 
 // ---------------------------------------------------------------- auditor
 
@@ -317,7 +318,7 @@ func (r *fakeRedactor) Apply(context.Context, string, []types.ColumnMeta, [][]an
 	return nil, nil
 }
 
-func (r *fakeRedactor) Mint(_ context.Context, sessionID, _, namespace, value string, _ bool) (string, error) {
+func (r *fakeRedactor) Mint(_ context.Context, sessionID, _, namespace, value string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.n++

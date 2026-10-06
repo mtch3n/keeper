@@ -79,7 +79,11 @@ type Vault interface {
 	// the vault and is never sent to a model: SPEC R8.3a.
 	TokenKey(ctx context.Context, id string, version int) (key []byte, current int, err error)
 
+	// Export is the whole vault document in the clear, for the daemon to seal.
 	Export(ctx context.Context) ([]byte, error)
+	// Import replaces this vault with an export sealed under passphrase,
+	// refusing anything it cannot open or that is not a whole vault.
+	Import(ctx context.Context, data []byte, passphrase string) error
 	RotateMaster(ctx context.Context) error
 }
 
@@ -285,7 +289,8 @@ type Redactor interface {
 	Apply(ctx context.Context, sessionID string, cols []types.ColumnMeta, rows [][]any) (map[string]types.Transform, error)
 	// Mint stores a value in the session's reverse map and returns its token,
 	// for the local input flow. SPEC R8.7c.
-	Mint(ctx context.Context, sessionID, connID, namespace, value string, persistent bool) (string, error)
+	// The token persists when ctx carries a Statement saying so.
+	Mint(ctx context.Context, sessionID, connID, namespace, value string) (string, error)
 	// Resolve turns a token back into a bound parameter value for a statement
 	// on connID. SPEC R6.2.
 	Resolve(ctx context.Context, sessionID, connID, token string) (string, types.Policy, error)

@@ -251,7 +251,7 @@ func Test_DET_C22_AValueTokenizedEarlierIsReTokenizedInOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := r.Mint(t.Context(), "s1", "c1", "email", "jane@example.com", false)
+	tok, err := r.Mint(t.Context(), "s1", "c1", "email", "jane@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

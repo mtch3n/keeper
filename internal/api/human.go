@@ -279,9 +279,9 @@ func (s *Server) doctor(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, 
 	return s.d.Doctor(ctx), nil
 }
 
-// exportResponse carries the encrypted export blob. It is not a credential in
-// the clear and it is not safe either: it decrypts under this install's master
-// key, so where it is written is the operator's decision to make.
+// exportResponse carries the export, sealed under the operator's passphrase.
+// Anyone with the file and the passphrase holds every credential and token key
+// in it, so where it is written is the operator's decision to make.
 type exportResponse struct {
 	Data []byte `json:"data"`
 }
@@ -289,12 +289,33 @@ type exportResponse struct {
 // exportVault is `keeper vault export`. Human surface only: an agent that could
 // export the vault could carry off every connection keeper holds, which is the
 // whole point of keeper holding them.
-func (s *Server) exportVault(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
-	blob, err := s.d.ExportVault(ctx)
+type vaultRequest struct {
+	Data       []byte `json:"data,omitzero"`
+	Passphrase string `json:"passphrase"`
+}
+
+func (s *Server) exportVault(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
+	var req vaultRequest
+	if err := s.readJSON(w, r, &req); err != nil {
+		return nil, err
+	}
+	blob, err := s.d.ExportVault(ctx, req.Passphrase)
 	if err != nil {
 		return nil, err
 	}
 	return exportResponse{Data: blob}, nil
+}
+
+// importVault replaces the vault with an export sealed under req.Passphrase.
+func (s *Server) importVault(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
+	var req vaultRequest
+	if err := s.readJSON(w, r, &req); err != nil {
+		return nil, err
+	}
+	if err := s.d.ImportVault(ctx, req.Data, req.Passphrase); err != nil {
+		return nil, err
+	}
+	return okResponse{OK: true}, nil
 }
 
 // rotateMaster re-encrypts the vault under a fresh master key.

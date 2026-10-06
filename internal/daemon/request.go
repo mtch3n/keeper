@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -264,7 +265,7 @@ func (d *Daemon) AnswerInput(ctx context.Context, id, connectionID, namespace, v
 	sessionID, connID, ns := r.r.SessionID, r.r.ConnectionID, r.r.Namespace
 	d.mu.Unlock()
 
-	token, err := d.deps.Redactor.Mint(ctx, sessionID, connID, ns, value, d.persistentTokens(ctx, sessionID, connID))
+	token, err := d.deps.Redactor.Mint(ports.WithStatement(ctx, ports.Statement{ConnectionID: connID, Persistent: d.persistentTokens(ctx, sessionID, connID)}), sessionID, connID, ns, value)
 	if err != nil {
 		return err
 	}
