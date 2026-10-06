@@ -83,9 +83,6 @@ func (d *Daemon) Explain(ctx context.Context, s *Session, connID, sql string, pa
 // queue at its normal tier.
 func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, params []Param, maxRows int) (*types.QueryResult, *types.Ticket, error) {
 	info := s.Info()
-	if info.Intent == "" {
-		return nil, nil, errIntentRequired
-	}
 	if _, err := d.usableConnection(ctx, connID); err != nil {
 		return nil, nil, err
 	}
