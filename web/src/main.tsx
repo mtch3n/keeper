@@ -7,18 +7,15 @@ import './index.css'
 import App from './App.tsx'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { LiveStatusProvider } from '@/components/wrappers/LiveStatus'
-import { SessionScopeProvider } from '@/components/wrappers/SessionScopeProvider'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-        <SessionScopeProvider>
           <LiveStatusProvider>
             <TooltipProvider delay={400}>
               <App />
             </TooltipProvider>
           </LiveStatusProvider>
-        </SessionScopeProvider>
     </BrowserRouter>
   </StrictMode>,
 )

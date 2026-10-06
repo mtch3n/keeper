@@ -4,8 +4,7 @@ import { Toaster } from '@/components/ui/toast'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { buttonVariants } from '@/components/ui/button'
 import { ConnectionsPage } from '@/pages/ConnectionsPage'
-import { ApprovalsPage } from '@/pages/ApprovalsPage'
-import { PermissionsPage } from '@/pages/PermissionsPage'
+import { InboxPage } from '@/pages/InboxPage'
 import { ActivityPage } from '@/pages/ActivityPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { ConnectionPage } from '@/pages/connection/ConnectionPage'
@@ -23,8 +22,7 @@ function App() {
         <Route path="/connections" element={<AppShell section="connections"><ConnectionsPage /></AppShell>} />
         <Route path="/connections/:id" element={<AppShell section="connections"><ConnectionPage /></AppShell>} />
         <Route path="/connections/:id/:tab" element={<AppShell section="connections"><ConnectionPage /></AppShell>} />
-        <Route path="/approvals" element={<AppShell section="approvals"><ApprovalsPage /></AppShell>} />
-        <Route path="/permissions" element={<AppShell section="permissions"><PermissionsPage /></AppShell>} />
+        <Route path="/inbox" element={<AppShell section="inbox"><InboxPage /></AppShell>} />
         <Route path="/activity" element={<AppShell section="activity"><ActivityPage /></AppShell>} />
         <Route path="/settings" element={<AppShell section="settings"><SettingsPage /></AppShell>} />
 

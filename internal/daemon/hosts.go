@@ -95,3 +95,21 @@ func (d *Daemon) RemoveHost(ctx context.Context, id string) error {
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "host-removed", "host_id": id}})
 	return nil
 }
+
+// Settings is GET /v1/settings.
+func (d *Daemon) Settings(ctx context.Context) (types.Settings, error) {
+	return d.deps.Vault.Settings(ctx)
+}
+
+// UpdateSettings is PUT /v1/settings. Retention must keep at least a day: a
+// log that keeps nothing is not a log, and "keep forever" is not offered.
+func (d *Daemon) UpdateSettings(ctx context.Context, s types.Settings) (types.Settings, error) {
+	if s.LogRetentionDays <= 0 {
+		return types.Settings{}, errValidation("log_retention_days", "must be at least 1")
+	}
+	if err := d.deps.Vault.SetSettings(ctx, s); err != nil {
+		return types.Settings{}, err
+	}
+	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "settings"}})
+	return s, nil
+}

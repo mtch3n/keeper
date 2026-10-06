@@ -29,35 +29,9 @@ function daemon() {
   return d
 }
 
-const databases = () => within(screen.getByRole('navigation', { name: 'Databases' }))
 const tabs = async () => within(await screen.findByRole('navigation', { name: 'Connection sections' }))
 
 describe('one page per connection', () => {
-  test('NAV-C1 picking a database in the sidebar opens its Overview', async () => {
-    daemon()
-    renderApp('/connections')
-    await userEvent.click(await databases().findByRole('link', { name: 'ccpg' }))
-    expect(await screen.findByRole('heading', { name: 'ccpg', level: 1 })).toBeTruthy()
-    expect((await tabs()).getByRole('link', { name: 'Overview' }).getAttribute('aria-current')).toBe('page')
-    expect(databases().getByRole('link', { name: 'ccpg' }).getAttribute('aria-current')).toBe('page')
-  })
-
-  test('NAV-C2 picking another database keeps the open tab', async () => {
-    daemon()
-    renderApp('/connections/c1/detection')
-    await (await tabs()).findByRole('link', { name: 'Detection' })
-    await userEvent.click(await databases().findByRole('link', { name: 'two' }))
-    expect(await screen.findByRole('heading', { name: 'two', level: 1 })).toBeTruthy()
-    expect((await tabs()).getByRole('link', { name: 'Detection' }).getAttribute('aria-current')).toBe('page')
-  })
-
-  test('NAV-C3 the top bar holds four sections and no Catalog or Policy', async () => {
-    daemon()
-    renderApp('/connections')
-    const bar = within(await screen.findByRole('navigation', { name: 'Sections' }))
-    expect(bar.getAllByRole('link').map((l) => l.textContent)).toEqual(['Connections', 'Approvals', 'Activity', 'Permissions'])
-  })
-
   test('NAV-C4 /policy and /catalog are not found', async () => {
     daemon()
     renderApp('/policy')
@@ -71,7 +45,7 @@ describe('one page per connection', () => {
     renderApp('/connections/c1/privileges')
     expect((await tabs()).getByRole('link', { name: 'Privileges' }).getAttribute('aria-current')).toBe('page')
     expect(await screen.findByRole('region', { name: 'Privileges' })).toBeTruthy()
-    expect((await databases().findByRole('link', { name: 'one' })).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('combobox', { name: 'Connection' }).textContent).toContain('one')
   })
 
   test('NAV-C6 an unknown connection says so and links back', async () => {

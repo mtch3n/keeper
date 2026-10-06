@@ -64,6 +64,10 @@ type Vault interface {
 	Update(ctx context.Context, c *types.Connection) error
 	Remove(ctx context.Context, id string) error
 
+	// Settings returns the daemon-wide settings; SetSettings replaces them.
+	Settings(ctx context.Context) (types.Settings, error)
+	SetSettings(ctx context.Context, s types.Settings) error
+
 	// Terms returns a connection's list-pass terms; SetTerms replaces them.
 	Terms(ctx context.Context, id string) (Terms, error)
 	SetTerms(ctx context.Context, id string, t Terms) error

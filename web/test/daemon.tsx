@@ -1,11 +1,13 @@
 import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { act } from '@testing-library/react'
 import { vi } from 'vitest'
+
+import { streams } from './setup'
 
 import App from '@/App'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { LiveStatusProvider } from '@/components/wrappers/LiveStatus'
-import { SessionScopeProvider } from '@/components/wrappers/SessionScopeProvider'
 import type { Finding } from '@/lib/types'
 
 /** A route answers with [status, body]; `null` body is an empty 204. */
@@ -35,13 +37,11 @@ export function fakeDaemon(): FakeDaemon {
 export function renderApp(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-        <SessionScopeProvider>
           <LiveStatusProvider>
             <TooltipProvider delay={400}>
               <App />
             </TooltipProvider>
           </LiveStatusProvider>
-        </SessionScopeProvider>
     </MemoryRouter>,
   )
 }
@@ -65,4 +65,24 @@ export function detail(id: string, name: string, auditedAt: string, findings: Fi
 
 export function finding(id: string, detailText: string, narrower: string): Finding {
   return { id, kind: 'relation-write', subject: id, detail: detailText, narrower }
+}
+
+/** Pushes one daemon event to every open event stream, as keeperd would. */
+export function emit(kind: string, data: unknown) {
+  act(() => {
+    for (const s of [...streams]) {
+      for (const fn of s.listeners.get(kind) ?? []) fn(new MessageEvent(kind, { data: JSON.stringify(data) }))
+    }
+  })
+}
+
+export function session(id: string, name: string, workspace: string, intent: string) {
+  return { id, client: { name, version: '1', pid: 1, workspace }, intent, connected_at: '2026-10-06T12:00:00Z' }
+}
+
+export function doctorReport(extra: Record<string, unknown> = {}) {
+  return {
+    version: 'test', key_source: 'test', pending_approvals: 0, open_tickets: 0, open_requests: 0, grants: 0,
+    suspended_grants: 0, log_retention_days: 30, connections: [], sessions: [], ...extra,
+  }
 }
