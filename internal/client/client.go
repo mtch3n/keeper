@@ -64,12 +64,6 @@ type Client struct {
 	ready bool
 }
 
-// SocketPath is the unix socket this client dialed.
-func (c *Client) SocketPath() string { return c.socketPath }
-
-// SessionID is the id keeperd assigned this connection at handshake.
-func (c *Client) SessionID() string { return c.sessionID }
-
 // Dial connects to keeperd's unix socket, performs the POST /v1/session
 // handshake with the given client identity, and returns a ready client. It
 // does not start the daemon; call [StartDaemon] first if the socket may not

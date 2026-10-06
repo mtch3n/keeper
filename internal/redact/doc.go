@@ -7,8 +7,8 @@
 // allow passes; token replaces the value with a keyed HMAC so equality — joins,
 // GROUP BY, COUNT DISTINCT — survives and the value does not; partial keeps
 // exactly one declared component and nothing else; redact keeps the cell and
-// nothing in it; drop removes the column; scan runs the rules pass and redacts
-// the matched spans only, never the whole column (R8.5a).
+// nothing in it; drop removes the column; scan runs the connection's detection
+// stages and redacts the matched spans only, never the whole column (R8.5a).
 //
 // # Tokens (§8.3)
 //

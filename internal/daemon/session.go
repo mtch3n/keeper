@@ -134,8 +134,8 @@ func (d *Daemon) Sessions() []types.Session {
 	return out
 }
 
-// SetIntent records set_session_intent. R10c screens it with the same rule pass a
-// scan column gets, because the intent is user-supplied text that reaches the
+// SetIntent records set_session_intent. R10c screens it with the patterns
+// stage, in process, because the intent is user-supplied text that reaches the
 // approval queue and the audit log.
 func (d *Daemon) SetIntent(ctx context.Context, s *Session, intent string) error {
 	if intent == "" {

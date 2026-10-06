@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -63,8 +64,8 @@ func TestDialHandshake(t *testing.T) {
 	}
 	defer c.Close()
 
-	if c.SessionID() != "sess-1" {
-		t.Errorf("SessionID = %q, want sess-1", c.SessionID())
+	if c.sessionID != "sess-1" {
+		t.Errorf("SessionID = %q, want sess-1", c.sessionID)
 	}
 	if gotSession.Name != "keeper-mcp" || gotSession.PID != 42 {
 		t.Errorf("handshake sent %+v", gotSession)
@@ -253,8 +254,8 @@ func TestErrorDecoding(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !IsCode(err, types.CodeTicketUnknown) {
-		t.Errorf("IsCode(CodeTicketUnknown) = false, err = %v", err)
+	if kerr, ok := errors.AsType[*types.Error](err); !ok || kerr.Code != types.CodeTicketUnknown {
+		t.Errorf("err = %v, want a *types.Error with code %s", err, types.CodeTicketUnknown)
 	}
 }
 

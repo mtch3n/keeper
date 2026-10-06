@@ -26,15 +26,6 @@ type CreateGrantParams struct {
 	RowCeiling int                 `json:"row_ceiling"`
 }
 
-// CreateGrant creates one standing or session allow rule.
-func (c *Client) CreateGrant(ctx context.Context, p CreateGrantParams) (*types.Grant, error) {
-	var out types.Grant
-	if err := c.do(ctx, http.MethodPost, "/v1/grants", p, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // RevokeGrant revokes one grant by id (`keeper allow revoke <id>`).
 func (c *Client) RevokeGrant(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/grants/"+url.PathEscape(id), nil, nil)

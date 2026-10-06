@@ -14,8 +14,8 @@ import (
 // a nil dependency narrows what Store can do (Init without a Sampler skips
 // row sampling, for instance) rather than causing a panic. internal/pgdb is
 // expected to satisfy Introspector, ColumnSampler, PrivilegeChecker and
-// Fingerprinter; internal/rules is expected to satisfy NameHeuristic and
-// RuleMatcher. This package imports neither.
+// Fingerprinter, and internal/detect supplies Detectors. This package imports
+// neither.
 type Dependencies struct {
 	Introspector Introspector
 	Sampler      ColumnSampler

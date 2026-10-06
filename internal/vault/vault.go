@@ -52,18 +52,6 @@ func New(dir string) *Vault {
 	return &Vault{dir: dir}
 }
 
-// DefaultDir returns ~/.config/keeper, honouring XDG_CONFIG_HOME.
-func DefaultDir() (string, error) {
-	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return filepath.Join(v, "keeper"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("vault: resolve home directory: %w", err)
-	}
-	return filepath.Join(home, ".config", "keeper"), nil
-}
-
 func (v *Vault) vaultPath() string { return filepath.Join(v.dir, vaultFileName) }
 
 // Open resolves the master key through the source chain and decrypts vault.age,

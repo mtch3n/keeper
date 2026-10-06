@@ -23,11 +23,9 @@ import type {
   ActivityDetail,
   AuditRecord,
   AuditReport,
-  ClientInfo,
   ColumnPolicy,
   Connection,
   ConnectionSummary,
-  ExplainResult,
   Grant,
   Host,
   HostView,
@@ -37,21 +35,17 @@ import type {
   KeeperEvent,
   KeeperEventKind,
   Limits,
-  LocalRequest,
   Mode,
   Stage,
   Session,
   PathRef,
-  QueryResult,
   RelationRef,
   RequestKind,
-  Ticket,
-  TicketState,
 } from '@/lib/types'
 
 // ── transport ────────────────────────────────────────────────────────────
 
-export class KeeperApiError extends Error {
+class KeeperApiError extends Error {
   readonly error: KeeperError
   constructor(error: KeeperError) {
     super(error.summary)
@@ -122,16 +116,7 @@ const put = <T>(path: string, body?: unknown) => request<T>('PUT', path, body ??
 const patch = <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {})
 const del = <T>(path: string) => request<T>('DELETE', path)
 
-// ── agent surface (documented socket-only in CONTRACT.md §3; kept here for
-//    completeness and for tooling that runs inside keeperd's own UI) ────────
-
-export function createSession(client: ClientInfo) {
-  return post<{ session_id: string }>('/v1/session', { client })
-}
-
-export function setSessionIntent(intent: string) {
-  return post<{ ok: boolean }>('/v1/session/intent', { intent })
-}
+// ── description, read on either surface ─────────────────────────────────
 
 export function listConnections() {
   return get<ConnectionSummary[]>('/v1/connections')
@@ -164,12 +149,12 @@ export interface ConnectionDetail {
 /** The G0 half of describe_connection: what the last privilege audit found,
  * and when. Nothing in it gates the connection (SPEC R4.1) — the Audit page
  * is where these are meant to be read. */
-export interface AuditedPrivileges {
+interface AuditedPrivileges {
   audited_at: string
   findings?: Finding[]
 }
 
-export interface CatalogStatus {
+interface CatalogStatus {
   path: string
   fresh: boolean
   freshness_known: boolean
@@ -183,54 +168,6 @@ export function getConnection(id: string) {
 
 /** Inferred shape: CONTRACT.md §3 says "tables with columns and policies,
  * hide_name columns omitted and counted" without a linked Go type. */
-export interface SchemaColumn {
-  name: string
-  type: string
-  policy?: ColumnPolicy
-}
-export interface SchemaTable {
-  schema: string
-  table: string
-  columns: SchemaColumn[]
-  hidden_column_count: number
-}
-
-export function getConnectionSchema(id: string, params?: { schema?: string; table?: string }) {
-  return get<SchemaTable[]>(`/v1/connections/${id}/schema${query(params)}`)
-}
-
-export type QueryParam = { value: unknown } | { token: string }
-
-export function explainConnection(id: string, body: { sql: string; params?: QueryParam[] }) {
-  return post<ExplainResult>(`/v1/connections/${id}/explain`, body)
-}
-
-export function queryConnection(id: string, body: { sql: string; params?: QueryParam[]; max_rows?: number }) {
-  return post<QueryResult | Ticket>(`/v1/connections/${id}/query`, body)
-}
-
-export function getTicket(id: string, waitMs?: number) {
-  return get<{ state: TicketState; result?: QueryResult; error?: KeeperError }>(
-    `/v1/tickets/${id}${query({ wait_ms: waitMs })}`,
-  )
-}
-
-export function createLocalRequest(body: {
-  kind: RequestKind
-  connection_id: string
-  namespace?: string
-  purpose?: string
-  path?: PathRef
-}) {
-  return post<LocalRequest>('/v1/requests', body)
-}
-
-/**
- * One path, two halves. An agent polling over the socket gets its own request's
- * state and, for a ready input request, its token. The page over loopback gets
- * what it must render — kind, connection, the requesting session, the purpose,
- * the path and §9.2's facts — and never a value or a token.
- */
 export interface LocalRequestView {
   request_id: string
   kind: RequestKind
@@ -364,23 +301,10 @@ export function listGrants() {
   return get<Grant[]>('/v1/grants')
 }
 
-export function createGrant(body: { path: PathRef; lifetime: GrantLifetime; row_ceiling: number }) {
-  return post<Grant>('/v1/grants', body)
-}
-
 export function revokeGrant(id: string) {
   return del<void>(`/v1/grants/${id}`)
 }
 
-/** Inferred shape: CONTRACT.md §3 says "the merged catalog and overlay, with
- * unclassified counts" without a linked Go type. */
-export interface CatalogTable {
-  schema: string
-  table: string
-  columns: Record<string, ColumnPolicy>
-  unclassified_count: number
-}
-/** Mirrors daemon.CatalogView: the merged committed file and daemon overlay. */
 export interface CatalogResponse {
   connection_id: string
   entries: Record<string, ColumnPolicy>
@@ -445,7 +369,7 @@ export interface DoctorReport {
   judge: { configured: boolean; available: boolean; identity?: string }
 }
 
-export interface ConnectionHealth {
+interface ConnectionHealth {
   id: string
   name: string
   /** How many the last privilege audit reported. A pointer at `Audit`, not a

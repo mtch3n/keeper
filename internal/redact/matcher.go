@@ -31,8 +31,9 @@ type MatcherOptions struct {
 //
 // It exists because the alternative is quadratic: SPEC R8.4c scans every
 // text-like cell leaving keeper for every resolved value in the session's
-// reverse map, and R8.5d runs a person-name dictionary over every row of every
-// scan column. Both are "many needles, one haystack, once per cell", which is
+// reverse map, and the list stage runs the operator's deny terms over every
+// row of every scan column. Both are "many needles, one haystack, once per
+// cell", which is
 // exactly the shape Aho-Corasick is for — one linear pass over the cell, no
 // matter how many needles.
 //

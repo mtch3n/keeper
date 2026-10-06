@@ -32,24 +32,14 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| Alert | `@/components/ui/alert` | Persistent inline failure state that must stay on the page |
-| AlertDialog | `@/components/ui/alert-dialog` | Confirming a destructive action needing no typed input, e.g. revoking a grant |
-| Badge | `@/components/ui/badge` | Status chips that are not one of the four `Lamp` states |
-| Breadcrumb | `@/components/ui/breadcrumb` | Where a full page sits, e.g. Catalog → a table's columns |
 | Button | `@/components/ui/button` | Primary interactive element |
-| Card | `@/components/ui/card` | A surface and its padding (`Card`, `CardContent`) — never for row data (UI.md §3.3). The registry's `CardHeader`, `CardTitle`, `CardDescription`, `CardAction` and `CardFooter` were deleted: no screen used one, `CardTitle`'s `text-base` is off the type scale, and `CardFooter` drew `border-t bg-muted/50` — a tinted panel inside a panel, the exact figure the palette was rewritten to remove. A heading is `text-heading`, a footer is a flex row of buttons; neither needed a slot, and the slots made the card's own box carry `has-data-[slot=card-footer]:pb-0` to undo padding on their behalf |
 | Checkbox | `@/components/ui/checkbox` | A single independent boolean in a form. Never a collapsed "I understand" confirmation standing in for several separate facts |
 | Collapsible | `@/components/ui/collapsible` | An open/closed panel, e.g. one approval's expanded facts |
-| Combobox | `@/components/ui/combobox` | Choosing one item from many by typing |
 | Dialog | `@/components/ui/dialog` | Modal flows; owns focus trap, Escape, scroll lock and `aria-modal` |
-| DropdownMenu | `@/components/ui/dropdown-menu` | The connection switcher; a row's secondary actions |
 | Empty | `@/components/ui/empty` | Empty states and every placeholder page in this foundation. Never boxed: a title, a line of description, and an action when one exists |
 | Field | `@/components/ui/field` | Form layout (FieldGroup, Field, FieldLabel) |
 | Input | `@/components/ui/input` | Single-line form control |
-| InputGroup | `@/components/ui/input-group` | An input with a control inside its border, e.g. the Activity filter |
-| Kbd | `@/components/ui/kbd` | A keyboard shortcut shown beside the action it triggers |
 | Label | `@/components/ui/label` | Control label primitive used by `Field` |
-| Popover | `@/components/ui/popover` | Contextual detail that stays open while the pointer moves into it |
 | RadioGroup | `@/components/ui/radio-group` | A choice among a fixed, small set where each option needs a sentence of explanation beside it: the connection mode. A `Select` would hide the consequences behind a click, and the consequences are the point. Square, like everything else: the registry's `rounded-full` indicator is replaced |
 | ScrollArea | `@/components/ui/scroll-area` | A fixed-height region that scrolls on its own, e.g. the Activity log. Thumb is square (registry's `rounded-full` replaced with `rounded-sm`, which resolves to 0 through the radius tokens) |
 | Select | `@/components/ui/select` | A pick from a fixed set |
@@ -57,7 +47,6 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Sheet | `@/components/ui/sheet` | The off-canvas panel `Sidebar` becomes below the mobile breakpoint. Not used directly by application code |
 | Sidebar | `@/components/ui/sidebar` | The left rail holding both scopes, through `AppSidebar`. Added with `--overwrite`, after which the five registry files it would have reset (`button`, `input`, `separator`, `skeleton`, `tooltip`) were restored from git: they carry this project's square-radius and type-scale edits and the registry copies do not. Its `cn` import was repointed at `@/lib/utils` per the note below. `SidebarContent` also lost the registry's `no-scrollbar`: the rail is navigation, and one that cannot fit its own workspaces has to say so. The utility itself is defined in `index.css` for the regions that do want it — the registry referenced it in two files and defined it nowhere, so every one of them drew the document's 11px thumb |
 | Skeleton | `@/components/ui/skeleton` | Loading placeholders |
-| Spinner | `@/components/ui/spinner` | Inline pending indicator |
 | Switch | `@/components/ui/switch` | A true-or-false setting. Square, like everything else: registry's `rounded-full` replaced with `rounded-sm` on both the root and the thumb |
 | Table | `@/components/ui/table` | Rows of like things with columns — `Catalog`, `Permissions`, `Activity`, query results |
 | Textarea | `@/components/ui/textarea` | Multiline text control, e.g. a DSN or SQL preview |
@@ -71,7 +60,6 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Component | Composes | Purpose |
 |-----------|----------|---------|
 | AppShell | `AppSidebar`, `Brand`, `Lamp`, `ThemeToggle`, `Tooltip`, `Button` | The persistent chrome: the connection scope control, the six sections (Connections, Approvals, Permissions, Activity, Catalog, Policy), the theme toggle, and settings as the right-most control. The brand moved to `AppSidebar`'s header, so the two columns open on one baseline with one kind of thing each; the bar keeps it only below `md`, where the rail is a `Sheet` and its header is off-canvas. The daemon's `Lamp` appears only while the stream is degraded (`waiting`, `blocked`); a healthy daemon and an unopened stream both report nothing, because a permanent "Live" lamp is the one reading that never needs acting on. The bar carries no bottom rule. The current section is a foreground rule that grows from centre, never the amber accent (UI.md §1's governing rule) |
-| ConnectionSwitcher | `DropdownMenu`, `Button` | The connection scope control. Lists every registered connection via `listConnections()` (UI.md §2.5) |
 | ConnectionScopeProvider | React context (`@/lib/connection-scope`) | Remembers the working connection per browser and exposes `useConnectionScope()`, so `Catalog` and `Policy` (both per-connection, UI.md §2.3) read one source of truth without prop-drilling through the router |
 | LiveStatusProvider | React context (`@/lib/live-status`), `subscribeToEvents` | Opens the one `GET /v1/events` subscription for the whole app and carries its state down through context, so `AppShell`'s daemon `Lamp` is reported once rather than every screen opening its own `EventSource` |
 | ThemeToggle | `IconButton` | Flips the `dark` class on `<html>` and persists the choice. `index.html` sets the class before first paint, so there is no flash. Light and dark are one theme, not a second design (UI.md §5) |
@@ -114,13 +102,6 @@ cell-replacement treatment, and no primitive parses a string for embedded solid
 runs. ScannedText owns exactly that parse (`splitRedactedRuns`) and the run's visual
 treatment, shared with `Cell`'s `redacted` and `partial` cases so a redacted span
 looks pixel-identical everywhere it appears (UI.md §3.3).
-
-**ConnectionSwitcher.** `pnpm dlx shadcn@latest search @shadcn -q "combobox"` returns
-`@shadcn/combobox`, a generic picker with no notion of a degraded-connection marker or
-of scoping the rest of the app. Composition of `DropdownMenu` alone cannot fetch and
-render the connection list with keeper's own marker semantics; ConnectionSwitcher owns
-that binding (`listConnections()` plus `useConnectionScope()`), the way trellis's
-`ProjectSwitcher` owns the equivalent scope control.
 
 ## Application Shell
 
@@ -238,5 +219,5 @@ rather than a work state — identical to trellis's own single exception.
 - `cn` is always imported from `@/lib/utils`, never the bare `cn` package — the
   bare package does not know this project's type-scale font-size roles and drops
   them when merging classes.
-- No component sets `z-index` by hand; overlay components (`Dialog`, `Popover`,
-  `DropdownMenu`) manage their own stacking.
+- No component sets `z-index` by hand; overlay components (`Dialog`, `Sheet`,
+  `Select`) manage their own stacking.

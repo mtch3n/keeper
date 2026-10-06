@@ -103,7 +103,7 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 	}
 	if spec.Purpose != "" {
 		// R8.7c: purpose is screened user-visible task text. It never carries a
-		// value, and R10c's rule pass is what makes that true rather than hoped.
+		// value, and R10c's screen is what makes that true rather than hoped.
 		if err := d.deps.Audit.ScreenIntent(ctx, spec.Purpose); err != nil {
 			return nil, errIntentScreened
 		}

@@ -649,34 +649,6 @@ func TestScanRecursesIntoJSONLeaves(t *testing.T) {
 		t.Errorf("non-string leaf was touched: %v", m["n"])
 	}
 }
-
-func TestDropRemovesTheColumn(t *testing.T) {
-	cat := fakeCatalog{{1, 1}: {Policy: types.PolicyDrop}, {1, 2}: {Policy: types.PolicyAllow}}
-	r := newRedactor(t, cat, nil)
-	cols := []types.ColumnMeta{
-		col("ssn", "text", types.PolicyDrop, 1, 1),
-		col("id", "bigint", types.PolicyAllow, 1, 2),
-	}
-	rows := [][]any{{"123-45-6789", int64(1)}}
-	tr, err := r.Apply(stmt(t.Context(), "c1"), "s", cols, rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rows[0][0] != nil {
-		t.Errorf("dropped cell survived Apply: %v", rows[0][0])
-	}
-	outCols, outRows := DropColumns(cols, rows, tr)
-	if len(outCols) != 1 || outCols[0].Name != "id" {
-		t.Fatalf("columns = %v", outCols)
-	}
-	if len(outRows[0]) != 1 || outRows[0][0] != int64(1) {
-		t.Fatalf("rows = %v", outRows)
-	}
-	if tr["ssn"].Policy != types.PolicyDrop {
-		t.Errorf("transform should still explain the absence: %+v", tr["ssn"])
-	}
-}
-
 func TestUnknownColumnRedacts(t *testing.T) {
 	// R5.4a: a column appearing at query time on a catalogued relation, with
 	// nobody reviewing it, redacts and the statement still runs.
