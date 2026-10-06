@@ -380,16 +380,6 @@ func (a *fakeAuditLog) ScreenIntent(_ context.Context, intent string) error {
 	return nil
 }
 
-// ---------------------------------------------------------------- judge
-
-type fakeJudge struct{}
-
-func (fakeJudge) Assess(context.Context, ports.JudgeRequest) (*ports.JudgeVerdict, error) {
-	return &ports.JudgeVerdict{Tier: types.Tier1Record}, nil
-}
-func (fakeJudge) Available(context.Context) bool { return true }
-func (fakeJudge) Identity() string               { return "fake-judge" }
-
 // ---------------------------------------------------------------- detector
 
 type fakeDetector struct{}

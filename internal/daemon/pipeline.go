@@ -25,7 +25,7 @@ import (
 //     (SPEC R6.2, and ports.Param's own comment).
 //
 // types.Session rather than a session id, because the pipeline needs the client
-// and the intent for the judge (R7.8b) and the audit record (§10), and only the
+// and the intent for the audit record (§10), and only the
 // daemon can resolve an id to either.
 type Pipeline interface {
 	// Explain is §6.1's dry run: the statement is planned and classified but

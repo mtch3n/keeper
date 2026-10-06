@@ -398,7 +398,7 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 	}
 	if p.Mode != nil {
 		if !p.Mode.Valid() {
-			return nil, errValidation("mode", "must be strict, assisted or permissive")
+			return nil, errValidation("mode", "must be strict or assisted")
 		}
 		c.Mode = *p.Mode
 	}

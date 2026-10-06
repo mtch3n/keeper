@@ -12,7 +12,7 @@
 
 // ── connection.go ──────────────────────────────────────────────────────────
 
-export type Mode = 'strict' | 'assisted' | 'permissive'
+export type Mode = 'strict' | 'assisted'
 
 type FindingKind =
   | 'attribute'
@@ -150,7 +150,7 @@ export interface ColumnMeta {
 }
 
 export interface Degradation {
-  /** "detector" | "judge" | "catalog" */
+  /** "detector" | "catalog" */
   layer: string
   reason: string
 }

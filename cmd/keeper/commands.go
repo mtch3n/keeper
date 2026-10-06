@@ -604,13 +604,6 @@ func runDoctor(args []string) error {
 	// keeperd opens the vault before it serves and exits if it cannot, so a
 	// daemon that answered this call has an open vault by construction.
 	fmt.Printf("vault         open, key source %s\n", rep.KeySource)
-	if rep.Judge.Configured {
-		state := "unreachable"
-		if rep.Judge.Available {
-			state = "available"
-		}
-		fmt.Printf("judge         %s %s\n", rep.Judge.Identity, state)
-	}
 	if rep.Detector != nil && rep.Detector.Name != "" {
 		// R8.5g: "what was examining my data, and could it talk to anyone" has
 		// to be answerable after the fact, so it is answerable now.

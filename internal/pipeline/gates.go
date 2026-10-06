@@ -12,7 +12,7 @@ import (
 
 // Reason codes are a closed set. They appear in approval facts, in explain
 // output and in the audit log, and nothing outside this list is ever emitted by
-// the pipeline itself; a judge contributes its own, validated by internal/judge.
+// the pipeline itself.
 const (
 	ReasonMasked            = "masked_output"
 	ReasonDropped           = "dropped_column"
@@ -24,7 +24,6 @@ const (
 	ReasonDDL               = "ddl"
 	ReasonOutOfScope        = "out_of_write_scope"
 	ReasonNoGrant           = "no_grant"
-	ReasonJudge             = "judge_assessed"
 	ReasonStrictUncertainty = "strict_mode_uncertainty"
 	ReasonMultiStatement    = "multi_statement"
 	ReasonSyntax            = "unparseable"
@@ -163,8 +162,8 @@ func (p *Pipeline) assignTier(ctx context.Context, st *state) {
 			st.reason(ReasonDropped)
 		case c.basis == types.BasisUnknown:
 			// R7.7d: an unresolved column never raises the tier by itself —
-			// never tier 2, never tier 3. The judge cannot classify it either,
-			// and a human cannot decide it from an approval prompt. The fix is a
+			// never tier 2, never tier 3. A human cannot decide it from an
+			// approval prompt. The fix is a
 			// catalog edit, which is where it is surfaced.
 			st.raise(types.Tier1Record)
 			st.reason(ReasonUnresolved)
@@ -183,7 +182,7 @@ func (p *Pipeline) assignTier(ctx context.Context, st *state) {
 		ceiling = types.DefaultLimits().MaxRowsCeiling
 	}
 	if st.plan.EstimatedRows >= int64(float64(ceiling)*nearCapFraction) {
-		st.raise(types.Tier2Judge)
+		st.raise(types.Tier2Uncertain)
 		st.reason(ReasonNearRowCap)
 	}
 
@@ -192,11 +191,7 @@ func (p *Pipeline) assignTier(ctx context.Context, st *state) {
 	if fresh, err := st.cat.Fresh(ctx, st.plan.Relations); err != nil || !fresh {
 		st.degrade("catalog", "fingerprints no longer match the database")
 		st.reason(ReasonStaleCatalog)
-		if st.conn.Mode == types.ModeStrict {
-			st.raise(types.Tier3Approve)
-		} else {
-			st.raise(types.Tier2Judge)
-		}
+		st.raise(types.Tier2Uncertain)
 	}
 }
 
@@ -235,84 +230,6 @@ func (p *Pipeline) applyGrants(ctx context.Context, req Request, st *state) []*t
 	st.tier = types.Tier1Record
 	st.authorization = "grant:" + grants[0].ID
 	return grants
-}
-
-// consultJudge is §7.8. keeperd calls the judge directly, against a local
-// endpoint, never through the harness (R7.8c).
-func (p *Pipeline) consultJudge(ctx context.Context, req Request, st *state) {
-	fallback := func(why string) {
-		// R7.7b: a configured-but-failing judge never counts as a favourable
-		// verdict. Assisted and permissive continue with deterministic masking —
-		// blocking every uncertain read on an unreachable sidecar is the
-		// approval fatigue §9.3 exists to prevent — while strict-mode
-		// uncertainty is a human decision (§9.4).
-		st.degrade("judge", why)
-		if st.conn.Mode == types.ModeStrict {
-			st.raise(types.Tier3Approve)
-			st.reason(ReasonStrictUncertainty)
-		}
-	}
-
-	if p.judge == nil {
-		fallback("not configured")
-		return
-	}
-	if !p.judge.Available(ctx) {
-		fallback("unreachable")
-		return
-	}
-	verdict, err := p.judge.Assess(ctx, ports.JudgeRequest{
-		SQL:           req.SQL,
-		Intent:        req.Session.Intent,
-		Plan:          st.plan,
-		OutputColumns: publicColumns(st.cols),
-		Mode:          st.conn.Mode,
-	})
-	if err != nil || verdict == nil {
-		fallback("assessment failed")
-		return
-	}
-
-	st.reason(ReasonJudge)
-	for _, rc := range verdict.ReasonCodes {
-		st.reason(rc)
-	}
-
-	// The judge may recommend routing. It cannot refuse: tier 4 belongs to the
-	// denylist, DDL and the write scope, all decided without it.
-	if verdict.Tier > st.tier {
-		st.raise(min(verdict.Tier, types.Tier3Approve))
-	}
-
-	// R7.8a and §9.4: release is honoured only inside an explicit permissive
-	// delegation, and only for unpinned uncertain output. A pinned catalog
-	// policy is never lowered by a model.
-	if !verdict.Release || st.conn.Mode != types.ModePermissive ||
-		!req.Delegation.covers(p.now(), st.plan.RelationNames) {
-		return
-	}
-	st.release = true
-	if p.releaseUnpinned(st) {
-		st.authorization = "delegation:" + req.Delegation.ID
-		st.tier = types.Tier1Record
-	}
-}
-
-// releaseUnpinned lowers the uncertain columns a delegation covers to allow. A
-// pinned catalog policy — anything with BasisCatalog — is never touched: §9.4
-// keeps "may this run", "may this be disclosed" and "may this be written"
-// separate, and a local model cannot grant itself the second.
-func (p *Pipeline) releaseUnpinned(st *state) bool {
-	released := false
-	for i := range st.cols {
-		c := &st.cols[i]
-		if c.basis == types.BasisInherited || c.basis == types.BasisUnknown {
-			c.entry.Policy = types.PolicyAllow
-			c.meta.Policy = types.PolicyAllow
-			released = true
-		}
-	}
-	return released
 }
 
 // applyRedaction is G7. Every value leaving keeper passes through the Redactor;

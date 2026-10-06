@@ -27,7 +27,6 @@ type DoctorReport struct {
 	Connections []ConnectionHealth `json:"connections,omitzero"`
 
 	Detector *ports.DetectorIdentity `json:"detector,omitzero"`
-	Judge    JudgeHealth             `json:"judge"`
 }
 
 // ConnectionHealth is one connection's line in doctor.
@@ -42,15 +41,6 @@ type ConnectionHealth struct {
 	FreshKnown   bool         `json:"catalog_freshness_known"`
 	Mode         types.Mode   `json:"mode"`
 	Limits       types.Limits `json:"limits"`
-}
-
-// JudgeHealth reports the local model. A configured-but-failing judge never
-// counts as a favourable verdict (R7.7b), so its absence is stated rather than
-// inferred from silence.
-type JudgeHealth struct {
-	Configured bool   `json:"configured"`
-	Available  bool   `json:"available"`
-	Identity   string `json:"identity,omitzero"`
 }
 
 // doctorProbeTimeout bounds the catalog half of the report. It is short on
@@ -91,9 +81,6 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 	if d.deps.Detector != nil {
 		id := d.deps.Detector.Identity()
 		rep.Detector = &id
-	}
-	if d.deps.Judge != nil {
-		rep.Judge = JudgeHealth{Configured: true, Available: d.deps.Judge.Available(ctx), Identity: d.deps.Judge.Identity()}
 	}
 
 	cs, err := d.deps.Vault.Connections(ctx)

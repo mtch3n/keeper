@@ -1192,3 +1192,26 @@ func Test_PRIV_C9_TheCLIsAuditReportStillAnswers(t *testing.T) {
 		t.Errorf("reports = %+v, want the registered connection's", reports)
 	}
 }
+
+func Test_JDG_C4_PermissiveModeIsRefused(t *testing.T) {
+	r := newRig(t)
+	before := r.vault.conns["c1"].Mode
+	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"mode": "permissive"})
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("permissive was accepted: %s", raw)
+	}
+	if !strings.Contains(string(raw), "strict") || !strings.Contains(string(raw), "assisted") || strings.Contains(string(raw), "permissive") {
+		t.Errorf("the refusal should name strict and assisted only: %s", raw)
+	}
+	if r.vault.conns["c1"].Mode != before {
+		t.Errorf("mode changed to %s", r.vault.conns["c1"].Mode)
+	}
+}
+
+func Test_JDG_C6_DoctorReportsNoJudge(t *testing.T) {
+	r := newRig(t)
+	_, raw := r.browser().do("GET", "/v1/doctor", nil)
+	if strings.Contains(strings.ToLower(string(raw)), "judge") {
+		t.Errorf("doctor still reports a judge: %s", raw)
+	}
+}

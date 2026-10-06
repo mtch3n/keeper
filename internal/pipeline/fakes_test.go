@@ -258,26 +258,6 @@ func (a *fakeAudit) last(t *testing.T) *types.AuditRecord {
 	return a.records[len(a.records)-1]
 }
 
-// --- judge -----------------------------------------------------------------
-
-type fakeJudge struct {
-	available bool
-	verdict   *ports.JudgeVerdict
-	err       error
-	calls     int
-}
-
-func (j *fakeJudge) Assess(context.Context, ports.JudgeRequest) (*ports.JudgeVerdict, error) {
-	j.calls++
-	if j.err != nil {
-		return nil, j.err
-	}
-	return j.verdict, nil
-}
-
-func (j *fakeJudge) Available(context.Context) bool { return j.available }
-func (j *fakeJudge) Identity() string               { return "fake-judge" }
-
 // --- authority -------------------------------------------------------------
 
 type fakeAuthority struct {
@@ -364,7 +344,6 @@ type harness struct {
 	redactor  *fakeRedactor
 	exec      *fakeExecutor
 	audit     *fakeAudit
-	judge     *fakeJudge
 	authority *fakeAuthority
 }
 
@@ -380,16 +359,11 @@ func newHarness(t *testing.T, mutate ...func(*harness)) *harness {
 	for _, m := range mutate {
 		m(h)
 	}
-	var judge ports.Judge
-	if h.judge != nil {
-		judge = h.judge
-	}
 	p, err := New(Deps{
 		Catalogs:  func(string) (ports.Catalog, error) { return h.catalog, nil },
 		Redactor:  h.redactor,
 		Executor:  h.exec,
 		Audit:     h.audit,
-		Judge:     judge,
 		Authority: h.authority,
 		Now:       func() time.Time { return time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC) },
 	})

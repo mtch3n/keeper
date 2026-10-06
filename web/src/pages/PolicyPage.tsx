@@ -216,27 +216,21 @@ const MODES: { value: Mode; title: string; consequence: string }[] = [
     value: 'strict',
     title: 'Strict',
     consequence:
-      'Known-safe reads run. Anything keeper cannot resolve waits for you, and a local model advises without releasing anything.',
+      'Known-safe reads run. A read near the row ceiling, or through a view whose definition changed, waits for you to approve it.',
   },
   {
     value: 'assisted',
-    title: 'Assisted automatic',
+    title: 'Assisted',
     consequence:
-      'Ordinary reads run and a local model helps with intent and scope. Values keeper cannot resolve are masked rather than released.',
-  },
-  {
-    value: 'permissive',
-    title: 'Permissive automatic',
-    consequence:
-      'Inside a scope you delegate, a local model may release uncertain output. You are accepting that its mistakes disclose data. It still cannot lower a policy you pinned, and it grants no writes.',
+      'Ordinary reads run, and so do those uncertain ones, under the same masking. Values keeper cannot resolve are masked, never released.',
   },
 ]
 
 /**
  * Mode is text with a sentence of consequence under each option, never a
- * coloured pill or a slider. The three differ in what they let a local model
- * release, and a control that rendered that as a position on a scale would be
- * lying about what it does.
+ * coloured pill or a slider. The two differ in who decides an uncertain read —
+ * keeper's masking or a human — and a control that rendered that as a position
+ * on a scale would be lying about what it does.
  */
 function ModeSelector({
   detail,

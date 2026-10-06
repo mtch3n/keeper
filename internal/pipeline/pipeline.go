@@ -41,14 +41,12 @@ type Authority interface {
 	Grant(ctx context.Context, sessionID string, path types.PathRef) (*types.Grant, bool)
 }
 
-// Deps are the pipeline's collaborators. Judge may be nil, which means no judge
-// is configured; every other field is required.
+// Deps are the pipeline's collaborators. Every field but Now is required.
 type Deps struct {
 	Catalogs  ports.CatalogFor
 	Redactor  ports.Redactor
 	Executor  ports.Executor
 	Audit     ports.AuditLog
-	Judge     ports.Judge
 	Authority Authority
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
@@ -60,7 +58,6 @@ type Pipeline struct {
 	redactor  ports.Redactor
 	exec      ports.Executor
 	audit     ports.AuditLog
-	judge     ports.Judge
 	authority Authority
 	now       func() time.Time
 }
@@ -88,7 +85,6 @@ func New(d Deps) (*Pipeline, error) {
 		redactor:  d.Redactor,
 		exec:      d.Executor,
 		audit:     d.Audit,
-		judge:     d.Judge,
 		authority: d.Authority,
 		now:       now,
 	}, nil
@@ -102,37 +98,6 @@ type Approval struct {
 	// PreviewedRows is the count R4.2d's preview reported. It is returned beside
 	// the executed count so a divergence is visible rather than silent.
 	PreviewedRows int64
-}
-
-// Delegation is an explicit permissive-mode scope a human granted (SPEC §9.4).
-// Without one, a judge verdict never releases anything: model absence and model
-// presence are both short of authorization.
-type Delegation struct {
-	ID        string
-	Relations []types.RelationRef
-	ExpiresAt time.Time
-}
-
-func (d *Delegation) covers(now time.Time, rels []types.RelationRef) bool {
-	if d == nil || len(rels) == 0 {
-		return false
-	}
-	if !d.ExpiresAt.IsZero() && now.After(d.ExpiresAt) {
-		return false
-	}
-	for _, r := range rels {
-		found := false
-		for _, s := range d.Relations {
-			if s == r {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 // Request is one statement, with everything the pipeline cannot discover.
@@ -152,8 +117,6 @@ type Request struct {
 	MaxRows int
 	// Approval is set when a human has approved this statement.
 	Approval *Approval
-	// Delegation is an explicit permissive-mode scope.
-	Delegation *Delegation
 }
 
 // Escalation is a statement that needs a human. The daemon turns it into a
@@ -197,12 +160,6 @@ type state struct {
 	authorization string
 	approver      string
 	errCode       types.Code
-
-	// release records that a judge verdict authorized releasing unpinned
-	// uncertain output inside an explicit permissive delegation. It is kept on
-	// the state because G5 is redone against the executed RowDescription, and
-	// the decision has to survive that.
-	release bool
 }
 
 func (s *state) reason(r string) {
@@ -333,8 +290,12 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	p.assignTier(ctx, st)
 	grants := p.applyGrants(ctx, req, st)
 
-	if st.tier == types.Tier2Judge {
-		p.consultJudge(ctx, req, st)
+	// Uncertainty is decided by mode alone. Assisted runs it under
+	// deterministic masking; strict, and any mode keeper does not know, puts it
+	// in front of a human.
+	if st.tier == types.Tier2Uncertain && st.conn.Mode != types.ModeAssisted {
+		st.raise(types.Tier3Approve)
+		st.reason(ReasonStrictUncertainty)
 	}
 
 	if st.tier >= types.Tier3Approve && req.Approval == nil {
@@ -369,9 +330,6 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	// each output came from, so G5 is redone against it and the denylist is
 	// rechecked against the relations that actually produced output.
 	st.cols = p.resolveColumns(st.cat, raw.Columns, plan, req)
-	if st.release {
-		p.releaseUnpinned(st)
-	}
 	if rel, ok := p.denylistedOutput(st.cat, conn, st.cols); ok {
 		st.reason(ReasonDenylisted)
 		return refuse(st, types.Tier4Refuse, keeperError(types.CodeDenylisted,

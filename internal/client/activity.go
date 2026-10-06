@@ -69,22 +69,12 @@ type DoctorReport struct {
 	KeySource        string                  `json:"key_source,omitzero"`
 	Connections      []ConnectionHealth      `json:"connections,omitzero"`
 	Detector         *ports.DetectorIdentity `json:"detector,omitzero"`
-	Judge            JudgeHealth             `json:"judge"`
 	Sessions         []types.Session         `json:"sessions,omitzero"`
 	PendingApprovals int                     `json:"pending_approvals"`
 	OpenTickets      int                     `json:"open_tickets"`
 	OpenRequests     int                     `json:"open_requests"`
 	Grants           int                     `json:"grants"`
 	SuspendedGrants  int                     `json:"suspended_grants"`
-}
-
-// JudgeHealth is whether the local model is configured and reachable. A judge
-// that is configured and down never counts as a favourable verdict (R7.7b), so
-// its state is reported rather than inferred from silence.
-type JudgeHealth struct {
-	Configured bool   `json:"configured"`
-	Available  bool   `json:"available"`
-	Identity   string `json:"identity,omitzero"`
 }
 
 // ConnectionHealth is one connection's line in a doctor report.

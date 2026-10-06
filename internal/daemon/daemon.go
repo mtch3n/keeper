@@ -36,7 +36,6 @@ type Deps struct {
 	Executor     ports.Executor
 	Redactor     ports.Redactor
 	Audit        ports.AuditLog
-	Judge        ports.Judge
 	Pipeline     Pipeline
 	// Detector is optional. It is the pipeline's collaborator, not the daemon's;
 	// the daemon holds it only so doctor can report what examined the data and
