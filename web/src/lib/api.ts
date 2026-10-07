@@ -301,14 +301,30 @@ export interface PendingRequest {
 /** Mirrors types.Settings: daemon-wide choices, set here and never from MCP. */
 export interface Settings {
   log_retention_days: number
+  /** How long a database's connections stay open with nobody using them. */
+  connection_idle_minutes: number
 }
 
 export function getSettings() {
   return get<Settings>('/v1/settings')
 }
 
-export function updateSettings(body: Settings) {
+/** Changes only the settings named; the rest keep their stored value. */
+export function updateSettings(body: Partial<Settings>) {
   return put<Settings>('/v1/settings', body)
+}
+
+/** Who a connection's credential logs in as. round_trip is nanoseconds. */
+export interface PingResult {
+  user: string
+  server_version: string
+  round_trip: number
+}
+
+/** Logs in once with the connection's credential. keeper never does this on
+ * its own; this is how an operator asks whether an account connects. */
+export function testConnection(id: string) {
+  return post<PingResult>(`/v1/connections/${id}/test`)
 }
 
 export function listApprovals() {
@@ -391,24 +407,22 @@ export interface DoctorReport {
   connections?: ConnectionHealth[]
   /** How many days the activity log keeps a record. */
   log_retention_days: number
+  /** How long a database's connections stay open with nobody using them. */
+  connection_idle_minutes: number
   /** A plaintext log an earlier keeper left, never read; absent when there is none. */
   legacy_audit_log?: string
   /** What was examining the data, and whether it could reach the network. */
   detector?: { name: string; version?: string; network_posture: string }
 }
 
+/** One connection as doctor reports it: what the vault holds. doctor never
+ * connects to a database, so there is no reachability here. */
 interface ConnectionHealth {
   id: string
   name: string
-  /** Whether doctor could reach the database; unknown when its probe ran out of time. */
-  state: 'reachable' | 'unreachable' | 'unknown'
-  /** Absent when doctor did not read the catalog: unknown, never zero. */
-  unclassified_columns?: number
-  /** How many the last privilege audit reported. A pointer at `Audit`, not a
-   * state: none of them stop this connection (SPEC R4.1). */
+  /** How many the last privilege audit reported. A pointer at Privileges, not
+   * a state: none of them stop this connection (SPEC R4.1). */
   findings: number
-  catalog_fresh: boolean
-  catalog_freshness_known: boolean
   mode: Mode
   limits: Limits
 }

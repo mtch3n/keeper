@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Fact, Facts } from '@/components/wrappers/Facts'
-import { getCatalog, listHosts, removeConnection, type ConnectionDetail } from '@/lib/api'
+import { getCatalog, listHosts, removeConnection, testConnection, type ConnectionDetail, type PingResult } from '@/lib/api'
 import { auditedAge } from '@/lib/render'
 import type { HostView } from '@/lib/types'
 import { tabPath } from '@/pages/connection/tabs'
@@ -82,6 +82,8 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
         </Fact>
       </Facts>
 
+      <TestConnection id={id} />
+
       <Separator />
 
       <div className="flex">
@@ -92,6 +94,49 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
           onError={onError}
         />
       </div>
+    </div>
+  )
+}
+
+/**
+ * Logs in once with this profile's credential and says who the server says it
+ * is. keeper never checks a connection on its own — it connects only when a
+ * database is needed — so this is how an operator asks whether an account
+ * connects.
+ */
+function TestConnection({ id }: { id: string }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<PingResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    setResult(null)
+    setError(null)
+    try {
+      setResult(await testConnection(id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button variant="outline" disabled={busy} onClick={() => void run()}>
+        {busy ? 'Testing…' : 'Test connection'}
+      </Button>
+      <span aria-live="polite" className="text-sm text-muted-foreground">
+        {result
+          ? `Connected as ${result.user} · PostgreSQL ${result.server_version} · ${Math.max(1, Math.round(result.round_trip / 1e6))} ms`
+          : ''}
+      </span>
+      {error ? (
+        <p role="alert" className="w-full text-sm text-blocked">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -299,9 +299,23 @@ type Redactor interface {
 	DropSession(sessionID string)
 }
 
+// PingResult is Test connection's answer: who the profile logged in as, on
+// which server, and how long the round trip took.
+type PingResult struct {
+	User          string        `json:"user"`
+	ServerVersion string        `json:"server_version"`
+	RoundTrip     time.Duration `json:"round_trip"`
+}
+
 // Executor is internal/pgdb: the only package that sees a pgconn error, and the
 // only one that opens a connection. Everything it returns is already converted.
 type Executor interface {
+	// Ping logs in with the connection's credential and asks who it is. It is
+	// Test connection, and the only thing that connects without a statement.
+	Ping(ctx context.Context, connID string) (*PingResult, error)
+	// CloseIdle closes every database's connections nobody has used for
+	// longer than the idle limit, and reports how many it closed.
+	CloseIdle() int
 	// Describe runs Parse and Describe and returns the output columns with the
 	// server's own identity for each. No rows are read. SPEC §7.5.
 	Describe(ctx context.Context, connID, sql string, params []Param) ([]types.ColumnMeta, error)

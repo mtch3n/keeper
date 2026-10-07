@@ -6,6 +6,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/mtchen/keeper/internal/pgdb"
 )
@@ -92,5 +93,34 @@ func TestThePlanNamesTheColumnsAStatementFiltersOn(t *testing.T) {
 	want := []string{"orders.status", "orders.user_email", "users.email", "users.ssn"}
 	if !slices.Equal(got, want) {
 		t.Errorf("filter columns = %v, want %v", got, want)
+	}
+}
+
+// TestLAZY_C7 is in the integration suite because it needs a server: a pool
+// closed for being idle must reconnect on the next statement, or closing idle
+// connections would break the first query after every quiet spell.
+func Test_LAZY_C7_AStatementAfterAnIdleCloseReconnects(t *testing.T) {
+	f := New(t)
+	now := time.Now()
+	exec, err := pgdb.New(pgdb.Config{
+		DSN:  func(context.Context, string) (string, error) { return f.ReadDSN, nil },
+		Idle: func() time.Duration { return time.Minute },
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("pgdb.New: %v", err)
+	}
+	t.Cleanup(exec.Shutdown)
+
+	if _, err := exec.Run(t.Context(), "c", "SELECT 1", nil, 1); err != nil {
+		t.Fatalf("first statement: %v", err)
+	}
+	now = now.Add(2 * time.Minute)
+	if n := exec.CloseIdle(); n == 0 {
+		t.Fatal("the idle pool was not closed")
+	}
+	res, err := exec.Run(t.Context(), "c", "SELECT 2", nil, 1)
+	if err != nil || len(res.Rows) != 1 {
+		t.Fatalf("statement after the idle close: %v %v", res, err)
 	}
 }

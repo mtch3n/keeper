@@ -174,7 +174,10 @@ const (
 type Settings struct {
 	// LogRetentionDays is how long the activity log keeps a record.
 	LogRetentionDays int `json:"log_retention_days"`
+	// ConnectionIdleMinutes is how long a database's connections stay open
+	// with nobody using them; the next use reconnects.
+	ConnectionIdleMinutes int `json:"connection_idle_minutes"`
 }
 
 // DefaultSettings are a fresh vault's settings.
-func DefaultSettings() Settings { return Settings{LogRetentionDays: 30} }
+func DefaultSettings() Settings { return Settings{LogRetentionDays: 30, ConnectionIdleMinutes: 5} }

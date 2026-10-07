@@ -254,3 +254,20 @@ func (c *Client) GetSchema(ctx context.Context, connID, schema, tablePattern str
 func (c *Client) RemoveConnection(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/connections/"+url.PathEscape(id), nil, nil)
 }
+
+// TestConnection logs in with a connection's credential and reports who the
+// server says it is (POST /v1/connections/{id}/test).
+func (c *Client) TestConnection(ctx context.Context, id string) (*PingResult, error) {
+	var out PingResult
+	if err := c.do(ctx, http.MethodPost, "/v1/connections/"+url.PathEscape(id)+"/test", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PingResult mirrors ports.PingResult. RoundTrip is nanoseconds on the wire.
+type PingResult struct {
+	User          string `json:"user"`
+	ServerVersion string `json:"server_version"`
+	RoundTrip     int64  `json:"round_trip"`
+}
