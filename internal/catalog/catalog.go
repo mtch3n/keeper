@@ -169,7 +169,13 @@ func (c *Catalog) RelationPolicies(tableOID uint32) []ports.FamilyPolicy {
 	out := make([]ports.FamilyPolicy, 0, len(cols))
 	for _, col := range cols {
 		p, ok := c.merged[col.Column]
-		if !ok || p.Policy == types.PolicyAllow {
+		if !ok {
+			// R5.4a: a column with no entry is redacted when it is output, so a
+			// value computed from it is too. Leaving it out made upper(email)
+			// cleartext while SELECT email was redacted.
+			p = types.ColumnPolicy{Policy: types.PolicyRedact}
+		}
+		if p.Policy == types.PolicyAllow {
 			continue
 		}
 		out = append(out, ports.FamilyPolicy{

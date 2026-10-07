@@ -158,3 +158,21 @@ func TestFreshOfAnUnresolvedRelationIsUncertain(t *testing.T) {
 		t.Errorf("Fresh() of a relation the cache never resolved must report false")
 	}
 }
+
+func Test_EVAL_C1_AnUnclassifiedColumnIsInheritedAsRedact(t *testing.T) {
+	c := resolvedTestCatalog(t, nil, nil, map[columnKey]types.ColumnPolicy{
+		{Schema: "public", Table: "users", Column: "id"}: {Policy: types.PolicyAllow},
+	})
+	byColumn := map[string]ports.FamilyPolicy{}
+	for _, fp := range c.RelationPolicies(100) {
+		byColumn[fp.Column] = fp
+	}
+	for _, col := range []string{"email", "ssn"} {
+		if fp, ok := byColumn[col]; !ok || fp.Policy.Policy != types.PolicyRedact {
+			t.Errorf("%s has no catalog entry: got %+v (ok=%v), want redact, as it is when output directly", col, fp, ok)
+		}
+	}
+	if _, ok := byColumn["id"]; ok {
+		t.Errorf("an allow column must not appear")
+	}
+}

@@ -249,3 +249,56 @@ func Test_DET_C21_AFailingPassLeavesSampledColumnsUnproposed(t *testing.T) {
 		t.Errorf("degradations = %v, want the detector named", proposal.Degradations)
 	}
 }
+
+func personalRelations() []ports.Relation {
+	return []ports.Relation{
+		{Ref: types.RelationRef{Schema: "public", Relation: "people"}, OID: 300, Kind: 'r', Columns: []ports.Column{
+			{Name: "dob", AttNum: 1, TypeOID: 1082},        // date
+			{Name: "salary", AttNum: 2, TypeOID: 1700},     // numeric
+			{Name: "full_name", AttNum: 3, TypeOID: 25},    // text
+			{Name: "home_address", AttNum: 4, TypeOID: 25}, // text
+			{Name: "iban", AttNum: 5, TypeOID: 25},         // text
+		}},
+		{Ref: types.RelationRef{Schema: "public", Relation: "products"}, OID: 301, Kind: 'r', Columns: []ports.Column{
+			{Name: "name", AttNum: 1, TypeOID: 25},
+		}},
+	}
+}
+
+func Test_EVAL_C3_ColumnsNamedForPersonalDataAreProposedMasked(t *testing.T) {
+	deps := testInitDeps()
+	deps.Introspector = &fakeIntrospector{relations: personalRelations()}
+	s, _ := openTestStore(t, deps, nil)
+	proposal, err := s.Init(t.Context(), "conn1", 0)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	want := map[string]types.ColumnPolicy{
+		"public.people.dob":          {Policy: types.PolicyRedact},
+		"public.people.salary":       {Policy: types.PolicyRedact},
+		"public.people.full_name":    {Policy: types.PolicyToken, Namespace: "person_name"},
+		"public.people.home_address": {Policy: types.PolicyRedact},
+		"public.people.iban":         {Policy: types.PolicyToken, Namespace: "iban"},
+	}
+	for col, p := range want {
+		if got, ok := proposal.NeedsReview[col]; !ok || got.Policy != p.Policy || got.Namespace != p.Namespace {
+			t.Errorf("%s: needs review %+v (ok=%v), want %+v", col, got, ok, p)
+		}
+		if _, ok := proposal.SafeToBulkAccept[col]; ok {
+			t.Errorf("%s is proposed safe to accept in bulk", col)
+		}
+	}
+}
+
+func Test_EVAL_C4_AProductNameIsNotAPersonName(t *testing.T) {
+	deps := testInitDeps()
+	deps.Introspector = &fakeIntrospector{relations: personalRelations()}
+	s, _ := openTestStore(t, deps, nil)
+	proposal, err := s.Init(t.Context(), "conn1", 0)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got := proposal.NeedsReview["public.products.name"]; got.Namespace == "person_name" {
+		t.Errorf("products.name proposed as a person name: %+v", got)
+	}
+}
