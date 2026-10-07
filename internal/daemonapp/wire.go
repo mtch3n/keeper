@@ -349,6 +349,14 @@ func (l *lateAuthority) Connection(ctx context.Context, connID string) (*types.C
 	return c, nil
 }
 
+// SuspendGrants is R9.3b, asked for by a statement that found its connection's
+// catalog stale.
+func (l *lateAuthority) SuspendGrants(connID, reason string) {
+	if d := l.d.Load(); d != nil {
+		d.SuspendGrantsForConnection(connID, reason)
+	}
+}
+
 func (l *lateAuthority) Grant(ctx context.Context, sessionID string, path types.PathRef) (*types.Grant, bool) {
 	d := l.d.Load()
 	if d == nil {

@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mtchen/keeper/internal/daemon"
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
@@ -1502,5 +1504,23 @@ func Test_LAZY_C10_ASettingsUpdateChangesOnlyWhatItNames(t *testing.T) {
 	cli.mustJSON("GET", "/v1/settings", nil, &s)
 	if s.LogRetentionDays != 14 || s.ConnectionIdleMinutes != 12 {
 		t.Errorf("settings = %+v, want 14 days and 12 minutes", s)
+	}
+}
+
+func Test_LAZY_C12_TheDaemonsTimerContactsNoDatabase(t *testing.T) {
+	r := newRigWith(t, daemon.Config{Version: "test", Sweep: 5 * time.Millisecond, IdleExit: -1})
+	opened := 0
+	var mu sync.Mutex
+	r.open["c1"] = func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		opened++
+		return nil
+	}
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if opened != 0 || r.exec.contacts() != 0 {
+		t.Errorf("the timer opened %d catalog(s) and made %d database call(s)", opened, r.exec.contacts())
 	}
 }
