@@ -15,12 +15,17 @@ import (
 
 // Run serves MCP over stdio until the transport closes.
 func Run() error {
+	return NewServer().Run(context.Background(), &mcp.StdioTransport{})
+}
+
+// NewServer is keeper's MCP server with its whole tool surface, connecting to
+// the daemon on first use. Run serves it over stdio; a test serves it over an
+// in-memory transport, so what it measures is the server the plugin runs.
+func NewServer() *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "keeper-mcp",
 		Version: client.Version,
 	}, nil)
-
 	registerTools(server, &daemonHolder{})
-
-	return server.Run(context.Background(), &mcp.StdioTransport{})
+	return server
 }
