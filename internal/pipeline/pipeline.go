@@ -41,6 +41,11 @@ type Authority interface {
 	// relation in the plan, and one miss sends the statement back to its normal
 	// tier. A suspended or expired grant must report false.
 	Grant(ctx context.Context, sessionID string, path types.PathRef) (*types.Grant, bool)
+
+	// SuspendGrants suspends every allow rule on a connection, for a statement
+	// that found the connection's catalog no longer matches its database
+	// (R9.3b). The rules stay listed for a person to re-authorize.
+	SuspendGrants(connID, reason string)
 }
 
 // Deps are the pipeline's collaborators. Every field but Now is required.

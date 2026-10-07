@@ -536,17 +536,6 @@ func (d *Daemon) RotateMaster(ctx context.Context) error {
 	return d.deps.Vault.RotateMaster(ctx)
 }
 
-// freshness asks one connection's catalog whether its fingerprints still match
-// the database. R5.6b: a false answer is uncertainty rather than permission, and
-// so is an error, which is why callers record a degradation for both.
-func (d *Daemon) freshness(ctx context.Context, connID string) (bool, error) {
-	cat, err := d.deps.Catalogs(connID)
-	if err != nil {
-		return false, err
-	}
-	return cat.Fresh(ctx, nil)
-}
-
 // Remove deletes a connection and its credentials.
 //
 // Everything scoped to it goes too: its pools are closed, its grants are
