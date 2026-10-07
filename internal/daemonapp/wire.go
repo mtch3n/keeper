@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sync/singleflight"
 
@@ -60,6 +61,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	exec, err := pgdb.New(pgdb.Config{
 		DSN:    v.DSN,
 		Limits: limitsFrom(ctx, v),
+		Idle:   idleFrom(ctx, v),
 	})
 	if err != nil {
 		alog.Close()
@@ -129,6 +131,18 @@ func limitsFrom(ctx context.Context, v *vault.Vault) func(string) types.Limits {
 			return types.DefaultLimits()
 		}
 		return c.Limits
+	}
+}
+
+// idleFrom reads Settings' idle limit on every check, so a change applies at the
+// next sweep without a restart.
+func idleFrom(ctx context.Context, v *vault.Vault) func() time.Duration {
+	return func() time.Duration {
+		s, err := v.Settings(ctx)
+		if err != nil {
+			return time.Duration(types.DefaultSettings().ConnectionIdleMinutes) * time.Minute
+		}
+		return time.Duration(s.ConnectionIdleMinutes) * time.Minute
 	}
 }
 

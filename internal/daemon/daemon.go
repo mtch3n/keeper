@@ -241,6 +241,7 @@ func (d *Daemon) sweep() {
 			}
 			d.expire()
 			d.flushGrants()
+			d.deps.Executor.CloseIdle()
 			d.exitIfIdle()
 		}
 	}

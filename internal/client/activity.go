@@ -60,8 +60,8 @@ func (c *Client) GetActivityRecord(ctx context.Context, auditID string) (*types.
 }
 
 // DoctorReport is `keeper doctor`'s answer when it can reach the daemon:
-// daemon state, key source, connection health, catalog freshness and
-// detector identity (CONTRACT §3: GET /v1/doctor).
+// daemon state, key source, the connections the vault holds and detector
+// identity (CONTRACT §3: GET /v1/doctor).
 type DoctorReport struct {
 	DaemonRunning    bool                    `json:"daemon_running"`
 	Version          string                  `json:"version,omitzero"`
@@ -76,21 +76,18 @@ type DoctorReport struct {
 	Grants           int                     `json:"grants"`
 	SuspendedGrants  int                     `json:"suspended_grants"`
 	LogRetentionDays int                     `json:"log_retention_days"`
-	LegacyAuditLog   string                  `json:"legacy_audit_log,omitzero"`
+	// ConnectionIdleMinutes is how long a database's connections stay open
+	// with nobody using them.
+	ConnectionIdleMinutes int    `json:"connection_idle_minutes"`
+	LegacyAuditLog        string `json:"legacy_audit_log,omitzero"`
 }
 
-// ConnectionHealth is one connection's line in a doctor report.
+// ConnectionHealth is one connection's line in a doctor report: what the vault
+// holds. doctor never connects to a database; `keeper connection test` does.
 type ConnectionHealth struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Findings int    `json:"findings"`
-	// State is reachable, unreachable, or unknown when doctor's probe ran out
-	// of time.
-	State string `json:"state"`
-	// Unclassified is nil when doctor did not read the catalog.
-	Unclassified *int `json:"unclassified_columns,omitzero"`
-	CatalogFresh bool `json:"catalog_fresh"`
-	FreshKnown   bool `json:"catalog_freshness_known"`
 }
 
 // GetDoctor fetches the daemon-connected doctor report. cmd/keeper's

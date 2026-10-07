@@ -266,6 +266,25 @@ type fakeExecutor struct {
 	rels     []ports.Relation
 	closed   []string
 	failIntr bool
+	// calls counts every method that would contact a database.
+	calls   int
+	ping    *ports.PingResult
+	pingErr error
+}
+
+func (e *fakeExecutor) Ping(context.Context, string) (*ports.PingResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls++
+	return e.ping, e.pingErr
+}
+
+func (e *fakeExecutor) CloseIdle() int { return 0 }
+
+func (e *fakeExecutor) contacts() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
 }
 
 func (e *fakeExecutor) Describe(context.Context, string, string, []ports.Param) ([]types.ColumnMeta, error) {
@@ -287,6 +306,7 @@ func (e *fakeExecutor) CommitWrite(context.Context, string, string, []ports.Para
 func (e *fakeExecutor) Introspect(context.Context, string) ([]ports.Relation, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.calls++
 	if e.failIntr {
 		return nil, errors.New("introspection unavailable")
 	}

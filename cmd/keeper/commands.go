@@ -605,6 +605,7 @@ func runDoctor(args []string) error {
 	// daemon that answered this call has an open vault by construction.
 	fmt.Printf("vault         open, key source %s\n", rep.KeySource)
 	fmt.Printf("activity log  encrypted with the vault's key, kept %d day(s)\n", rep.LogRetentionDays)
+	fmt.Printf("databases     connected only when needed; closed after %d idle minute(s)\n", rep.ConnectionIdleMinutes)
 	if rep.LegacyAuditLog != "" {
 		fmt.Printf("              a plaintext log from an earlier keeper is still at %s; it is never read — delete it when you no longer need it\n", rep.LegacyAuditLog)
 	}
@@ -614,24 +615,7 @@ func runDoctor(args []string) error {
 		fmt.Printf("detector      %s %s, network %s\n", rep.Detector.Name, rep.Detector.Version, rep.Detector.NetworkPosture)
 	}
 	for _, c := range rep.Connections {
-		var state string
-		switch c.State {
-		case "reachable":
-			state = "reachable"
-			if c.FreshKnown && !c.CatalogFresh {
-				state += " · catalog is stale"
-			} else if !c.FreshKnown {
-				state += " · catalog freshness unknown"
-			}
-		case "unreachable":
-			state = "UNREACHABLE — keeper could not connect; check the server is running and reachable from here"
-		default:
-			state = "unknown — no answer within doctor's time budget"
-		}
-		fmt.Printf("connection    %-20s %s\n", c.Name, state)
-		if c.Unclassified != nil && *c.Unclassified > 0 {
-			fmt.Printf("              %d unclassified column(s) — `keeper catalog ls %s --unclassified`\n", *c.Unclassified, c.Name)
-		}
+		fmt.Printf("connection    %s\n", c.Name)
 		if c.Findings > 0 {
 			// A pointer, not a verdict: the findings do not stop this
 			// connection, and doctor reporting them as a fault would be

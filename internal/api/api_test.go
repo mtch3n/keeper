@@ -1218,52 +1218,6 @@ func Test_JDG_C6_DoctorReportsNoJudge(t *testing.T) {
 	}
 }
 
-type doctorRow struct {
-	ID           string `json:"id"`
-	State        string `json:"state"`
-	Unclassified *int   `json:"unclassified_columns"`
-}
-
-func doctorRows(t *testing.T, r *rig) map[string]doctorRow {
-	t.Helper()
-	var rep struct {
-		Connections []doctorRow `json:"connections"`
-	}
-	r.browser().mustJSON("GET", "/v1/doctor", nil, &rep)
-	out := map[string]doctorRow{}
-	for _, c := range rep.Connections {
-		out[c.ID] = c
-	}
-	return out
-}
-
-func Test_HLT_C3_DoctorSaysWhichConnectionsItCanReach(t *testing.T) {
-	r := newRig(t)
-	r.cat.unclass = []string{"public.t.a", "public.t.b"}
-	r.vault.conns["c2"] = &types.Connection{ID: "c2", Name: "down", Mode: types.ModeAssisted, Limits: types.DefaultLimits()}
-	r.open["c2"] = func() error {
-		return &types.Error{Code: types.CodeUnreachable, Summary: "keeper could not connect to this database"}
-	}
-	rows := doctorRows(t, r)
-	if up := rows["c1"]; up.State != "reachable" || up.Unclassified == nil || *up.Unclassified != 2 {
-		t.Errorf("reachable row = %+v, want reachable with 2 unclassified", up)
-	}
-	if down := rows["c2"]; down.State != "unreachable" || down.Unclassified != nil {
-		t.Errorf("unreachable row = %+v, want unreachable with no count", down)
-	}
-}
-
-func Test_HLT_C4_AProbeThatOutlastsDoctorIsUnknown(t *testing.T) {
-	r := newRig(t)
-	r.open["c1"] = func() error {
-		time.Sleep(5 * time.Second)
-		return nil
-	}
-	if row := doctorRows(t, r)["c1"]; row.State != "unknown" || row.Unclassified != nil {
-		t.Errorf("slow row = %+v, want unknown with no count", row)
-	}
-}
-
 // decisionRecord is the part of an activity record a decision test reads.
 type decisionRecord struct {
 	At         time.Time      `json:"at"`
@@ -1452,5 +1406,101 @@ func Test_TOKEN_C9_AnUnknownTokenScopeIsRefusedNamingBoth(t *testing.T) {
 	sessions := r.d.Sessions()
 	if len(sessions) != 1 || sessions[0].TokenScope != types.ScopePersistent {
 		t.Errorf("sessions = %+v, want token_scope persistent", sessions)
+	}
+}
+
+func Test_LAZY_C1_ReadingStatusContactsNoDatabase(t *testing.T) {
+	r := newRig(t)
+	opened := 0
+	r.open["c1"] = func() error {
+		opened++
+		return nil
+	}
+	cli := r.socket()
+	for _, path := range []string{"/v1/doctor", "/v1/connections", "/v1/hosts", "/v1/settings"} {
+		cli.mustJSON("GET", path, nil, nil)
+	}
+	if opened != 0 || r.exec.contacts() != 0 {
+		t.Errorf("reading status opened %d catalog(s) and made %d database call(s)", opened, r.exec.contacts())
+	}
+}
+
+func Test_LAZY_C2_DoctorCarriesNoUnclassifiedCount(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.d.Describe(t.Context(), "c1"); err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	before := r.exec.contacts()
+	_, raw := r.socket().do("GET", "/v1/doctor", nil)
+	if strings.Contains(string(raw), "unclassified") || strings.Contains(string(raw), `"state"`) {
+		t.Errorf("doctor reports a count or a state: %s", raw)
+	}
+	if r.exec.contacts() != before {
+		t.Errorf("doctor contacted a database")
+	}
+}
+
+func Test_LAZY_C3_TestConnectionSaysWhoItConnectedAs(t *testing.T) {
+	r := newRig(t)
+	r.exec.ping = &ports.PingResult{User: "app_ro", ServerVersion: "18.0", RoundTrip: 4 * time.Millisecond}
+	var got struct {
+		User          string `json:"user"`
+		ServerVersion string `json:"server_version"`
+		RoundTrip     int64  `json:"round_trip"`
+	}
+	r.socket().mustJSON("POST", "/v1/connections/c1/test", nil, &got)
+	if got.User != "app_ro" || got.ServerVersion != "18.0" || got.RoundTrip != int64(4*time.Millisecond) {
+		t.Errorf("test = %+v", got)
+	}
+}
+
+func Test_LAZY_C4_TestConnectionReportsAnUnreachableServer(t *testing.T) {
+	r := newRig(t)
+	r.exec.pingErr = &types.Error{Code: types.CodeUnreachable, Summary: "keeper could not connect to this database", Action: "check that the server is running and reachable from this machine"}
+	resp, raw := r.socket().do("POST", "/v1/connections/c1/test", nil)
+	if resp.StatusCode == http.StatusOK || !strings.Contains(string(raw), "unreachable") || !strings.Contains(string(raw), "reachable from this machine") {
+		t.Errorf("test of an unreachable server = %d %s", resp.StatusCode, raw)
+	}
+}
+
+func Test_LAZY_C8_TheIdleSettingIsSavedAndReported(t *testing.T) {
+	r := newRig(t)
+	cli := r.socket()
+	cli.mustJSON("PUT", "/v1/settings", map[string]any{"connection_idle_minutes": 10}, nil)
+	var s types.Settings
+	cli.mustJSON("GET", "/v1/settings", nil, &s)
+	var doc struct {
+		Idle int `json:"connection_idle_minutes"`
+	}
+	cli.mustJSON("GET", "/v1/doctor", nil, &doc)
+	if s.ConnectionIdleMinutes != 10 || doc.Idle != 10 {
+		t.Errorf("settings %d, doctor %d; want 10 and 10", s.ConnectionIdleMinutes, doc.Idle)
+	}
+}
+
+func Test_LAZY_C9_AnIdleLimitBelowOneMinuteIsRefused(t *testing.T) {
+	r := newRig(t)
+	cli := r.socket()
+	for _, bad := range []int{0, -3} {
+		if resp, raw := cli.do("PUT", "/v1/settings", map[string]any{"connection_idle_minutes": bad}); resp.StatusCode == http.StatusOK {
+			t.Errorf("%d accepted: %s", bad, raw)
+		}
+	}
+	var s types.Settings
+	cli.mustJSON("GET", "/v1/settings", nil, &s)
+	if s.ConnectionIdleMinutes != 5 {
+		t.Errorf("idle minutes = %d, want the unchanged 5", s.ConnectionIdleMinutes)
+	}
+}
+
+func Test_LAZY_C10_ASettingsUpdateChangesOnlyWhatItNames(t *testing.T) {
+	r := newRig(t)
+	cli := r.socket()
+	cli.mustJSON("PUT", "/v1/settings", map[string]any{"connection_idle_minutes": 12}, nil)
+	cli.mustJSON("PUT", "/v1/settings", map[string]any{"log_retention_days": 14}, nil)
+	var s types.Settings
+	cli.mustJSON("GET", "/v1/settings", nil, &s)
+	if s.LogRetentionDays != 14 || s.ConnectionIdleMinutes != 12 {
+		t.Errorf("settings = %+v, want 14 days and 12 minutes", s)
 	}
 }

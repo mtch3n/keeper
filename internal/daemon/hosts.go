@@ -101,11 +101,34 @@ func (d *Daemon) Settings(ctx context.Context) (types.Settings, error) {
 	return d.deps.Vault.Settings(ctx)
 }
 
-// UpdateSettings is PUT /v1/settings. Retention must keep at least a day: a
-// log that keeps nothing is not a log, and "keep forever" is not offered.
-func (d *Daemon) UpdateSettings(ctx context.Context, s types.Settings) (types.Settings, error) {
-	if s.LogRetentionDays <= 0 {
-		return types.Settings{}, errValidation("log_retention_days", "must be at least 1")
+// SettingsPatch is PUT /v1/settings: each field set is changed, and the rest
+// keep their stored value, so a screen that edits one setting cannot reset
+// another it never sent.
+type SettingsPatch struct {
+	LogRetentionDays      *int
+	ConnectionIdleMinutes *int
+}
+
+// UpdateSettings applies a patch. Retention must keep at least a day: a log that
+// keeps nothing is not a log, and "keep forever" is not offered. Idle minutes
+// must be at least one: closing a connection the moment a statement ends
+// would reconnect for every statement.
+func (d *Daemon) UpdateSettings(ctx context.Context, p SettingsPatch) (types.Settings, error) {
+	s, err := d.deps.Vault.Settings(ctx)
+	if err != nil {
+		return types.Settings{}, err
+	}
+	if p.LogRetentionDays != nil {
+		if *p.LogRetentionDays <= 0 {
+			return types.Settings{}, errValidation("log_retention_days", "must be at least 1")
+		}
+		s.LogRetentionDays = *p.LogRetentionDays
+	}
+	if p.ConnectionIdleMinutes != nil {
+		if *p.ConnectionIdleMinutes <= 0 {
+			return types.Settings{}, errValidation("connection_idle_minutes", "must be at least 1")
+		}
+		s.ConnectionIdleMinutes = *p.ConnectionIdleMinutes
 	}
 	if err := d.deps.Vault.SetSettings(ctx, s); err != nil {
 		return types.Settings{}, err

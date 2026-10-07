@@ -232,6 +232,10 @@ func (e *fakeExecutor) SampleColumn(context.Context, string, types.RelationRef, 
 
 func (e *fakeExecutor) Close(string) {}
 
+func (e *fakeExecutor) Ping(context.Context, string) (*ports.PingResult, error) { return nil, nil }
+
+func (e *fakeExecutor) CloseIdle() int { return 0 }
+
 // --- audit -----------------------------------------------------------------
 
 type fakeAudit struct {
