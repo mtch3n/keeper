@@ -59,8 +59,7 @@ export function PermissionsSection() {
         <Skeleton className="h-24 w-full" />
       ) : grants.length === 0 ? (
         <p className="text-meta text-muted-foreground">
-          No allow rules. Approving an escalation can leave one so keeper stops asking the same question; each covers
-          exactly the path it names.
+          No allow rules. Approving an escalation can add one.
         </p>
       ) : (
       <Table>
@@ -118,8 +117,7 @@ export function PermissionsSection() {
       </Table>
       )}
       <p className="text-meta text-muted-foreground">
-        A rule covers exactly the path it names. A join reaching one relation you granted and one you did not
-        still escalates, and a view is its own path even when its base table is granted.
+        A rule covers only the path it names. Views are separate paths.
       </p>
     </section>
   )

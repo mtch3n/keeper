@@ -127,10 +127,7 @@ export function CatalogTab({ connId }: { connId: string }) {
       {grants ? (
         <section className="flex flex-col gap-2">
           <h2 className="text-heading">Suggested grants</h2>
-          <p className="text-meta text-muted-foreground">
-            Applying these removes every `drop` column from the role's reach, so keeper never sees them. That
-            survives keeper being wrong about everything else.
-          </p>
+          <p className="text-meta text-muted-foreground">Revokes the role's access to every `drop` column.</p>
           <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{grants.join('\n')}</pre>
         </section>
       ) : null}
@@ -279,10 +276,7 @@ function Proposal({
 
       <div>
         <h2 className="text-heading">Proposed: needs review ({review.length})</h2>
-        <p className="text-meta text-muted-foreground">
-          Free text no rule matched. A name or an address here is invisible to the pattern pass, so each is
-          accepted on its own.
-        </p>
+        <p className="text-meta text-muted-foreground">Free text no rule matched. Review each.</p>
         <Table>
           <TableHeader>
             <TableRow>

@@ -151,7 +151,7 @@ export function ActivityPage() {
         <Empty>
           <EmptyHeader>
             <EmptyTitle>No activity</EmptyTitle>
-            <EmptyDescription>Every statement keeper runs is recorded here, with what it applied.</EmptyDescription>
+            <EmptyDescription>Statements keeper runs appear here.</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
@@ -226,10 +226,7 @@ export function ActivityPage() {
         </div>
       ) : null}
 
-      <p className="text-meta text-muted-foreground">
-        Policies applied, not bytes verified: the log records the decision, not proof that redaction ran correctly.
-        Literals are never stored, so the statement shown is the statement as kept.
-      </p>
+      <p className="text-meta text-muted-foreground">Records policies applied, not verified output. Literals are not stored.</p>
     </div>
   )
 }
@@ -285,7 +282,7 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
         {record.error_code ? <Fact label="error">{record.error_code}</Fact> : null}
         {record.collisions ? (
           <Fact label="collisions">
-            {record.collisions} cell(s) redacted because a token was already bound to a different value
+            {record.collisions} cell(s) redacted: token already bound
           </Fact>
         ) : null}
       </Facts>
@@ -321,10 +318,7 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
             <p className="text-meta text-muted-foreground">{resultNote(record.result)}</p>
           </>
         ) : (
-          <p className="text-meta text-muted-foreground">
-            Not held. keeper keeps the most recent results in memory only, never on disk, and none across a
-            restart — by which point every token in them has stopped meaning anything.
-          </p>
+          <p className="text-meta text-muted-foreground">Not kept. Recent results live in memory only.</p>
         )}
       </div>
 
@@ -356,7 +350,7 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
             </TableBody>
           </Table>
         ) : (
-          <p className="text-meta text-muted-foreground">nothing was transformed</p>
+          <p className="text-meta text-muted-foreground">none</p>
         )}
       </div>
 
@@ -370,10 +364,7 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
               </li>
             ))}
           </ul>
-          <p className="text-meta text-muted-foreground">
-            A layer that was configured and did not run narrows coverage. It is recorded so a narrower result is
-            never mistaken for a clean one.
-          </p>
+          <p className="text-meta text-muted-foreground">These layers did not run; coverage was narrower.</p>
         </div>
       ) : null}
 
@@ -412,8 +403,8 @@ function cellValue(v: unknown, column: ColumnMeta, transforms: Record<string, Tr
 }
 
 function resultNote(r: QueryResult): string {
-  const rows = `${r.rows.length} row(s) exactly as the agent received them`
-  return r.truncated ? `${rows}; the row ceiling cut the result` : rows
+  const rows = `${r.rows.length} row(s)`
+  return r.truncated ? `${rows} · truncated at row ceiling` : rows
 }
 
 function summarize(transforms: Record<string, Transform> | undefined): string {

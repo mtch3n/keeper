@@ -318,10 +318,7 @@ export function SettingsPage() {
                 ))}
               </TableBody>
             </Table>
-            <p className="text-meta text-muted-foreground">
-              A session is one connection to the daemon. When it closes, its tickets, its tokens and its
-              session-scoped grants go with it.
-            </p>
+            <p className="text-meta text-muted-foreground">Closing a session discards its tickets, tokens and grants.</p>
           </section>
         </>
       ) : null}

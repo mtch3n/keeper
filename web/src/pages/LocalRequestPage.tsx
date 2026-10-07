@@ -204,8 +204,7 @@ function InputRequest({
         Confirm and continue
       </Button>
       <p className="text-meta text-muted-foreground">
-        The value is not kept in this page's address, in browser storage, or in keeper's log. It did exist on this
-        machine, which is not the same as never having existed.
+        Not kept in the URL, browser storage, or keeper's log.
       </p>
     </section>
   )
@@ -287,9 +286,7 @@ function AuthorizationRequest({
       </div>
 
       <p className="text-meta text-muted-foreground">
-        Granting returns nothing to the agent. No token is minted and the session gains no value it did not have;
-        the waiting statement simply re-evaluates. It covers exactly this path — not the schema, not a view over
-        it, not the same table on another connection.
+        Granting returns nothing to the agent; the waiting statement re-evaluates. Covers this path only.
       </p>
     </section>
   )

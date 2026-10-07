@@ -253,7 +253,7 @@ function ChangedRows({ changes }: { changes: WriteChanges }) {
       </Table>
       <p className="text-meta text-muted-foreground">
         {changes.omitted ? `${changes.omitted} more rows are not shown. ` : ''}
-        These values are shown to you only: they are not logged and the agent never receives them.
+        Shown to you only. Not logged or sent to the agent.
       </p>
     </div>
   )
