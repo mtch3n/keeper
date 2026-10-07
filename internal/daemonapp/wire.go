@@ -401,9 +401,14 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 	if err != nil {
 		return nil, nil, err
 	}
+	return queryOutcome(dec)
+}
+
+// queryOutcome unpacks a Decision into what the daemon acts on. An escalation
+// carries an approval_required error for callers that only read errors; the
+// daemon issues a ticket for it instead, so the escalation is read first.
+func queryOutcome(dec *pipeline.Decision) (*types.QueryResult, *types.Ticket, error) {
 	switch {
-	case dec.Error != nil:
-		return nil, nil, dec.Error
 	case dec.Result != nil:
 		return dec.Result, nil, nil
 	case dec.Escalation != nil:
@@ -413,6 +418,8 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 			Reason:  strings.Join(dec.Escalation.Facts.Reasons, ", "),
 			AuditID: dec.AuditID,
 		}, nil
+	case dec.Error != nil:
+		return nil, nil, dec.Error
 	default:
 		return nil, nil, fmt.Errorf("keeperd: pipeline returned neither a result nor an escalation")
 	}
@@ -437,13 +444,13 @@ func (a *pipelineAdapter) PreviewWrite(ctx context.Context, sess types.Session, 
 	if err != nil {
 		return nil, err
 	}
+	if dec.Escalation != nil && dec.Escalation.Write != nil {
+		return dec.Escalation.Write, nil
+	}
 	if dec.Error != nil {
 		return nil, dec.Error
 	}
-	if dec.Escalation == nil || dec.Escalation.Write == nil {
-		return nil, fmt.Errorf("keeperd: no write preview for this statement")
-	}
-	return dec.Escalation.Write, nil
+	return nil, fmt.Errorf("keeperd: no write preview for this statement")
 }
 
 func (a *pipelineAdapter) CommitWrite(ctx context.Context, sess types.Session, connID, sql string, params []ports.Param, authorization string) (*types.QueryResult, error) {
