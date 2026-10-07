@@ -36,6 +36,8 @@ func runConnection(args []string) error {
 		return connectionDenylist(ctx, rest)
 	case "rm":
 		return connectionRemove(ctx, rest)
+	case "test":
+		return connectionTest(ctx, rest)
 	default:
 		return fmt.Errorf("connection: unknown subcommand %q", sub)
 	}
@@ -547,5 +549,36 @@ func connectionRemove(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("removed %s\n", name)
+	return nil
+}
+
+// connectionTest logs in with a connection's credential once and says who the
+// server says it is. keeper does not watch connections; this is how to ask.
+func connectionTest(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("connection test", flag.ExitOnError)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.Arg(0) == "" {
+		return fmt.Errorf("connection test: expected a connection name")
+	}
+	cli, err := connectDaemon(ctx)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	id, err := resolveConnectionID(ctx, cli, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	res, err := cli.TestConnection(ctx, id)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(res)
+	}
+	fmt.Printf("%q connected as %s · PostgreSQL %s · %s\n", fs.Arg(0), res.User, res.ServerVersion, time.Duration(res.RoundTrip).Round(time.Millisecond))
 	return nil
 }
