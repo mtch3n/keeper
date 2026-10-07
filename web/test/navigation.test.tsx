@@ -59,7 +59,7 @@ describe('one page per connection', () => {
   test('NAV-C7 each tab shows that connection\'s existing editor', async () => {
     daemon()
     renderApp('/connections/c1/detection')
-    expect(await screen.findByRole('switch', { name: 'Patterns' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Remove Patterns' })).toBeTruthy()
     await userEvent.click((await tabs()).getByRole('link', { name: 'Catalog' }))
     expect(await screen.findByText(/7 column\(s\) unclassified/)).toBeTruthy()
     await userEvent.click((await tabs()).getByRole('link', { name: 'Limits' }))

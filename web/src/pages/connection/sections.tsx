@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { ArrowDownIcon, ArrowUpIcon, XIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
@@ -17,6 +19,7 @@ import {
 } from '@/lib/api'
 import { auditedAge } from '@/lib/render'
 import { positiveInt, useSave } from '@/lib/save'
+import { IconButton } from '@/components/wrappers/IconButton'
 import { ConfirmWiden, SettingSection } from '@/components/wrappers/SettingSection'
 import type { Finding, Mode, RelationRef, Stage, StageKind, Writes } from '@/lib/types'
 
@@ -428,13 +431,12 @@ const KINDS: { value: StageKind; title: string; finds: string }[] = [
   {
     value: 'patterns',
     title: 'Patterns',
-    finds:
-      'Emails, card numbers, IBANs, SSNs, phone numbers, IPs and national IDs, by pattern and checksum, in process. It does not find names or addresses.',
+    finds: 'Emails, cards, IBANs, SSNs, phones, IPs, national IDs. Checksum-validated, in process. Not names.',
   },
   {
     value: 'list',
     title: 'Your list',
-    finds: 'The deny terms and expressions below — names, codenames, your own identifiers.',
+    finds: 'Your deny terms and expressions below.',
   },
 ]
 
@@ -450,30 +452,45 @@ function parsePatterns(text: string): Pattern[] {
     })
 }
 
+/** A stage as edited: its entity filter kept as the typed text until saved. */
+interface DraftStage {
+  kind: StageKind
+  entities: string
+  raw: boolean
+}
+
+const toDraft = (st: Stage): DraftStage => ({ kind: st.kind, entities: (st.entities ?? []).join(', '), raw: !!st.raw })
+
+function fromDraft(d: DraftStage): Stage {
+  const entities = d.entities
+    .split(',')
+    .map((e) => e.trim())
+    .filter((e) => e !== '')
+  return { kind: d.kind, ...(entities.length > 0 ? { entities } : {}), ...(d.raw ? { raw: true } : {}) }
+}
+
 /**
- * The pipeline a `scan` column's free text runs through, in order. Each stage
- * gets the text with earlier stages' hits masked, and a text earlier hits
- * cover entirely is not sent on. Detection never sets a column's policy: the
- * catalog does. With no stage on, every scan cell is redacted whole.
+ * The pipeline a `scan` column's free text runs through, in order, edited as a
+ * draft and saved whole. Each stage gets the text with earlier stages' hits
+ * masked unless it is set raw, and a text earlier hits cover entirely is not
+ * sent on. Detection never sets a column's policy: the catalog does. With no
+ * stage, every scan cell is redacted whole.
  */
 export function DetectionEditor({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
   const save = useSave()
-  const [entities, setEntities] = useState<Record<string, string>>(() =>
-    Object.fromEntries((detail.detection ?? []).map((st) => [st.kind, (st.entities ?? []).join(', ')])),
-  )
-  const stages = detail.detection ?? []
-  const on = (k: StageKind) => stages.some((st) => st.kind === k)
+  const saved = (detail.detection ?? []).map(toDraft)
+  const [draft, setDraft] = useState<DraftStage[]>(saved)
+  const changed = JSON.stringify(draft.map(fromDraft)) !== JSON.stringify(saved.map(fromDraft))
+  const unused = KINDS.filter((k) => !draft.some((d) => d.kind === k.value))
 
-  const stageFor = (k: StageKind): Stage => {
-    const list = (entities[k] ?? '')
-      .split(',')
-      .map((e) => e.trim())
-      .filter((e) => e !== '')
-    const prev = stages.find((st) => st.kind === k)
-    return { kind: k, ...(list.length > 0 ? { entities: list } : {}), ...(prev?.raw ? { raw: true } : {}) }
-  }
-  const apply = (next: Stage[]) =>
-    void save.run(() => updateConnection(detail.id, { detection: next })).then((ok) => ok && onChanged())
+  const edit = (i: number, change: Partial<DraftStage>) =>
+    setDraft((ds) => ds.map((d, j) => (j === i ? { ...d, ...change } : d)))
+  const move = (i: number, by: number) =>
+    setDraft((ds) => {
+      const next = [...ds]
+      ;[next[i], next[i + by]] = [next[i + by], next[i]]
+      return next
+    })
 
   return (
     <>
@@ -482,49 +499,87 @@ export function DetectionEditor({ detail, onChanged }: { detail: ConnectionDetai
         save={save}
         why="Each stage gets the text with earlier stages' hits masked, and a text earlier hits cover entirely is not sent on. Detection never sets a column's policy: the catalog does."
       >
-        <FieldGroup>
-          {KINDS.map((k) => (
-            <Field key={k.value}>
-              <Field orientation="horizontal">
-                <Switch
-                  id={`stage-${k.value}`}
-                  checked={on(k.value)}
-                  disabled={save.busy}
-                  onCheckedChange={(v) =>
-                    apply(KINDS.map((x) => x.value).filter((x) => (x === k.value ? v : on(x))).map(stageFor))
-                  }
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor={`stage-${k.value}`}>{k.title}</FieldLabel>
-                  <FieldDescription>{k.finds}</FieldDescription>
-                </FieldContent>
-              </Field>
-              {on(k.value) ? (
-                <div className="flex flex-wrap items-end gap-3">
-                  <Field className="w-full max-w-sm">
-                    <FieldLabel htmlFor={`entities-${k.value}`}>Only these entities (optional)</FieldLabel>
-                    <Input
-                      id={`entities-${k.value}`}
-                      value={entities[k.value] ?? ''}
-                      onChange={(e) => setEntities((m) => ({ ...m, [k.value]: e.target.value }))}
-                      placeholder="email_address, credit_card"
-                    />
-                  </Field>
-                  <Button
-                    variant="outline"
-                    disabled={save.busy}
-                    onClick={() => apply(KINDS.map((x) => x.value).filter(on).map(stageFor))}
-                  >
-                    Apply
-                  </Button>
-                </div>
-              ) : null}
-            </Field>
-          ))}
-        </FieldGroup>
-        {stages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Off: free text is not examined, so every scan cell is redacted whole.</p>
-        ) : null}
+        {draft.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No stages. Every scan cell is redacted whole.</p>
+        ) : (
+          <FieldGroup>
+            {draft.map((d, i) => {
+              const kind = KINDS.find((k) => k.value === d.kind)
+              return (
+                <Field key={d.kind} className="gap-3 border border-border p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-meta text-muted-foreground">{i + 1}</span>
+                    <FieldContent>
+                      <FieldLabel>{kind?.title ?? d.kind}</FieldLabel>
+                      <FieldDescription>{kind?.finds}</FieldDescription>
+                    </FieldContent>
+                    <div className="ml-auto flex">
+                      <IconButton label="Move up" disabled={i === 0} onClick={() => move(i, -1)}>
+                        <ArrowUpIcon />
+                      </IconButton>
+                      <IconButton label="Move down" disabled={i === draft.length - 1} onClick={() => move(i, 1)}>
+                        <ArrowDownIcon />
+                      </IconButton>
+                      <IconButton
+                        label={`Remove ${kind?.title ?? d.kind}`}
+                        onClick={() => setDraft((ds) => ds.filter((_, j) => j !== i))}
+                      >
+                        <XIcon />
+                      </IconButton>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-6 pl-6">
+                    <Field className="w-full max-w-sm">
+                      <FieldLabel htmlFor={`entities-${d.kind}`}>Only these entities</FieldLabel>
+                      <Input
+                        id={`entities-${d.kind}`}
+                        value={d.entities}
+                        onChange={(e) => edit(i, { entities: e.target.value })}
+                        placeholder="all"
+                      />
+                    </Field>
+                    <Field orientation="horizontal" className="w-auto">
+                      <Switch id={`raw-${d.kind}`} checked={d.raw} onCheckedChange={(v) => edit(i, { raw: v })} />
+                      <FieldLabel htmlFor={`raw-${d.kind}`}>Unmasked input</FieldLabel>
+                    </Field>
+                  </div>
+                </Field>
+              )
+            })}
+          </FieldGroup>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {unused.length > 0 ? (
+            <Select
+              value={null}
+              onValueChange={(v) => v && setDraft((ds) => [...ds, { kind: v as StageKind, entities: '', raw: false }])}
+            >
+              <SelectTrigger aria-label="Add stage" className="w-48">
+                <SelectValue>{() => 'Add stage'}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {unused.map((k) => (
+                  <SelectItem key={k.value} value={k.value}>
+                    {k.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+          <Button
+            disabled={save.busy || !changed}
+            onClick={() =>
+              void save
+                .run(() => updateConnection(detail.id, { detection: draft.map(fromDraft) }))
+                .then((ok) => ok && onChanged())
+            }
+          >
+            Save
+          </Button>
+          <Button variant="outline" disabled={save.busy || !changed} onClick={() => setDraft(saved)}>
+            Reset
+          </Button>
+        </div>
       </SettingSection>
       <TermsEditor connId={detail.id} />
     </>
@@ -563,7 +618,7 @@ function TermsEditor({ connId }: { connId: string }) {
     <SettingSection
       title="Your terms"
       save={save}
-      why="Terms are as sensitive as the data they describe, so keeper never shows them again once saved. A save replaces the whole set."
+      why="Terms are as sensitive as the data they describe, so keeper never shows them again. A save replaces the whole set."
     >
       <FieldGroup>
         <Field>
@@ -579,17 +634,12 @@ function TermsEditor({ connId }: { connId: string }) {
             disabled={save.busy}
             placeholder="employee_id = EMP-\d{6}"
           />
-          <FieldDescription>
-            Go RE2 syntax, so no expression can stall a query. One that does not compile or matches empty text is
-            refused by name.
-          </FieldDescription>
+          <FieldDescription>Go RE2 syntax.</FieldDescription>
         </Field>
         <Field>
           <FieldLabel htmlFor="terms-allow">Allow terms, one per line</FieldLabel>
           <Textarea id="terms-allow" value={allow} onChange={(e) => setAllow(e.target.value)} disabled={save.busy} />
-          <FieldDescription>
-            A value any stage finds is left visible only when it equals an allow term exactly, ignoring case.
-          </FieldDescription>
+          <FieldDescription>Left visible when a hit equals one exactly, ignoring case.</FieldDescription>
         </Field>
       </FieldGroup>
       <div className="flex flex-wrap items-center gap-3">
