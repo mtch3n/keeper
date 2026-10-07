@@ -275,7 +275,11 @@ type fakeAuthority struct {
 	conn   *types.Connection
 	grants map[types.PathRef]*types.Grant
 	err    error
+	// suspended names the connections whose grants were suspended.
+	suspended []string
 }
+
+func (a *fakeAuthority) SuspendGrants(connID, _ string) { a.suspended = append(a.suspended, connID) }
 
 func (a *fakeAuthority) Connection(context.Context, string) (*types.Connection, error) {
 	return a.conn, a.err

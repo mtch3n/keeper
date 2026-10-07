@@ -39,10 +39,8 @@ import (
 var version = build.Version
 
 const (
-	defaultUIPort     = 7773
-	reauditInterval   = 24 * time.Hour
-	freshnessInterval = 5 * time.Minute
-	shutdownGrace     = 10 * time.Second
+	defaultUIPort = 7773
+	shutdownGrace = 10 * time.Second
 
 	// A departing daemon holds the lock until its last connection has drained,
 	// so a replacement must outwait shutdownGrace before it may conclude that
@@ -172,7 +170,6 @@ func Run(args []string) int {
 		return 1
 	}
 	defer d.Close()
-	d.StartSchedules(reauditInterval, freshnessInterval)
 
 	srv := api.New(d, api.Options{LoopbackPort: port, Logger: logger})
 
