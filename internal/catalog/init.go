@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
@@ -74,6 +75,16 @@ type initRun struct {
 func (in *initRun) proposeColumn(ctx context.Context, rel types.RelationRef, col ports.Column) {
 	key := columnKey{Schema: rel.Schema, Table: rel.Relation, Column: col.Name}.String()
 	family := Family(col.TypeOID)
+
+	// A name that says the column holds personal data the passes cannot find
+	// — a date of birth, pay, a person's name, an address, an IBAN — is
+	// proposed masked for a person to confirm, whatever its type would
+	// otherwise propose. Detection finds structured identifiers; it does not
+	// find these, and a typed scalar is otherwise proposed allow.
+	if p, ok := personalByName(col.Name); ok {
+		in.proposal.NeedsReview[key] = p
+		return
+	}
 
 	switch {
 	case family == ports.FamilyText && isJSONType(col.TypeOID):
@@ -153,4 +164,32 @@ func (in *initRun) degrade() {
 	}
 	in.degraded = true
 	in.proposal.Degradations = append(in.proposal.Degradations, types.Degradation{Layer: "detector", Reason: "sampled values could not be examined, so their columns have no proposal"})
+}
+
+// personalByName proposes a policy from a column's name alone. The name proves
+// nothing about the data, which is why the proposal goes to needs review; what
+// it changes is the default a hurried operator accepts.
+func personalByName(name string) (types.ColumnPolicy, bool) {
+	n := strings.ToLower(name)
+	has := func(parts ...string) bool {
+		for _, p := range parts {
+			if n == p || strings.HasPrefix(n, p+"_") || strings.HasSuffix(n, "_"+p) || strings.Contains(n, "_"+p+"_") {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("dob", "birthdate", "birthday", "date_of_birth", "birth_date"):
+		return types.ColumnPolicy{Policy: types.PolicyRedact}, true
+	case has("salary", "wage", "wages", "income", "compensation", "pay_rate"):
+		return types.ColumnPolicy{Policy: types.PolicyRedact}, true
+	case has("full_name", "first_name", "last_name", "given_name", "family_name", "surname", "middle_name"):
+		return types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "person_name"}, true
+	case has("address", "street", "street_address", "postal_address", "home_address"):
+		return types.ColumnPolicy{Policy: types.PolicyRedact}, true
+	case has("iban"):
+		return types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "iban"}, true
+	}
+	return types.ColumnPolicy{}, false
 }
