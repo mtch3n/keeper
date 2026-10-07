@@ -1018,3 +1018,22 @@ func Test_TOKEN_C7_PersistentScopeOnAConnectionThatForbidsItGetsSessionTokens(t 
 		}
 	}
 }
+
+func Test_LAZY_C13_AStaleCatalogStopsAnAllowRuleAndSuspendsTheConnectionsRules(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.catalog.fresh = false
+		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", ordersOID, 1)}
+		h.exec.rows = [][]any{{int64(1)}}
+		h.exec.plan = readPlan(1, ordersRef)
+		h.authority.grants[types.PathRef{ConnectionID: "acme_prod", Relation: ordersRef}] = &types.Grant{ID: "g-1", RowCeiling: 1000}
+	})
+	sess := testSession()
+	h.authority.conn.Mode = types.ModeStrict
+	dec := h.query(t, Request{SQL: "SELECT id FROM orders", Session: sess})
+	if dec.Result != nil && dec.Result.Authorization == "grant:g-1" {
+		t.Errorf("the allow rule lowered a statement on a stale catalog")
+	}
+	if !slices.Contains(h.authority.suspended, "acme_prod") {
+		t.Errorf("the connection's rules were not suspended: %v", h.authority.suspended)
+	}
+}

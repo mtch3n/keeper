@@ -167,6 +167,12 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
+	return newRigWith(t, daemon.Config{Version: "test"})
+}
+
+// newRigWith is newRig with the daemon's tuning given, for tests of its timer.
+func newRigWith(t *testing.T, cfg daemon.Config) *rig {
+	t.Helper()
 
 	conn := &types.Connection{
 		ID: "c1", Name: "prod", Engine: "postgres", Database: "app", Role: "app_ro",
@@ -185,7 +191,7 @@ func newRig(t *testing.T) *rig {
 		open:  map[string]func() error{},
 	}
 
-	d, err := daemon.New(daemon.Config{Version: "test"}, daemon.Deps{
+	d, err := daemon.New(cfg, daemon.Deps{
 		Vault:   r.vault,
 		Auditor: r.aud,
 		Catalogs: func(id string) (ports.Catalog, error) {

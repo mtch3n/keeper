@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -205,6 +206,15 @@ func (p *Pipeline) applyGrants(ctx context.Context, req Request, st *state) []*t
 	if st.plan.Writes {
 		// R4.2f: no mode and no allow rule authorizes a write, and §9.3's rules
 		// cannot lower a write below tier 3.
+		return nil
+	}
+	if slices.Contains(st.reasons, ReasonStaleCatalog) {
+		// R9.3b: a rule was granted against a schema that has since moved, so
+		// it no longer says what a person agreed to. It lowers nothing, and the
+		// connection's rules are suspended for a person to re-authorize. This
+		// runs on a statement that already reached the database; nothing
+		// connects on a timer to look for it (LAZY-D4).
+		p.authority.SuspendGrants(req.ConnID, "a schema change touched this connection; re-authorize the path")
 		return nil
 	}
 	if len(st.plan.RelationNames) == 0 {
