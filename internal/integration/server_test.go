@@ -86,7 +86,7 @@ func TestG0ReportsAndNeverRefuses(t *testing.T) {
 		}
 		for _, fi := range findings {
 			if fi.Kind == types.FindingRelationWrite && strings.Contains(fi.ID, "orders") {
-				t.Errorf("the write credential's own INSERT/UPDATE/DELETE on orders was reported as a finding: %s", fi.ID)
+				t.Errorf("the writer's own INSERT/UPDATE/DELETE on orders was reported as a finding: %s", fi.ID)
 			}
 		}
 	})

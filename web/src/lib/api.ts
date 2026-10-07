@@ -145,8 +145,8 @@ export interface ConnectionDetail extends Profile {
 }
 
 /** The G0 half of describe_connection: what the last privilege audit found,
- * and when. Nothing in it gates the connection (SPEC R4.1) — the Audit page
- * is where these are meant to be read. */
+ * and when. Nothing in it gates the connection (SPEC R4.1) — the
+ * connection's Privileges tab is where these are read. */
 interface AuditedPrivileges {
   audited_at: string
   findings?: Finding[]

@@ -24,7 +24,7 @@ import {
 /**
  * Everything about one database, on one page (UI.md §2.3). It replaces the
  * Catalog and Policy screens, which were each a view of one connection picked
- * again on every visit; the sidebar now picks the connection and the tabs say
+ * again on every visit; the header picker now chooses the connection and the tabs say
  * which part of it is open. Every tab is a route, so each one can be linked to.
  */
 export function ConnectionPage() {

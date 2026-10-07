@@ -241,9 +241,9 @@ func membershipFindings(currentUser string, rows []membershipRow) []types.Findin
 }
 
 // relationWriteFindings maps §4.1a's per-relation privilege rows to findings,
-// one per relation, naming the operations held. For a write credential
-// (ports.RoleWrite), INSERT/UPDATE/DELETE are not findings — that is what the
-// credential is for — but TRUNCATE and REFERENCES still are: SPEC R4.2a.
+// one per relation, naming the operations held. For a profile that allows
+// writes (ports.RoleWrite), INSERT/UPDATE/DELETE are not findings — that is
+// what it is for — but TRUNCATE and REFERENCES still are: SPEC R4.2a.
 func relationWriteFindings(currentUser string, rows []relationPrivRow, role ports.Role) []types.Finding {
 	writeCredential := role == ports.RoleWrite
 	var out []types.Finding

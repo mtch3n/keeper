@@ -349,7 +349,6 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
                   <TableCell className="text-meta">{t.policy}</TableCell>
                   <TableCell className="text-meta">
                     {t.basis}
-                    {t.sample_size ? ` (${t.sample_size} rows sampled)` : ''}
                   </TableCell>
                   <TableCell className="text-right text-meta">{t.spans_redacted ?? 0}</TableCell>
                 </TableRow>

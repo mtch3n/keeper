@@ -17,7 +17,7 @@ type Param struct {
 	Token string
 }
 
-// writeStatements are the statement types G2 routes to the write credential.
+// writeStatements are the statement types G2 treats as writes.
 // A statement is a write because the plan says it is, not because the agent said
 // so (§6.1), so this reads the plan's own statement type.
 var writeStatements = []string{"INSERT", "UPDATE", "DELETE", "MERGE"}

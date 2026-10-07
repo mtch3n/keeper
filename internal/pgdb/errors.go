@@ -143,12 +143,6 @@ func className(sqlstate string) string {
 	return sqlstate[:2]
 }
 
-// isCode reports whether a converted error carries a particular keeper code.
-func isCode(err error, code types.Code) bool {
-	ke, ok := errors.AsType[*types.Error](err)
-	return ok && ke.Code == code
-}
-
 // notExplainable reports whether an EXPLAIN attempt failed because the statement
 // is not an ExplainableStmt in PostgreSQL's grammar. The statement itself has
 // already been Parsed successfully by the time this is asked, so a syntax error

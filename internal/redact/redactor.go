@@ -653,7 +653,6 @@ func mergeTransform(a, b types.Transform) types.Transform {
 	}
 	out.SpansRedacted = a.SpansRedacted + b.SpansRedacted
 	out.Collisions = a.Collisions + b.Collisions
-	out.SampleSize = max(a.SampleSize, b.SampleSize)
 	return out
 }
 
