@@ -27,17 +27,21 @@ database → keeper → MCP response → agent context → cloud provider
   distinct. `⟨email1:a3f21b4c9d8e7f60⟩` is unmistakably not real data, which is the
   feature — a plausible fake is worse for an LLM consumer than an obvious token.
 - **Audits the credential and tells you what it found.** It never refuses one and
-  never holds one shut: a master account works immediately. Every finding is
-  reported on its own screen, with the statement that would narrow the grant,
-  copyable as-is. Acting on it is database work you choose to do; keeper does not
+  never holds one shut: a master account works immediately. Findings are grouped
+  by kind on the connection's Privileges tab, with the statements that would
+  narrow the grants, copyable as one script. Acting on it is database work you choose to do; keeper does not
   run those statements, because a tool that can narrow its own grants can widen
   them.
-- **One approval queue across every agent**, attributed to the session, workspace
-  and stated intent, so a human working across three windows can tell whose task
-  they are authorizing.
+- **One Inbox across every agent**, attributed to the session and workspace (and
+  the task, when the agent states one), so a human working across three windows
+  can tell whose work they are authorizing.
+- **Writes wait for a human, who sees what changes.** A profile is read-only
+  unless you allow writes, and then every INSERT, UPDATE and DELETE waits in the
+  Inbox showing the rows it would change.
 - **Sensitive input never goes through the prompt.** `/keeper` opens a local form;
   only a token returns to the conversation.
-- **An append-only audit log** that answers what left this machine, and when.
+- **An activity log** that answers what left this machine, and when, encrypted
+  with the vault's key and kept for a number of days you choose (30 by default).
 
 ## What it does not do
 
@@ -126,8 +130,12 @@ keeper audit          # the same report, any time, for every connection
 
 keeper never refuses a credential and never blocks one. A master account works;
 what it will not do is let you hold one without knowing, so `keeper audit` and
-the UI's `Audit` screen say what the role can do beyond reading, and what would
-narrow it. Nothing there has to be answered before the connection runs.
+the connection's Privileges tab say what the role can do beyond reading, and what
+would narrow it. Nothing there has to be answered before the connection runs.
+
+A profile is read-only until you allow writes on it (`keeper connection set prod
+--writes approve`, or the Limits tab); keeper never switches an agent to another
+profile to get a write through.
 
 `catalog init` proposes a policy for every column and groups the proposals: typed
 scalars and name matches are safe to accept in bulk, and free text no rule
@@ -166,19 +174,15 @@ absent, the way `gpg-agent` and `ssh-agent` do — and it is not a system servic
 It runs as you, uses your OS keychain and your `$XDG_RUNTIME_DIR`; a root service
 would be wrong on every one of those.
 
-It also stops on its own. Two timers, because they give up different things:
+It also stops on its own, after `KEEPER_IDLE_EXIT` (4h by default) with nothing
+attached: no sessions, no queued approvals, no open local requests and no live
+event streams — so a dashboard you left open keeps it alive, and an agent that
+comes back simply starts it again. Standing permissions are on disk, so nothing
+is lost. Set it to a negative duration to disable it.
 
-```
-KEEPER_VAULT_IDLE_LOCK   1h   lock the vault, keep running
-KEEPER_IDLE_EXIT         4h   stop, once nothing is attached at all
-```
-
-Locking forgets the decrypted credential and leaves everything else up. Exiting
-gives the whole process back, and only happens when there are no sessions, no
-queued approvals, no open local requests and no live event streams — so a
-dashboard you left open keeps it alive, and an agent that comes back simply
-starts it again. Standing permissions are on disk, so nothing is lost either way.
-Set either to a negative duration to disable it.
+The vault opens itself from your OS keychain when the daemon starts; there is no
+unlock step. `keeper vault export` writes a copy sealed under a passphrase you
+choose, and `keeper vault import` restores it on another machine.
 
 `docs/keeper.service` is a user-level systemd unit for people who would rather it
 stayed up. It is not installed for you.
@@ -192,10 +196,11 @@ keeper doctor                    # daemon, key source, detector, connections
 keeper version                   # both versions, because they refuse each other on a mismatch
 ```
 
-Most of that is also in the UI, which is where the work is meant to happen: the
-approval queue attributes each item to the agent, workspace and stated intent
-that produced it, and the permission list shows when each grant was last used,
-which is the only thing that tells you which ones to revoke.
+Most of that is also in the UI, which is where the work is meant to happen. It
+opens on the Inbox: everything waiting on you, each item saying which agent and
+profile it is for, how much it can change, and what it reads or writes. Settings
+holds the connections and the permission list, which shows when each grant was
+last used — the only thing that tells you which ones to revoke.
 
 ## Where the reasoning lives
 
@@ -220,8 +225,8 @@ matching output columns by identity rather than by name being the first of them.
 
 First tagged build. Three measurements are closed with reproductions — view
 provenance, engine column origin, and sidecar network isolation on Linux — and
-several remain open, including detector quality, local-model evaluation and the
-managed-server function inventory. Nothing here was marked done because its
+several remain open, including detector quality and the managed-server function
+inventory. Nothing here was marked done because its
 requirement was written down.
 
 Windows compiles and does not run: there is no named pipe and no single-daemon
