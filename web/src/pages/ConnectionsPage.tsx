@@ -7,15 +7,13 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { HostDialog } from '@/components/wrappers/HostDialog'
-import { Lamp } from '@/components/wrappers/Lamp'
 import { RegisterDialog } from '@/components/wrappers/RegisterDialog'
 import { getDoctor, listConnections, listHosts, removeHost, type DoctorReport } from '@/lib/api'
-import { reachOf } from '@/lib/reach'
 import type { ConnectionSummary, HostView } from '@/lib/types'
 
 type Health = NonNullable<DoctorReport['connections']>[number]
 
-const COLUMNS = 8
+const COLUMNS = 6
 
 /**
  * Every connection keeper holds, in one table (SPEC R4.1, UI.md §2.7).
@@ -26,9 +24,9 @@ const COLUMNS = 8
  * added from that row rather than by retyping an address. One table keeps the
  * columns aligned across hosts, so a filter and a glance both work.
  *
- * A lamp shows what the daemon's health check last saw, the same answer as the
- * table on Settings → General. Until that check answers, a lamp is an outline:
- * green is reserved for a connection known to be up.
+ * Nothing here connects to a database: keeper connects only when a database is
+ * needed, and whether an account logs in is asked on its page with Test
+ * connection. Findings come from the vault, the same answer as General.
  */
 export function ConnectionsPage() {
   const [hosts, setHosts] = useState<HostView[] | null>(null)
@@ -51,8 +49,7 @@ export function ConnectionsPage() {
 
   useEffect(() => {
     void load()
-    // The health check can take seconds per unreachable server, so the table
-    // never waits for it; the lamps fill in when it answers.
+    // doctor reads only the vault, so the findings arrive with the list.
     getDoctor()
       .then((r) => setHealth(new Map((r.connections ?? []).map((c) => [c.id, c]))))
       .catch(() => setHealth(new Map()))
@@ -106,14 +103,12 @@ export function ConnectionsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-8" />
                 <TableHead>Name</TableHead>
                 <TableHead>Database</TableHead>
                 <TableHead>User</TableHead>
                 <TableHead>Writes</TableHead>
                 <TableHead>Mode</TableHead>
                 <TableHead className="text-right">Findings</TableHead>
-                <TableHead className="text-right">Unclassified</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -204,12 +199,8 @@ function HostRows({
       ) : null}
       {rows.map((c) => {
         const h = health.get(c.id)
-        const reach = reachOf(h?.state)
         return (
           <TableRow key={c.id} className="cursor-pointer" onClick={() => onOpen(c.id)}>
-            <TableCell>
-              <Lamp state={reach.lamp} label={reach.label} />
-            </TableCell>
             <TableCell className="text-meta">
               <Link to={`/connections/${c.id}`} onClick={(e) => e.stopPropagation()} className="hover:underline">
                 {c.name}
@@ -220,8 +211,6 @@ function HostRows({
             <TableCell className="text-meta">{c.writes === 'approve' ? 'with approval' : 'off'}</TableCell>
             <TableCell className="text-meta">{c.mode}</TableCell>
             <TableCell className="text-right text-meta">{h && h.findings > 0 ? h.findings : '—'}</TableCell>
-            {/* A count the health check never obtained is unknown, not zero. */}
-            <TableCell className="text-right text-meta">{h?.unclassified_columns ?? '—'}</TableCell>
           </TableRow>
         )
       })}

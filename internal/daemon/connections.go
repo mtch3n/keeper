@@ -389,6 +389,16 @@ func (d *Daemon) Audits(ctx context.Context) ([]AuditReport, error) {
 	return out, nil
 }
 
+// TestConnection logs in with a connection's credential and reports who the
+// server says it is. It is the only operator action that connects without a
+// statement, and it is asked for, never run on a schedule.
+func (d *Daemon) TestConnection(ctx context.Context, id string) (*ports.PingResult, error) {
+	if c, err := d.deps.Vault.Connection(ctx, id); err != nil || c == nil {
+		return nil, errUnknownConnection
+	}
+	return d.deps.Executor.Ping(ctx, id)
+}
+
 // Patch is §4.5's operator limits. Unreachable from MCP (§6.3), which the api
 // enforces by refusing the route to a request carrying a session.
 type Patch struct {

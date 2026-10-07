@@ -52,6 +52,12 @@ type Config struct {
 	IdleInTransactionTimeout time.Duration
 	// ApplicationName is what shows up in pg_stat_activity. Zero means "keeper".
 	ApplicationName string
+	// Idle is how long a database's pools stay open with nobody using them.
+	// Read on every check, so a change in Settings applies at once. Nil means
+	// five minutes.
+	Idle func() time.Duration
+	// Now is the clock, for tests.
+	Now func() time.Time
 }
 
 // DB implements ports.Executor.
@@ -61,9 +67,12 @@ type DB struct {
 	maxConns int32
 	idleInTx time.Duration
 	appName  string
+	idle     func() time.Duration
+	now      func() time.Time
 
-	mu    sync.Mutex
-	pools map[poolKey]*pgxpool.Pool
+	mu       sync.Mutex
+	pools    map[poolKey]*pgxpool.Pool
+	lastUsed map[poolKey]time.Time
 }
 
 type poolKey struct {
@@ -91,9 +100,62 @@ func New(cfg Config) (*DB, error) {
 		maxConns: cmp.Or(cfg.MaxConnsPerPool, int32(4)),
 		idleInTx: cmp.Or(cfg.IdleInTransactionTimeout, 30*time.Second),
 		appName:  cmp.Or(cfg.ApplicationName, "keeper"),
+		idle:     cfg.Idle,
+		now:      cfg.Now,
 		pools:    map[poolKey]*pgxpool.Pool{},
+		lastUsed: map[poolKey]time.Time{},
+	}
+	if db.idle == nil {
+		db.idle = func() time.Duration { return 5 * time.Minute }
+	}
+	if db.now == nil {
+		db.now = time.Now
 	}
 	return db, nil
+}
+
+// CloseIdle closes every pool nobody has used for longer than the idle limit,
+// so a database keeper is not using holds no connection from it. A pool with a
+// connection checked out is in use, whatever its last start time says: a long
+// statement is not idle. The next statement opens a new pool.
+func (db *DB) CloseIdle() int {
+	now, limit := db.now(), db.idle()
+	db.mu.Lock()
+	var closing []*pgxpool.Pool
+	for key, p := range db.pools {
+		if p.Stat().AcquiredConns() > 0 {
+			db.lastUsed[key] = now
+			continue
+		}
+		if now.Sub(db.lastUsed[key]) > limit {
+			closing = append(closing, p)
+			delete(db.pools, key)
+			delete(db.lastUsed, key)
+		}
+	}
+	db.mu.Unlock()
+	for _, p := range closing {
+		p.Close()
+	}
+	return len(closing)
+}
+
+// Ping is Test connection: it logs in with the connection's credential, inside
+// a read-only session, and asks the server who it is.
+func (db *DB) Ping(ctx context.Context, connID string) (*ports.PingResult, error) {
+	p, err := db.pool(ctx, connID, ports.RoleRead)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	start := db.now()
+	var out ports.PingResult
+	if err := p.QueryRow(ctx, "SELECT current_user, current_setting('server_version')").Scan(&out.User, &out.ServerVersion); err != nil {
+		return nil, convert(err)
+	}
+	out.RoundTrip = db.now().Sub(start)
+	return &out, nil
 }
 
 var _ ports.Executor = (*DB)(nil)
@@ -120,6 +182,9 @@ func (db *DB) pool(ctx context.Context, connID string, role ports.Role) (*pgxpoo
 
 	db.mu.Lock()
 	p, ok := db.pools[key]
+	if ok {
+		db.lastUsed[key] = db.now()
+	}
 	db.mu.Unlock()
 	if ok {
 		return p, nil
@@ -140,7 +205,7 @@ func (db *DB) pool(ctx context.Context, connID string, role ports.Role) (*pgxpoo
 	}
 	cfg.MaxConns = db.maxConns
 	cfg.MaxConnLifetime = time.Hour
-	cfg.MaxConnIdleTime = 5 * time.Minute
+	cfg.MaxConnIdleTime = db.idle()
 
 	// DISCARD ALL invalidates the server's prepared statements, so pgx must not
 	// keep a cache that claims otherwise (SPEC R7.5b).
@@ -188,6 +253,7 @@ func (db *DB) pool(ctx context.Context, connID string, role ports.Role) (*pgxpoo
 		return existing, nil
 	}
 	db.pools[key] = p
+	db.lastUsed[key] = db.now()
 	db.mu.Unlock()
 	return p, nil
 }

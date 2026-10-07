@@ -10,11 +10,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
-import { getDoctor, getSettings, updateSettings, type DoctorReport } from '@/lib/api'
+import { getDoctor, getSettings, updateSettings, type DoctorReport, type Settings } from '@/lib/api'
 import { notificationsOn, setNotificationsOn } from '@/lib/notify'
 import { PermissionsSection } from '@/pages/PermissionsSection'
 import { age } from '@/lib/render'
-import { reachOf } from '@/lib/reach'
 import { positiveInt, useSave } from '@/lib/save'
 import { SettingSection } from '@/components/wrappers/SettingSection'
 
@@ -28,61 +27,45 @@ import { SettingSection } from '@/components/wrappers/SettingSection'
  */
 
 /**
- * The daemon-wide choices: how long the activity log keeps a record, and whether
- * this browser raises a notification when something new waits in the Inbox.
+ * The daemon-wide choices: how long the activity log keeps a record, how long a
+ * database's connections stay open unused, and whether this browser raises a
+ * notification when something new waits in the Inbox.
  */
 function Preferences() {
-  const [days, setDays] = useState('')
-  const [stored, setStored] = useState('')
+  const [settings, setSettings] = useState<Settings | null>(null)
   const save = useSave()
   const [notify, setNotify] = useState(notificationsOn())
   const [permission, setPermission] = useState(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission)
 
   useEffect(() => {
     getSettings()
-      .then((s) => {
-        setDays(String(s.log_retention_days))
-        setStored(String(s.log_retention_days))
-      })
+      .then(setSettings)
       .catch(() => undefined)
   }, [])
 
-  const parsed = positiveInt(days)
-  const invalid = days !== '' && parsed === null
+  // Each Save sends only its own setting, so one field can never reset another.
+  const store = (patch: Partial<Settings>) =>
+    void save.run(async () => setSettings(await updateSettings(patch)))
 
   return (
     <SettingSection title="Preferences" save={save}>
       <FieldGroup>
-        <Field data-invalid={invalid || undefined}>
-          <FieldLabel htmlFor="retention">Keep the activity log for (days)</FieldLabel>
-          <div className="flex items-center gap-3">
-            <Input
-              id="retention"
-              inputMode="numeric"
-              value={days}
-              aria-invalid={invalid}
-              onChange={(e) => setDays(e.target.value)}
-              className="w-32"
-            />
-            <Button
-              disabled={save.busy || parsed === null || days.trim() === stored}
-              onClick={() =>
-                void save.run(async () => {
-                  const s = await updateSettings({ log_retention_days: parsed! })
-                  setDays(String(s.log_retention_days))
-                  setStored(String(s.log_retention_days))
-                })
-              }
-            >
-              Save
-            </Button>
-          </div>
-          {invalid ? (
-            <FieldDescription className="text-blocked">Enter a whole number above 0.</FieldDescription>
-          ) : (
-            <FieldDescription>Records older than this are deleted every day. The log is encrypted with the vault's key.</FieldDescription>
-          )}
-        </Field>
+        <NumberSetting
+          id="retention"
+          label="Keep the activity log for (days)"
+          help="Records older than this are deleted every day. The log is encrypted with the vault's key."
+          stored={settings?.log_retention_days}
+          busy={save.busy}
+          onSave={(n) => store({ log_retention_days: n })}
+        />
+        <NumberSetting
+          id="idle"
+          label="Close idle database connections after (minutes)"
+          help="keeper connects to a database only when something needs it, and closes the connection once nobody has used it for this long. The next use reconnects."
+          stored={settings?.connection_idle_minutes}
+          busy={save.busy}
+          onSave={(n) => store({ connection_idle_minutes: n })}
+        />
         <Field orientation="horizontal">
           <Switch
             id="notify"
@@ -108,6 +91,57 @@ function Preferences() {
         </Field>
       </FieldGroup>
     </SettingSection>
+  )
+}
+
+/**
+ * One whole-number setting: validated as it is typed, and saved only when it
+ * changed from what is stored.
+ */
+function NumberSetting({
+  id,
+  label,
+  help,
+  stored,
+  busy,
+  onSave,
+}: {
+  id: string
+  label: string
+  help: string
+  stored?: number
+  busy: boolean
+  onSave: (n: number) => void
+}) {
+  const [value, setValue] = useState('')
+  useEffect(() => {
+    if (stored !== undefined) setValue(String(stored))
+  }, [stored])
+  const parsed = positiveInt(value)
+  const invalid = value !== '' && parsed === null
+
+  return (
+    <Field data-invalid={invalid || undefined}>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <div className="flex items-center gap-3">
+        <Input
+          id={id}
+          inputMode="numeric"
+          value={value}
+          aria-invalid={invalid}
+          onChange={(e) => setValue(e.target.value)}
+          className="w-32"
+        />
+        <Button disabled={busy || parsed === null || parsed === stored} onClick={() => parsed !== null && onSave(parsed)}>
+          Save
+        </Button>
+      </div>
+      {invalid ? (
+        <FieldDescription className="text-blocked">Enter a whole number above 0.</FieldDescription>
+      ) : (
+        <FieldDescription>{help}</FieldDescription>
+      )}
+    </Field>
   )
 }
 
@@ -222,48 +256,34 @@ export function SettingsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-8" />
                 <TableHead>Name</TableHead>
-                <TableHead>Reach</TableHead>
                 <TableHead>Mode</TableHead>
                 <TableHead className="text-right">Findings</TableHead>
-                <TableHead className="text-right">Unclassified</TableHead>
-                <TableHead>Catalog</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {report.connections.map((c) => {
-                const reach = reachOf(c.state)
-                return (
+              {report.connections.map((c) => (
                 <TableRow key={c.id}>
-                  <TableCell>
-                    <Lamp state={reach.lamp} label={reach.label} />
+                  <TableCell className="text-meta">
+                    <Link to={`/connections/${c.id}`} className="hover:underline">
+                      {c.name}
+                    </Link>
                   </TableCell>
-                  <TableCell className="text-meta">{c.name}</TableCell>
-                  <TableCell className="text-meta">{reach.label}</TableCell>
                   <TableCell className="text-meta">{c.mode}</TableCell>
                   {/* A count and a link, never a state: a finding does not stop
                       this connection, and doctor calling it a fault would be the
                       acceptance gate under another name (SPEC R4.1). */}
                   <TableCell className="text-right text-meta">
-                    {c.findings > 0 ? <Link to={`/connections/${c.id}/privileges`} className="underline underline-offset-4">{c.findings}</Link> : '—'}
-                  </TableCell>
-                  {/* A count doctor never obtained is unknown, not zero. */}
-                  <TableCell className="text-right text-meta">{c.unclassified_columns ?? '—'}</TableCell>
-                  <TableCell className="text-meta">
-                    {/* R5.6b: a false answer is uncertainty, not permission — and
-                        so is no answer. They are shown as different things. */}
-                    {c.state !== 'reachable'
-                      ? '—'
-                      : !c.catalog_freshness_known
-                        ? 'freshness unknown'
-                        : c.catalog_fresh
-                          ? 'fresh'
-                          : 'stale'}
+                    {c.findings > 0 ? (
+                      <Link to={`/connections/${c.id}/privileges`} className="underline underline-offset-4">
+                        {c.findings}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                 </TableRow>
-                )
-              })}
+              ))}
             </TableBody>
           </Table>
         ) : (

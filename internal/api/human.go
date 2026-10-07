@@ -350,12 +350,24 @@ func (s *Server) getSettings(ctx context.Context, _ *reqInfo, _ http.ResponseWri
 	return s.d.Settings(ctx)
 }
 
+// settingsRequest names only the settings to change; an absent field keeps its
+// stored value.
+type settingsRequest struct {
+	LogRetentionDays      *int `json:"log_retention_days,omitzero"`
+	ConnectionIdleMinutes *int `json:"connection_idle_minutes,omitzero"`
+}
+
 func (s *Server) putSettings(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
-	var req types.Settings
+	var req settingsRequest
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	return s.d.UpdateSettings(ctx, req)
+	return s.d.UpdateSettings(ctx, daemon.SettingsPatch{LogRetentionDays: req.LogRetentionDays, ConnectionIdleMinutes: req.ConnectionIdleMinutes})
+}
+
+// testConnection is Test connection: one login with the profile's credential.
+func (s *Server) testConnection(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
+	return s.d.TestConnection(ctx, r.PathValue("id"))
 }
 
 func (s *Server) listRequests(_ context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
