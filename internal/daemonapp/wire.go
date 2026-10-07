@@ -322,7 +322,7 @@ type lateAuthority struct {
 func (l *lateAuthority) Bind(d *daemon.Daemon) { l.d.Store(d) }
 
 // Connection comes straight from the vault rather than through the daemon. It is
-// the single source R4.5's denylist, R4.2b's write scope, §4.5's limits and
+// the single source R4.5's denylist, the writes setting, §4.5's limits and
 // §9.4's mode all read, which is what stops them drifting apart.
 func (l *lateAuthority) Connection(ctx context.Context, connID string) (*types.Connection, error) {
 	c, err := l.vault.Connection(ctx, connID)

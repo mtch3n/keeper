@@ -136,10 +136,6 @@ func New(d *daemon.Daemon, opts Options) *Server {
 	return s
 }
 
-// CSRFToken is the token the UI echoes. cmd/keeperd prints nothing about it and
-// the UI reads it from the cookie the embedded app is served with.
-func (s *Server) CSRFToken() string { return s.csrf }
-
 // Socket is the handler for the unix socket: agents and the CLI.
 func (s *Server) Socket() http.Handler {
 	return s.withSurface(surfaceSocket, s.mux)

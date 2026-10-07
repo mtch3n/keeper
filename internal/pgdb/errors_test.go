@@ -211,3 +211,9 @@ func Test_HLT_C2_AConnectTimeoutIsUnreachableNotATimeout(t *testing.T) {
 		t.Errorf("convert(connect timeout) = %+v, want unreachable", ke)
 	}
 }
+
+// isCode reports whether a converted error carries a particular keeper code.
+func isCode(err error, code types.Code) bool {
+	ke, ok := errors.AsType[*types.Error](err)
+	return ok && ke.Code == code
+}

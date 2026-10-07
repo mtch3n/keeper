@@ -202,7 +202,7 @@ func TestUnresolvedColumnRedactsAtTierOne(t *testing.T) {
 		t.Fatalf("an unresolved column must not refuse the statement: %v", dec.Error)
 	}
 	if dec.Escalation != nil {
-		t.Fatal("an unresolved column must not escalate: the judge cannot classify it and a human cannot decide it from a prompt")
+		t.Fatal("an unresolved column must not escalate: a human cannot decide it from a prompt")
 	}
 	if dec.Tier != types.Tier1Record {
 		t.Errorf("tier = %d, want 1 — never tier 2 or 3 (R7.7d)", dec.Tier)

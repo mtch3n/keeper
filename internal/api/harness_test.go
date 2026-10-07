@@ -137,6 +137,9 @@ func (pipeAddr) String() string  { return "keeper.sock" }
 
 // ---------------------------------------------------------------- rig
 
+// testCSRF is the loopback token every rig's server is built with.
+const testCSRF = "test-csrf-token"
+
 type rig struct {
 	t *testing.T
 
@@ -209,7 +212,7 @@ func newRig(t *testing.T) *rig {
 	// in Host and Origin.
 	ts := httptest.NewUnstartedServer(nil)
 	port := ts.Listener.Addr().(*net.TCPAddr).Port
-	r.srv = api.New(d, api.Options{LoopbackPort: port})
+	r.srv = api.New(d, api.Options{LoopbackPort: port, CSRFToken: testCSRF})
 	ts.Config.Handler = r.srv.Loopback()
 	ts.Config.ConnContext = d.ConnContext
 	ts.Config.ConnState = d.ConnState
@@ -276,7 +279,7 @@ func (r *rig) browser() *client {
 		t: r.t, http: r.ui.Client(), tr: nil, base: r.ui.URL, header: http.Header{},
 	}
 	c.header.Set("Origin", r.uiOrig)
-	c.header.Set("X-Keeper-CSRF", r.srv.CSRFToken())
+	c.header.Set("X-Keeper-CSRF", testCSRF)
 	return c
 }
 

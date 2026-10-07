@@ -104,7 +104,7 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
  * The catalog file stays. It lives in the project repo and is reviewed like
  * code; deleting it is not this button's business.
  */
-export function RemoveConnection({
+function RemoveConnection({
   id,
   name,
   onRemoved,

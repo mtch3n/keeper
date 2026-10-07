@@ -9,7 +9,7 @@ import (
 
 // document is the single JSON value stored, age-encrypted, in vault.age. It
 // holds every host and connection this daemon knows about: each connection's
-// record, its read and write credentials, and its per-connection HMAC token
+// record, its one credential, and its per-connection HMAC token
 // keys.
 type document struct {
 	// Settings is nil until an operator first saves one; reads fall back to

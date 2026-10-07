@@ -37,9 +37,6 @@ type Transform struct {
 	Basis     Basis       `json:"basis"`
 	// SpansRedacted counts rule hits replaced inside text values. SPEC R8.5a.
 	SpansRedacted int `json:"spans_redacted,omitzero"`
-	// SampleSize is set when Basis is sampled, because a probabilistic guarantee
-	// must not be presented as a deterministic one.
-	SampleSize int `json:"sample_size,omitzero"`
 	// Collisions counts cells redacted because a token was already bound to a
 	// different value. SPEC R8.3c.
 	Collisions int `json:"collisions,omitzero"`
@@ -77,7 +74,7 @@ type QueryResult struct {
 	AuditID     string               `json:"audit_id"`
 	Mode        Mode                 `json:"mode"`
 	// Authorization names what let this run: "tier0", "grant:<id>", "ticket:<id>",
-	// "delegation:<id>". SPEC §9.4 requires the basis to be reported.
+	// SPEC §9.4 requires the basis to be reported.
 	Authorization string        `json:"authorization,omitzero"`
 	Degradations  []Degradation `json:"degradations,omitzero"`
 	// ExecutedRows is set for a write: the count the commit actually reported,

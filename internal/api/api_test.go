@@ -278,7 +278,7 @@ func TestLoopbackRequiresCSRFToken(t *testing.T) {
 		t.Fatalf("a wrong CSRF token was accepted: %d %s", resp.StatusCode, raw)
 	}
 
-	b.header.Set("X-Keeper-CSRF", r.srv.CSRFToken())
+	b.header.Set("X-Keeper-CSRF", testCSRF)
 	if resp, raw := b.do("POST", "/v1/connections", register); resp.StatusCode != http.StatusOK {
 		t.Fatalf("the right token was refused: %d %s", resp.StatusCode, raw)
 	}

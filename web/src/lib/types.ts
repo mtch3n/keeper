@@ -138,7 +138,7 @@ export interface ColumnPolicy {
 
 type Tier = 0 | 1 | 2 | 3 | 4
 
-type Basis = 'catalog' | 'rules' | 'sampled' | 'inherited' | 'parameter' | 'unknown'
+type Basis = 'catalog' | 'rules' | 'inherited' | 'parameter' | 'unknown' | 'unexamined'
 
 export interface Transform {
   policy: Policy
@@ -146,7 +146,6 @@ export interface Transform {
   form?: PartialForm
   basis: Basis
   spans_redacted?: number
-  sample_size?: number
   collisions?: number
 }
 
@@ -171,7 +170,7 @@ export interface QueryResult {
   tier: Tier
   audit_id: string
   mode: Mode
-  /** "tier0" | "grant:<id>" | "ticket:<id>" | "delegation:<id>" */
+  /** "tier0" | "grant:<id>" | "ticket:<id>" */
   authorization?: string
   degradations?: Degradation[]
   executed_rows?: number
