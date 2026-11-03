@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/mtchen/keeper/internal/redact"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -71,5 +72,35 @@ func TestMask_MASK_C9_otherSessionTokenIsStale(t *testing.T) {
 	body := e.query(t, other, e.ro, "SELECT id FROM customers WHERE email = $1", map[string]any{"token": tok})
 	if !strings.Contains(body, string(types.CodeStaleToken)) || strings.Contains(body, `"rows"`) {
 		t.Errorf("a token from another session: %s", body)
+	}
+}
+
+func supportTicketColumnsAllowed() map[string]types.ColumnPolicy {
+	entries := allowAll("public.support_tickets.id", "public.support_tickets.customer_id", "public.support_tickets.subject", "public.support_tickets.body")
+	entries["public.support_tickets.metadata"] = types.ColumnPolicy{
+		Policy: types.PolicyAllow,
+		Paths:  map[string]types.ColumnPolicy{"$.ip": {Policy: types.PolicyRedact}},
+	}
+	return entries
+}
+
+func TestMask_MASK_C10_extractedJSONPathIsMasked(t *testing.T) {
+	e := newLeanEnv(t)
+	e.declare(t, e.ro, supportTicketColumnsAllowed())
+	body := e.query(t, e.agent, e.ro, "SELECT metadata->>'ip' AS ip FROM support_tickets ORDER BY id LIMIT 5")
+	if n := e.truth.leaks(body)["ip"]; n != 0 {
+		t.Errorf("->> released %d declared values: %s", n, body)
+	}
+}
+
+func TestMask_MASK_C11_decodedJSONPathIsMasked(t *testing.T) {
+	e := newLeanEnv(t)
+	e.declare(t, e.ro, supportTicketColumnsAllowed())
+	body := e.query(t, e.agent, e.ro, "SELECT metadata FROM support_tickets ORDER BY id LIMIT 5")
+	if n := e.truth.leaks(body)["ip"]; n != 0 {
+		t.Errorf("a decoded json column released %d declared values: %s", n, body)
+	}
+	if !strings.Contains(body, redact.RedactedMarker) {
+		t.Errorf("the path was not masked in place: %s", body)
 	}
 }

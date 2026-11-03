@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"errors"
 	"io"
 	"strings"
@@ -38,6 +39,7 @@ const maxJSONDepth = 64
 // falls back to the column's own policy.
 func (r *Redactor) applyPaths(ctx context.Context, sess *session, pl *columnPlan, v any, now time.Time) (any, bool) {
 	var src []byte
+	decoded := false
 	switch t := v.(type) {
 	case string:
 		src = []byte(t)
@@ -45,6 +47,13 @@ func (r *Redactor) applyPaths(ctx context.Context, sess *session, pl *columnPlan
 		src = t
 	case jsontext.Value:
 		src = t
+	case map[string]any, []any:
+		// The driver decodes json and jsonb into these.
+		encoded, err := json.Marshal(t)
+		if err != nil {
+			return RedactedMarker, true
+		}
+		src, decoded = encoded, true
 	default:
 		return nil, false
 	}
@@ -60,6 +69,13 @@ func (r *Redactor) applyPaths(ctx context.Context, sess *session, pl *columnPlan
 		return RedactedMarker, true
 	}
 	out := strings.TrimRight(buf.String(), "\n")
+	if decoded {
+		var masked any
+		if err := json.Unmarshal([]byte(out), &masked); err != nil {
+			return RedactedMarker, true
+		}
+		return masked, true
+	}
 	if _, isString := v.(string); isString {
 		return out, true
 	}

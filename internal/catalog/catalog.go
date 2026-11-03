@@ -176,7 +176,15 @@ func (c *Catalog) RelationPolicies(tableOID uint32) []ports.FamilyPolicy {
 			p = types.ColumnPolicy{Policy: types.PolicyRedact}
 		}
 		if p.Policy == types.PolicyAllow {
-			continue
+			// A declared path can be extracted from an otherwise allowed column.
+			strictest := types.PolicyAllow
+			for _, sub := range p.Paths {
+				strictest = types.Strictest(strictest, sub.Policy)
+			}
+			if strictest == types.PolicyAllow {
+				continue
+			}
+			p = types.ColumnPolicy{Policy: strictest}
 		}
 		out = append(out, ports.FamilyPolicy{
 			Column: col.Column.Column,
