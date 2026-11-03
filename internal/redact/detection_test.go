@@ -90,7 +90,7 @@ func Test_DET_C17_ASpanPastTheEndRedactsTheWholeCell(t *testing.T) {
 	}
 }
 
-func Test_DET_C25_NoPassesRedactsEveryScanCell(t *testing.T) {
+func TestNoPassesRedactsEveryScanCell(t *testing.T) {
 	got, tr := scanOnce(t, nil, "nothing sensitive", "jane@example.com")
 	for i, g := range got {
 		if g != redact.RedactedMarker {
@@ -174,7 +174,7 @@ func (c *counting) Detect(_ context.Context, texts []string) ([][]ports.Span, er
 }
 func (c *counting) Identity() ports.DetectorIdentity { return ports.DetectorIdentity{Name: "counting"} }
 
-func Test_DET_C5_DetectionNeverTouchesAnAllowColumn(t *testing.T) {
+func TestDetectionNeverTouchesAnAllowColumn(t *testing.T) {
 	chain := detect.NewPatterns()
 	r, err := redact.New(redact.Config{
 		Keys:      keys{},

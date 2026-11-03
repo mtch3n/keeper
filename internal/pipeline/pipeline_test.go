@@ -497,7 +497,7 @@ func hasLayer(ds []types.Degradation, layer string) bool {
 	return slices.ContainsFunc(ds, func(d types.Degradation) bool { return d.Layer == layer })
 }
 
-func Test_JDG_C3_AChangedViewInAssistedReportsOnlyTheCatalog(t *testing.T) {
+func TestAChangedViewInAssistedReportsOnlyTheCatalog(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
 		h.exec.rows = [][]any{{int64(1)}}
@@ -537,7 +537,7 @@ func Test_WRITE_C1_AnAllowedWriteWaitsThenRunsOnApproval(t *testing.T) {
 	}
 }
 
-func Test_WRITE_C2_AWriteOnAReadOnlyProfileIsRefusedAtOnce(t *testing.T) {
+func TestAWriteOnAReadOnlyProfileIsRefusedAtOnce(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.authority.conn.Writes = types.WritesOff
 		h.exec.plan = &ports.PlanFacts{
@@ -621,7 +621,7 @@ func Test_WRITE_C7_ADeleteIsMarkedDestructiveWithItsTargetAndProtection(t *testi
 	}
 }
 
-func Test_WRITE_C12_AStatementKeeperCannotClassifyIsDestructive(t *testing.T) {
+func TestAStatementKeeperCannotClassifyIsDestructive(t *testing.T) {
 	for _, stmt := range []string{"", "COPY", "CALL"} {
 		risk, unreadable := riskOf(stmt)
 		if risk != types.RiskDestructive || !unreadable {

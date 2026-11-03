@@ -57,7 +57,7 @@ func Test_TOKEN_C11_ANonFoldingNamespaceKeepsCase(t *testing.T) {
 	}
 }
 
-func Test_TOKEN_C6_ShortValuesGiveTokensOfOneLength(t *testing.T) {
+func TestShortValuesGiveTokensOfOneLength(t *testing.T) {
 	_, tok := scoped(t, nil)
 	if a, b := tok("s1", "abcde"), tok("s1", "abcdefghi"); len(a) != len(b) {
 		t.Errorf("token lengths %d and %d tell the values apart", len(a), len(b))

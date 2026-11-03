@@ -76,7 +76,7 @@ describe('how dangerous a card says it is', () => {
     expect(c.getByText(/DELETE on public\.orders/)).toBeTruthy()
   })
 
-  test('WRITE-C12 a statement keeper could not read is marked destructive and says so', async () => {
+  test('a statement keeper could not read is marked destructive and says so', async () => {
     daemon([write({}, { statement_type: '', risk: 'destructive', unreadable: true })])
     renderApp('/inbox')
     const c = await card()

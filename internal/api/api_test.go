@@ -840,7 +840,7 @@ func Test_SHELL_C12_ANonPositiveRetentionIsRefused(t *testing.T) {
 	}
 }
 
-func Test_WRITE_C2_TheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
+func TestTheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
 	r := newRig(t)
 	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Database = "h1", "app"
 	r.vault.conns["c9"] = &types.Connection{ID: "c9", Name: "prod_rw", HostID: "h1", Database: "app", Writes: types.WritesAsk, Reads: types.ReadsUncertain, Limits: types.DefaultLimits()}
