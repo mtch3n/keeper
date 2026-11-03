@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -72,7 +73,18 @@ func TestAsk_ASK_C22_failedPreviewOpensNoTicket(t *testing.T) {
 
 func TestAsk_WriteThatCallsAVolatileFunctionIsNotPreviewed(t *testing.T) {
 	e := newLeanEnv(t)
-	executions := e.counter(t, "ask_volatile")
+	e.super(t, "CREATE SEQUENCE ask_volatile", "GRANT USAGE, SELECT ON SEQUENCE ask_volatile TO shop_eval_rw")
+	executions := func() int64 {
+		var v int64
+		var called bool
+		if err := pgxQueryRow(t, e.shop.superDSN, "SELECT last_value, is_called FROM ask_volatile").Scan(&v, &called); err != nil {
+			t.Fatal(err)
+		}
+		if !called {
+			return 0
+		}
+		return v
+	}
 	e.super(t, "GRANT UPDATE ON orders TO shop_eval_rw")
 	waiting := e.query(t, e.agent, e.rw, "UPDATE orders SET total = total + 0 * nextval('ask_volatile') WHERE id = 1")
 	if parseBody2(waiting).Ticket == "" {
@@ -116,4 +128,45 @@ func TestAsk_ADestructiveCallInAWriteDoesNotRunBeforeADecision(t *testing.T) {
 	if _, err := other.Exec(t.Context(), "SELECT 1"); err != nil {
 		t.Errorf("the backend was terminated while the ticket was pending: %v", err)
 	}
+}
+
+func TestAsk_ARoleThatCannotReadEveryColumnStillGetsACountOnlyPreview(t *testing.T) {
+	e := newLeanEnv(t)
+	e.super(t,
+		"REVOKE SELECT ON orders FROM shop_eval_rw",
+		"GRANT SELECT (id, customer_id, total, status) ON orders TO shop_eval_rw",
+		"GRANT UPDATE ON orders TO shop_eval_rw")
+	waiting := e.query(t, e.agent, e.rw, "UPDATE orders SET shipping_note = 'x' WHERE id = 1")
+	if parseBody2(waiting).Ticket == "" {
+		t.Fatalf("no ticket: %s", waiting)
+	}
+	items, err := e.op.ListApprovals(t.Context())
+	if err != nil || len(items) != 1 || items[0].Write == nil {
+		t.Fatalf("approvals = %+v, %v", items, err)
+	}
+	if w := items[0].Write; w.Unpreviewed || w.RowCount != 1 || w.Changes != nil {
+		t.Errorf("preview = %+v, want a count of 1 and no changed rows", w)
+	}
+	if got := e.approveAndWait(t, e.agent, waiting); !strings.Contains(got, `"ready"`) {
+		t.Fatalf("not committed: %s", got)
+	}
+}
+
+type rowScanner struct {
+	conn *pgx.Conn
+	row  pgx.Row
+}
+
+func (r rowScanner) Scan(dest ...any) error {
+	defer r.conn.Close(context.Background())
+	return r.row.Scan(dest...)
+}
+
+func pgxQueryRow(t *testing.T, dsn, sql string) rowScanner {
+	t.Helper()
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rowScanner{conn: conn, row: conn.QueryRow(t.Context(), sql)}
 }

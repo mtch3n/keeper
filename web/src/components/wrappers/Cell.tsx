@@ -12,11 +12,12 @@ import { ScannedText } from '@/components/wrappers/ScannedText'
  * - `null`         the underlying value is SQL NULL, independent of policy.
  * - `tokenized`    PolicyToken: `transform.namespace` bound the value; the
  *                  cell holds the literal token string, e.g. "⟨e1:a3f21b⟩".
- * - `redacted`     PolicyRedact: nothing survived.
- * - `scanned`      PolicyScan: a readable string with inline solid runs
- *                  where SPEC R8.5a redacted a matched span.
+ * - `redacted`     PolicyRedact: nothing survived; drawn as the `⟨redacted⟩`
+ *                  the agent received, in the muted text colour.
+ * - `scanned`      PolicyScan: a readable string with inline marked spans
+ *                  where a matched span was redacted.
  * - `unclassified` the column has no catalog entry; basis is `unknown`
- *                  (SPEC R5.4a) and keeper fails closed. The only treatment
+ *                  and keeper fails closed. The only treatment
  *                  carrying colour (UI.md §2.2).
  *
  * Registry search: `pnpm dlx shadcn@latest search @shadcn -q "redact mask"`
@@ -56,8 +57,8 @@ export function Cell({ value, className }: { value: CellValue; className?: strin
 
     case 'redacted':
       return (
-        <span className={cn('text-meta text-foreground', className)} aria-label="redacted" title="Present; nothing was sent">
-          {'█'.repeat(4)}
+        <span className={cn('text-meta text-muted-foreground', className)} title="Present; nothing was sent">
+          ⟨redacted⟩
         </span>
       )
 

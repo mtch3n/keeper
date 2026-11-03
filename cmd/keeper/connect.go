@@ -5,8 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/netip"
+	"maps"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -68,41 +69,39 @@ func tlsHint(t connTarget) string {
 
 var sslStrength = map[string]int{"disable": 0, "allow": 1, "prefer": 2, "require": 3, "verify-ca": 4, "verify-full": 5}
 
-// modeNotice reports when a reused host's sslmode, not the string's, decides
-// the login: the string named a different mode, or named none and the host is
-// weaker than keeper's default.
-func modeNotice(t connTarget, hostMode string) string {
-	if hostMode == t.sslmode {
-		return ""
-	}
-	if !t.sslDefaulted || sslStrength[hostMode] < sslStrength[t.sslmode] {
-		return fmt.Sprintf("this host is already registered with sslmode=%s; that mode is used, not the connection string's", hostMode)
-	}
-	return ""
-}
-
 // checkHostMode decides whether a registered host may carry this string's
-// login. A string that names a stronger sslmode than the host has would go out
-// weaker than the person asked for, so it is refused; a weaker one cannot
-// weaken a stronger host and only gets the notice.
+// login. The host's mode is the one used, so a string that cannot be honoured
+// is refused rather than quietly downgraded:
+//   - a string that names a stronger sslmode than the host has;
+//   - a string that names none, when keeper's default for the address is
+//     stronger than the host's mode.
+//
+// A string that names a weaker mode than the host's cannot weaken it, and says so.
 func checkHostMode(t connTarget, hostMode string) (string, error) {
-	want, ok := sslStrength[hostMode]
+	have, ok := sslStrength[hostMode]
 	if !ok {
 		return "", fmt.Errorf("the registered host has sslmode %q, which is not one of %s", hostMode, strings.Join(types.SSLModes, ", "))
 	}
-	if !t.sslDefaulted && sslStrength[t.sslmode] > want {
-		return "", fmt.Errorf("the connection string asks for sslmode=%s, but this host is already registered with sslmode=%s, so the login would be weaker than requested; remove the host with `keeper host rm <name>` and connect again, or lower the string's sslmode", t.sslmode, hostMode)
+	const changeIt = "To change the host's mode, remove its connections with `keeper connection rm <name>`, then the host with `keeper host rm <host>`, and connect again."
+	switch {
+	case t.sslDefaulted && have < sslStrength[t.sslmode]:
+		return "", fmt.Errorf("this host is already registered with sslmode=%s, weaker than the sslmode=%s keeper uses by default for this address, so the login would go out weaker than keeper's default. Add sslmode=%s to the connection string to accept it. %s", hostMode, t.sslmode, hostMode, changeIt)
+	case !t.sslDefaulted && sslStrength[t.sslmode] > have:
+		return "", fmt.Errorf("the connection string asks for sslmode=%s, but this host is already registered with sslmode=%s, so the login would be weaker than requested. Lower the string's sslmode. %s", t.sslmode, hostMode, changeIt)
 	}
 	return modeNotice(t, hostMode), nil
 }
 
-func isLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
+// modeNotice says so when the string names a sslmode and the host's, which is
+// the one used, is different.
+func modeNotice(t connTarget, hostMode string) string {
+	if t.sslDefaulted || t.sslmode == hostMode {
+		return ""
 	}
-	ip, err := netip.ParseAddr(host)
-	return err == nil && ip.IsLoopback()
+	return fmt.Sprintf("this host is already registered with sslmode=%s and keeps it; the connection string's sslmode=%s does not lower it", hostMode, t.sslmode)
 }
+
+var connStringKeys = []string{"host", "port", "dbname", "user", "password", "sslmode"}
 
 var errNotConnString = errors.New("that is not a PostgreSQL connection string; use postgres://user:password@host:5432/database or key=value pairs")
 
@@ -133,6 +132,11 @@ func parseConnString(raw string) (connTarget, error) {
 		}
 		t.port = int(n)
 	}
+	for _, k := range slices.Sorted(maps.Keys(kv)) {
+		if !slices.Contains(connStringKeys, k) {
+			return connTarget{}, fmt.Errorf("the connection string has the parameter %q, which keeper connect does not use and would drop; remove it", k)
+		}
+	}
 	if strings.HasPrefix(t.address, "/") {
 		return connTarget{}, fmt.Errorf("the connection string needs a server host name or address, not a socket directory")
 	}
@@ -156,10 +160,7 @@ func parseConnString(raw string) (connTarget, error) {
 		t.sslmode = v
 	} else {
 		t.sslDefaulted = true
-		t.sslmode = "require"
-		if isLoopback(t.address) {
-			t.sslmode = "prefer"
-		}
+		t.sslmode = types.DefaultSSLMode(t.address)
 	}
 	t.profile = t.database + "_" + t.user
 	return t, nil

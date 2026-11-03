@@ -6,10 +6,9 @@ import { fakeDaemon, renderApp, session, summary } from './daemon'
 
 const item = {
   ticket_id: 't1',
-  session: session('s1', 'claude-code', '/home/u/shop', 'close stale orders'),
+  session: session('s1', 'claude-code', '/home/u/shop'),
   connection: 'c1',
   facts: {
-    intent: 'close stale orders',
     statement_type: 'UPDATE',
     relations: [{ schema: 'public', relation: 'orders' }],
     estimated_rows: 3,

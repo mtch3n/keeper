@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,7 +25,9 @@ import (
 // falls back: the statement has not run, so the next form or the plain run
 // follows. A statement that parsed and then failed has run, at least in part,
 // and running it again another way could repeat its effects, so that error is
-// returned. The result is nil with no error when no form fits. It carries no
+// returned, with one exception: a permission refusal comes before the statement
+// starts, so it falls back to the count. The result is nil with no error when
+// no form fits. It carries no
 // rows: the appended columns are the approver's, not output the agent asked for.
 func (c *conn) previewChanges(ctx context.Context, sql string, params []ports.Param, op string) (*ports.RawResult, error) {
 	clauses := []string{"\nRETURNING *"}
@@ -43,6 +46,17 @@ func (c *conn) previewChanges(ctx context.Context, sql string, params []ports.Pa
 		}
 		r, err := c.fetch(ctx, sql+clause, params, types.PreviewRows)
 		if err != nil {
+			// A role that cannot read every column is refused RETURNING when
+			// the executor starts, before any row changes, so the count-only
+			// preview is still safe. Any other error came from a statement that
+			// had begun to run.
+			if ke, ok := errors.AsType[*types.Error](err); ok && ke.Code == types.CodePermissionDenied {
+				if _, err := c.tx.Exec(ctx, "ROLLBACK TO SAVEPOINT keeper_preview"); err != nil {
+					return nil, convert(err)
+				}
+				c.aborted = false
+				return nil, nil
+			}
 			return nil, err
 		}
 		return &ports.RawResult{

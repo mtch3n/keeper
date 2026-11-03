@@ -204,7 +204,6 @@ export function LimitsForm({ detail, onChanged }: { detail: ConnectionDetail; on
     rows: String(detail.limits.max_rows_ceiling),
     kib: String(Math.round(detail.limits.max_bytes / 1024)),
     timeout: String(Math.round(detail.limits.statement_timeout / 1e6)),
-    sample: String(detail.limits.scan_sample),
   }
   const [v, setV] = useState(initial)
   const save = useSave()
@@ -213,7 +212,6 @@ export function LimitsForm({ detail, onChanged }: { detail: ConnectionDetail; on
     rows: positiveInt(v.rows),
     kib: positiveInt(v.kib),
     timeout: positiveInt(v.timeout),
-    sample: positiveInt(v.sample),
   }
   const valid = Object.values(parsed).every((n) => n !== null)
   const changed = (Object.keys(initial) as (keyof typeof initial)[]).some((k) => v[k].trim() !== initial[k])
@@ -228,7 +226,6 @@ export function LimitsForm({ detail, onChanged }: { detail: ConnectionDetail; on
         <LimitField id="limit-rows" label="Row ceiling" value={v.rows} onChange={set('rows')} />
         <LimitField id="limit-kib" label="Size cap (KiB)" value={v.kib} onChange={set('kib')} />
         <LimitField id="limit-timeout" label="Statement timeout (ms)" value={v.timeout} onChange={set('timeout')} />
-        <LimitField id="limit-sample" label="Scan sample (rows)" value={v.sample} onChange={set('sample')} />
       </div>
       <div>
         <Button
@@ -241,7 +238,6 @@ export function LimitsForm({ detail, onChanged }: { detail: ConnectionDetail; on
                     max_rows_ceiling: parsed.rows!,
                     max_bytes: parsed.kib! * 1024,
                     statement_timeout: parsed.timeout! * 1e6,
-                    scan_sample: parsed.sample!,
                   },
                 }),
               )

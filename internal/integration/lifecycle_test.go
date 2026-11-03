@@ -56,7 +56,7 @@ func TestLifecycle_GetResultCarriesWhatQueryDoesAndTheRecordCountsTheRowsChanged
 		t.Fatal(err)
 	}
 	var approved, escalated int
-	for _, r := range recs {
+	for _, r := range recs.Records {
 		switch {
 		case r.Decision == types.DecisionApproved && r.StatementType == "UPDATE":
 			approved++

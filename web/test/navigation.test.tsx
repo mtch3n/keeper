@@ -40,7 +40,7 @@ describe('one page per connection', () => {
 
   test('NAV-C6 an unknown connection says so and links back', async () => {
     const d = daemon()
-    d.on('GET', '/v1/connections/nope', () => [404, { code: 'ticket_unknown', summary: 'no connection with that id is registered' }])
+    d.on('GET', '/v1/connections/nope', () => [404, { code: 'unknown_connection', summary: 'no connection with that id is registered' }])
     renderApp('/connections/nope')
     expect(await screen.findByText(/no such connection/i)).toBeTruthy()
     expect(screen.getByRole('link', { name: /back to connections/i }).getAttribute('href')).toBe('/connections')

@@ -5,11 +5,18 @@ import type { Waiting } from '../types'
 
 const waiting = atom({ plugin: 'keeper', key: 'waiting' } as const, null as Waiting | null)
 
+// The same lookup the hooks use: keeper may sit in ~/.local/bin, off PATH.
+const WAITING = [
+  'sh',
+  '-c',
+  'PATH="$PATH:$HOME/.local/bin"; command -v keeper >/dev/null 2>&1 || exit 0; exec keeper hook waiting',
+]
+
 // `keeper hook waiting` prints JSON when the daemon answers and nothing when it
 // does not, and it never starts the daemon.
 async function readWaiting($: EngineInterface): Promise<Waiting | null> {
   try {
-    const { exitCode, stdout } = await $.process.run(['keeper', 'hook', 'waiting'])
+    const { exitCode, stdout } = await $.process.run(WAITING)
     if (exitCode !== 0 || stdout.trim() === '') {
       return null
     }
