@@ -141,65 +141,6 @@ func TestVaultRegisterPersistsAcrossInstances(t *testing.T) {
 	}
 }
 
-func TestRotateMasterKeyFileSource(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-
-	v := New(dir)
-	if err := v.Open(ctx); err != nil { // no env/keychain: bootstraps into key.age
-		t.Fatalf("Open: %v", err)
-	}
-	if v.KeySource() != sourceKeyFile {
-		t.Fatalf("KeySource() = %q, want %q", v.KeySource(), sourceKeyFile)
-	}
-
-	conn := testConnection("")
-	conn.HostID = testHost(t, v)
-	if err := v.Register(ctx, &conn, ports.Credential{User: "ro"}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	oldKeyFileContents, err := os.ReadFile(keyFilePath(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := v.RotateMaster(ctx); err != nil {
-		t.Fatalf("RotateMaster: %v", err)
-	}
-
-	newKeyFileContents, err := os.ReadFile(keyFilePath(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(newKeyFileContents) == string(oldKeyFileContents) {
-		t.Error("key.age was not rewritten with a new key")
-	}
-
-	// A fresh instance must unlock with the new key.age and still see the
-	// connection registered before rotation.
-	v2 := New(dir)
-	if err := v2.Open(ctx); err != nil {
-		t.Fatalf("Open after rotation: %v", err)
-	}
-	got, err := v2.Connection(ctx, conn.ID)
-	if err != nil {
-		t.Fatalf("Connection after rotation: %v", err)
-	}
-	if got.ID != conn.ID {
-		t.Errorf("ID = %q, want %q", got.ID, conn.ID)
-	}
-}
-
-// A key keeper did not write cannot be rewritten by keeper: rotating under
-// KEEPER_MASTER_KEY would re-encrypt the vault under a key nothing persists,
-// and the next start would find the old value in the environment.
-func TestRotateMasterRefusesTheEnvSource(t *testing.T) {
-	v, _ := newTestVault(t) // envMasterKey source
-	if err := v.RotateMaster(context.Background()); err == nil {
-		t.Error("expected RotateMaster to refuse the env source")
-	}
-}
-
 // An export carries every credential, so it never leaves the daemon in the
 // clear: it is sealed under the operator's passphrase.
 func TestExportIsSealed(t *testing.T) {

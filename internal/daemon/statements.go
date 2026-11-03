@@ -100,7 +100,6 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	}
 	write := isWrite(facts.StatementType)
 
-	facts.Intent = info.Intent
 	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, tmpl.Preview)
 	return nil, tk, nil
 }

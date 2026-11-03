@@ -259,7 +259,7 @@ func (a *fakeAudit) Get(context.Context, string) (*types.AuditRecord, error) { r
 
 func (a *fakeAudit) Normalize(sql string, _ func(string) bool) string { return "NORMALIZED:" + sql }
 
-func (a *fakeAudit) ScreenIntent(context.Context, string) error { return nil }
+func (a *fakeAudit) ScreenText(context.Context, string) error { return nil }
 
 func (a *fakeAudit) last(t *testing.T) *types.AuditRecord {
 	t.Helper()
@@ -337,7 +337,6 @@ func testSession() types.Session {
 	return types.Session{
 		ID:     "sess-1",
 		Client: types.ClientInfo{Name: "keeper-mcp", Version: "0.1.0"},
-		Intent: "reconcile last week's orders",
 	}
 }
 

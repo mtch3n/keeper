@@ -25,8 +25,7 @@ import (
 //     (SPEC R6.2, and ports.Param's own comment).
 //
 // types.Session rather than a session id, because the pipeline needs the client
-// and the intent for the audit record (§10), and only the
-// daemon can resolve an id to either.
+// for the audit record (§10), and only the daemon can resolve an id to it.
 type Pipeline interface {
 	// Explain is §6.1's dry run: the statement is planned and classified but
 	// never executed, so an agent can discover that it would escalate without
@@ -44,7 +43,7 @@ type Pipeline interface {
 	// ceiling of §4.5 is still the pipeline's to enforce.
 	Query(ctx context.Context, sess types.Session, connectionID, sql string, params []ports.Param, maxRows int, authorization string) (*types.QueryResult, *types.Ticket, error)
 
-	// Facts is §9.2's approval payload — intent, statement type, relations,
+	// Facts is §9.2's approval payload — statement type, relations,
 	// estimates, what will be masked and why this escalated — for a statement
 	// Query escalated. The daemon calls it once, when it enqueues.
 	Facts(ctx context.Context, sess types.Session, connectionID, sql string, params []ports.Param) (*types.ApprovalFacts, error)

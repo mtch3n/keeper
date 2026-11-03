@@ -251,8 +251,8 @@ func (r *rig) socket() *client {
 	return &client{t: r.t, http: &http.Client{Transport: tr}, tr: tr, base: "http://keeper", header: http.Header{}}
 }
 
-// agent opens a socket connection and completes the handshake and the intent.
-func (r *rig) agent(intent string) *client {
+// agent opens a socket connection and completes the handshake.
+func (r *rig) agent() *client {
 	r.t.Helper()
 	c := r.socket()
 	var out struct {
@@ -262,9 +262,6 @@ func (r *rig) agent(intent string) *client {
 		"client": types.ClientInfo{Name: "keeper-mcp", Version: "1", PID: 1, Workspace: "/w"},
 	}, &out)
 	c.header.Set("X-Keeper-Session", out.SessionID)
-	if intent != "" {
-		c.mustJSON("POST", "/v1/session/intent", map[string]any{"intent": intent}, nil)
-	}
 	return c
 }
 

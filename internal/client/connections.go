@@ -57,13 +57,12 @@ type ConnectionDetail struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version,omitzero"`
 	Profile
-	Schemas          []string             `json:"schemas,omitzero"`
-	CatalogStatus    CatalogStatus        `json:"catalog_status"`
-	PolicySummary    map[types.Policy]int `json:"policy_summary,omitzero"`
-	Limits           types.Limits         `json:"limits"`
-	PersistentTokens bool                 `json:"persistent_tokens"`
-	Detection        []types.Stage        `json:"detection"`
-	Degradations     []types.Degradation  `json:"degradations,omitzero"`
+	Schemas       []string             `json:"schemas,omitzero"`
+	CatalogStatus CatalogStatus        `json:"catalog_status"`
+	PolicySummary map[types.Policy]int `json:"policy_summary,omitzero"`
+	Limits        types.Limits         `json:"limits"`
+	Detection     []types.Stage        `json:"detection"`
+	Degradations  []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // DescribeConnection returns describe_connection's field set for one
@@ -111,9 +110,8 @@ type PatchConnectionParams struct {
 	Limits *types.Limits `json:"limits,omitzero"`
 	// Detection replaces the connection's passes when set; an empty list turns
 	// detection off.
-	Detection        *[]types.Stage `json:"detection,omitzero"`
-	Writes           types.Writes   `json:"writes,omitzero"`
-	PersistentTokens *bool          `json:"persistent_tokens,omitzero"`
+	Detection *[]types.Stage `json:"detection,omitzero"`
+	Writes    types.Writes   `json:"writes,omitzero"`
 }
 
 // PatchConnection updates a connection's settings.
