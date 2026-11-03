@@ -3,7 +3,6 @@ package api_test
 import (
 	jsonv1 "encoding/json"
 	json "encoding/json/v2"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -37,8 +36,8 @@ func escalatingRig(t *testing.T, rels ...types.RelationRef) *rig {
 // retrieves another session's rows.
 func TestTicketIssuedToAnotherSessionIsRefused(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
-	b := r.agent("explore schema")
+	a := r.agent()
+	b := r.agent()
 
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
@@ -64,35 +63,21 @@ func TestTicketIssuedToAnotherSessionIsRefused(t *testing.T) {
 }
 
 // R3.4d and R3.4e: when the connection closes the session goes, and so do its
-// tickets, its queue items, its session grants and its reverse map.
+// tickets, its queue items and its reverse map.
 func TestClosingTheConnectionDropsEverythingScopedToIt(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	session := a.sessionID()
 
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
 
-	cli := r.socket() // the CLI: a socket client that never handshakes
-	var grant types.Grant
-	cli.mustJSON("POST", "/v1/grants", map[string]any{
-		"path":        types.PathRef{ConnectionID: "c1", Relation: types.RelationRef{Schema: "public", Relation: "users"}},
-		"lifetime":    types.GrantSession,
-		"row_ceiling": 100,
-		"session_id":  session,
-		"actor":       "ming",
-	}, &grant)
-
-	if got := len(r.d.Grants()); got != 1 {
-		t.Fatalf("grant not stored: %d", got)
-	}
 	if got := len(r.d.Approvals()); got != 1 {
 		t.Fatalf("queue should hold the escalation: %d", got)
 	}
 
 	a.close()
 
-	eventually(t, "the session's grants to go", func() bool { return len(r.d.Grants()) == 0 })
 	eventually(t, "the session's queue items to go", func() bool { return len(r.d.Approvals()) == 0 })
 	eventually(t, "the reverse map to be dropped", func() bool {
 		for _, s := range r.red.droppedSessions() {
@@ -107,99 +92,11 @@ func TestClosingTheConnectionDropsEverythingScopedToIt(t *testing.T) {
 	}
 }
 
-// R9.3c: a statement matches only if every relation its plan touches has its own
-// entry. One unlisted relation sends it back to its normal tier.
-func TestGrantsMatchExactPathsOnly(t *testing.T) {
-	users := types.RelationRef{Schema: "public", Relation: "users"}
-	orders := types.RelationRef{Schema: "public", Relation: "orders"}
-	r := escalatingRig(t, users, orders)
-	a := r.agent("reconcile OPS-441")
-	cli := r.socket()
-
-	grant := func(rel types.RelationRef, ceiling int) {
-		t.Helper()
-		cli.mustJSON("POST", "/v1/grants", map[string]any{
-			"path":        types.PathRef{ConnectionID: "c1", Relation: rel},
-			"lifetime":    types.GrantStanding,
-			"row_ceiling": ceiling,
-			"actor":       "ming",
-		}, nil)
-	}
-
-	// One of the two relations granted: the join still escalates.
-	grant(users, 100)
-	var tk types.Ticket
-	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
-	if tk.ID == "" {
-		t.Fatal("a join reaching an ungranted relation was authorized by the grant on its neighbour")
-	}
-
-	// A grant on a different connection is a different path.
-	cli.mustJSON("POST", "/v1/grants", map[string]any{
-		"path":        types.PathRef{ConnectionID: "staging", Relation: orders},
-		"lifetime":    types.GrantStanding,
-		"row_ceiling": 100,
-		"actor":       "ming",
-	}, nil)
-	tk = types.Ticket{}
-	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
-	if tk.ID == "" {
-		t.Fatal("a grant on another connection authorized this one")
-	}
-
-	// Both relations granted on this connection: it runs, and says what let it.
-	grant(orders, 100)
-	var res types.QueryResult
-	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &res)
-	if res.RowCount != 1 {
-		t.Fatalf("statement did not run with every relation granted: %+v", res)
-	}
-	if res.Authorization == "" || res.Authorization[:6] != "grant:" {
-		t.Fatalf("authorization basis not reported: %q", res.Authorization)
-	}
-	for _, g := range r.d.Grants() {
-		if g.Path.ConnectionID == "c1" && g.Uses == 0 {
-			t.Fatalf("grant use not recorded for %s", g.Path)
-		}
-	}
-}
-
-// §9.3: the row ceiling is required, because identical relations with a
-// different WHERE can return three orders of magnitude more rows.
-func TestGrantRowCeilingBounds(t *testing.T) {
-	users := types.RelationRef{Schema: "public", Relation: "users"}
-	r := escalatingRig(t, users)
-	r.pipe.facts.EstimatedRows = 5000
-	a := r.agent("reconcile OPS-441")
-	cli := r.socket()
-
-	cli.mustJSON("POST", "/v1/grants", map[string]any{
-		"path":        types.PathRef{ConnectionID: "c1", Relation: users},
-		"lifetime":    types.GrantStanding,
-		"row_ceiling": 100,
-		"actor":       "ming",
-	}, nil)
-
-	var tk types.Ticket
-	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
-	if tk.ID == "" {
-		t.Fatal("a plan expecting 5000 rows was authorized by a grant with a ceiling of 100")
-	}
-
-	resp, raw := cli.do("POST", "/v1/grants", map[string]any{
-		"path":     types.PathRef{ConnectionID: "c1", Relation: users},
-		"lifetime": types.GrantStanding,
-	})
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("a grant without a ceiling was accepted: %d %s", resp.StatusCode, raw)
-	}
-}
-
 // R9.1: one queue, oldest first, always. Never by severity and never reordered
 // while a client is reading it.
 func TestApprovalQueueIsOldestFirst(t *testing.T) {
 	r := escalatingRig(t)
-	agents := []*client{r.agent("first task"), r.agent("second task"), r.agent("third task")}
+	agents := []*client{r.agent(), r.agent(), r.agent()}
 	var ids []string
 	for _, a := range agents {
 		var tk types.Ticket
@@ -221,7 +118,7 @@ func TestApprovalQueueIsOldestFirst(t *testing.T) {
 		if i > 0 && item.CreatedAt.Before(queue[i-1].CreatedAt) {
 			t.Fatalf("item %d is older than the one before it", i)
 		}
-		if item.Session.Client.Workspace == "" || item.Session.Intent == "" {
+		if item.Session.Client.Workspace == "" {
 			t.Fatalf("item %d carries no attribution: %+v", i, item.Session)
 		}
 	}
@@ -242,16 +139,12 @@ func TestLoopbackRejectsForeignOrigin(t *testing.T) {
 	b := r.browser()
 	b.header.Set("Origin", "http://evil.example")
 
-	resp, raw := b.do("POST", "/v1/grants", map[string]any{
-		"path":        types.PathRef{ConnectionID: "c1", Relation: types.RelationRef{Schema: "public", Relation: "users"}},
-		"lifetime":    types.GrantStanding,
-		"row_ceiling": 10,
-	})
+	resp, raw := b.do("PATCH", "/v1/connections/c1", map[string]any{"writes": "allow"})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a foreign origin drove a policy change: %d %s", resp.StatusCode, raw)
 	}
-	if n := len(r.d.Grants()); n != 0 {
-		t.Fatalf("grant created from a foreign origin: %d", n)
+	if w := r.vault.conns["c1"].Writes; w == types.WritesAllow {
+		t.Fatalf("writes changed from a foreign origin: %s", w)
 	}
 
 	// A read is refused the same way.
@@ -286,11 +179,11 @@ func TestLoopbackRequiresCSRFToken(t *testing.T) {
 	}
 }
 
-// §6.3 and R4.1f: register, accept, approve, grants, denylist, catalog edits and
+// §6.3 and R4.1f: register, approve, the reads and writes settings, catalog edits and
 // every §4.5 limit are never reachable from an MCP session.
 func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 
 	cases := []struct {
 		method, path string
@@ -300,19 +193,14 @@ func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 		{"GET", "/v1/hosts", nil},
 		{"POST", "/v1/hosts", map[string]any{"name": "x", "address": "h"}},
 		{"DELETE", "/v1/hosts/h1", nil},
-		{"GET", "/v1/audit", nil},
-		{"PATCH", "/v1/connections/c1", map[string]any{"mode": "permissive"}},
-		{"PUT", "/v1/connections/c1/denylist", map[string]any{"relations": []types.RelationRef{}}},
+		{"PATCH", "/v1/connections/c1", map[string]any{"writes": "allow"}},
 		{"GET", "/v1/approvals", nil},
 		{"POST", "/v1/approvals/x/decide", map[string]any{"decision": "approve"}},
-		{"GET", "/v1/grants", nil},
-		{"POST", "/v1/grants", map[string]any{"row_ceiling": 1}},
 		{"PUT", "/v1/catalog/c1/columns", map[string]any{"entries": map[string]any{}}},
 		{"POST", "/v1/catalog/c1/init", map[string]any{}},
 		{"GET", "/v1/activity", nil},
 		{"GET", "/v1/doctor", nil},
 		{"POST", "/v1/vault/export", nil},
-		{"POST", "/v1/vault/rotate-master", nil},
 	}
 	for _, tc := range cases {
 		resp, raw := a.do(tc.method, tc.path, tc.body)
@@ -344,11 +232,11 @@ func TestAgentSurfaceIsNotOnTheLoopbackListener(t *testing.T) {
 	}
 }
 
-// R8.7g: one mechanism, two kinds. An input request returns a token into the
-// session's reverse map; an authorization request returns nothing at all.
-func TestInputAndAuthorizationRequestsDifferInWhatComesBack(t *testing.T) {
+// An input request returns a token into the session's reverse map and never
+// the value.
+func TestInputRequestReturnsATokenIntoTheSessionAndNeverTheValue(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("find all orders for an email")
+	a := r.agent()
 	b := r.browser()
 
 	// --- input -------------------------------------------------------
@@ -394,50 +282,13 @@ func TestInputAndAuthorizationRequestsDifferInWhatComesBack(t *testing.T) {
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{
 		"sql": "SELECT 1 WHERE email = $1", "params": []any{map[string]any{"token": got.Token}},
 	}, nil)
-
-	// --- authorization ------------------------------------------------
-	var authReq types.LocalRequest
-	a.mustJSON("POST", "/v1/requests", map[string]any{
-		"kind": types.RequestAuthorization, "connection_id": "c1",
-		"path": types.PathRef{ConnectionID: "c1", Relation: types.RelationRef{Schema: "public", Relation: "users"}},
-	}, &authReq)
-
-	grantRaw := b.mustJSON("POST", "/v1/requests/"+authReq.ID+"/decide",
-		map[string]any{"decision": "grant", "lifetime": types.GrantSession, "row_ceiling": 100}, nil)
-
-	var answer struct {
-		Kind      string        `json:"kind"`
-		Delivered bool          `json:"delivered"`
-		Granted   []types.Grant `json:"granted"`
-	}
-	if err := json.Unmarshal(grantRaw, &answer); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if answer.Delivered {
-		t.Fatal("an authorization request reported a delivery, which did not happen")
-	}
-	if len(answer.Granted) != 1 || answer.Granted[0].Path.Relation.Relation != "users" {
-		t.Fatalf("the page did not say what was granted: %+v", answer)
-	}
-
-	var authGot struct {
-		State string `json:"state"`
-		Token string `json:"token"`
-	}
-	a.mustJSON("GET", "/v1/requests/"+authReq.ID+"?wait_ms=1000", nil, &authGot)
-	if authGot.State != "ready" {
-		t.Fatalf("authorization request never resolved: %+v", authGot)
-	}
-	if authGot.Token != "" {
-		t.Fatal("an authorization request minted a token; the session gained a value it did not have")
-	}
 }
 
 // R8.7c: a different session cannot retrieve another's request.
 func TestLocalRequestIsRefusedToAnotherSession(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("task a")
-	b := r.agent("task b")
+	a := r.agent()
+	b := r.agent()
 
 	var input types.LocalRequest
 	a.mustJSON("POST", "/v1/requests", map[string]any{
@@ -453,7 +304,7 @@ func TestLocalRequestIsRefusedToAnotherSession(t *testing.T) {
 // R8.7c: one-use.
 func TestLocalRequestIsOneUse(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("task")
+	a := r.agent()
 	b := r.browser()
 
 	var input types.LocalRequest
@@ -472,7 +323,7 @@ func TestLocalRequestIsOneUse(t *testing.T) {
 // polling, and the connection it polls on is the one the ticket was bound to.
 func TestApprovalExecutesAndTheAgentCollectsTheResult(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -495,7 +346,7 @@ func TestApprovalExecutesAndTheAgentCollectsTheResult(t *testing.T) {
 // A refusal comes back as a keeper error and nothing runs.
 func TestRefusalComesBackAsAnError(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -517,12 +368,12 @@ func TestRefusalComesBackAsAnError(t *testing.T) {
 	}
 }
 
-// R4.2f: no allow rule authorizes a write, and none may lower one below tier 3.
-func TestAWriteApprovalCannotBecomeAGrant(t *testing.T) {
+// A write waits with its preview, and an approval commits it.
+func TestAWriteApprovalCarriesItsPreviewAndCommits(t *testing.T) {
 	r := escalatingRig(t)
 	r.pipe.facts.StatementType = "UPDATE"
 	r.pipe.preview = &types.WritePreview{Operation: "UPDATE", RowCount: 4182, PreviewedAt: time.Now()}
-	a := r.agent("close duplicate accounts OPS-512")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -533,17 +384,6 @@ func TestAWriteApprovalCannotBecomeAGrant(t *testing.T) {
 		t.Fatalf("write approval carries no preview: %+v", queue)
 	}
 
-	resp, raw := cli.do("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{
-		"decision": "approve", "actor": "ming",
-		"grant": map[string]any{"lifetime": "standing", "row_ceiling": 10000},
-	})
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("a write approval created an allow rule: %d %s", resp.StatusCode, raw)
-	}
-	if n := len(r.d.Grants()); n != 0 {
-		t.Fatalf("grants created for a write: %d", n)
-	}
-
 	cli.mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "approve", "actor": "ming"}, nil)
 	var got struct {
 		State  string             `json:"state"`
@@ -552,36 +392,6 @@ func TestAWriteApprovalCannotBecomeAGrant(t *testing.T) {
 	a.mustJSON("GET", "/v1/tickets/"+tk.ID+"?wait_ms=2000", nil, &got)
 	if got.State != string(types.TicketReady) || got.Result == nil || got.Result.ExecutedRows != 1 {
 		t.Fatalf("approved write did not commit: %+v", got)
-	}
-}
-
-// R4.1: G0 reports, it does not gate — including when G0 cannot run.
-//
-// A managed server that hides pg_authid, a role without the introspection
-// grants and a host that is down at registration all made the audit fail, and a
-// failed audit refused the registration outright. That is the acceptance gate
-// wearing the auditor's clothes: keeper held nothing, masked nothing, and the
-// connections worth masking were the ones it turned away.
-func TestRegisterSurvivesAnAuditThatCannotRun(t *testing.T) {
-	r := newRig(t)
-	r.aud.err = errors.New("permission denied for table pg_authid")
-	b := r.browser()
-
-	var got struct {
-		ID        string    `json:"id"`
-		Name      string    `json:"name"`
-		AuditedAt time.Time `json:"audited_at"`
-	}
-	b.mustJSON("POST", "/v1/connections", map[string]any{
-		"name": "managed", "host_id": "h1", "database": "db", "credential": map[string]any{"user": "u"},
-	}, &got)
-	if got.ID == "" || got.Name != "managed" {
-		t.Fatalf("an unauditable connection was refused registration: %+v", got)
-	}
-	// No report is a state, not a blank one: `keeper audit` says "never" rather
-	// than dating the report to the year 1 or claiming a clean bill of health.
-	if !got.AuditedAt.IsZero() {
-		t.Fatalf("an audit that never ran was timestamped: %v", got.AuditedAt)
 	}
 }
 
@@ -622,7 +432,7 @@ func TestNoUnlockSurfaceAndTheKeySourceIsStillNamed(t *testing.T) {
 // permanently unresolvable, and the error has to say that.
 func TestUnresolvableTokenExplainsWhatHappened(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 
 	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{
 		"sql": "SELECT 1 WHERE email = $1", "params": []any{map[string]any{"token": "<email:99>"}},
@@ -636,25 +446,6 @@ func TestUnresolvableTokenExplainsWhatHappened(t *testing.T) {
 	}
 	if len(r.pipe.seenAuths()) != 0 {
 		t.Fatal("a statement with an unresolvable token reached the pipeline")
-	}
-}
-
-// An intent is optional: a query runs without one. One that is given is still
-// screened (R10c), because it reaches the Inbox and the activity log.
-func TestIntentIsOptionalAndScreened(t *testing.T) {
-	r := newRig(t)
-	r.alog.reject = "patient Jane Doe"
-	a := r.agent("")
-
-	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("a query without an intent was refused: %d %s", resp.StatusCode, raw)
-	}
-	a.mustJSON("POST", "/v1/session/intent", map[string]any{"token_scope": "session"}, nil)
-
-	resp, raw = a.do("POST", "/v1/session/intent", map[string]any{"intent": "patient Jane Doe"})
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("an intent carrying PII was recorded: %d %s", resp.StatusCode, raw)
 	}
 }
 
@@ -680,9 +471,9 @@ func TestLocalPageIsNoStore(t *testing.T) {
 	}
 }
 
-// R6.4b: a column whose name is disclosive is omitted from get_schema and
-// counted, and an unreadable column is not listed either (R5.5).
-func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
+// An unreadable column is not listed in get_schema and is counted (R5.5); a
+// readable one is listed with its policy.
+func TestSchemaOmitsAndCountsUnreadableColumns(t *testing.T) {
 	r := newRig(t)
 	users := types.RelationRef{Schema: "public", Relation: "users"}
 	r.exec.rels = []ports.Relation{{
@@ -697,15 +488,14 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 	r.cat.readable[users.String()] = []string{"id", "email", "has_hiv_diagnosis"}
 	r.cat.byName[users.String()+".id"] = types.ColumnPolicy{Policy: types.PolicyAllow}
 	r.cat.byName[users.String()+".email"] = types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "email"}
-	r.cat.byName[users.String()+".has_hiv_diagnosis"] = types.ColumnPolicy{Policy: types.PolicyDrop, HideName: true}
+	r.cat.byName[users.String()+".has_hiv_diagnosis"] = types.ColumnPolicy{Policy: types.PolicyRedact}
 
-	a := r.agent("explore schema")
+	a := r.agent()
 	var out struct {
 		Tables []struct {
-			Name          string                  `json:"name"`
-			Columns       []struct{ Name string } `json:"columns"`
-			HiddenColumns int                     `json:"hidden_columns"`
-			Unreadable    int                     `json:"unreadable_columns"`
+			Name       string                  `json:"name"`
+			Columns    []struct{ Name string } `json:"columns"`
+			Unreadable int                     `json:"unreadable_columns"`
 		} `json:"tables"`
 	}
 	a.mustJSON("GET", "/v1/connections/c1/schema?schema=public&table=users", nil, &out)
@@ -713,12 +503,12 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 		t.Fatalf("want one table, got %d", len(out.Tables))
 	}
 	tbl := out.Tables[0]
-	if tbl.HiddenColumns != 1 || tbl.Unreadable != 1 {
-		t.Fatalf("hidden/unreadable not counted: %+v", tbl)
+	if tbl.Unreadable != 1 || len(tbl.Columns) != 3 {
+		t.Fatalf("unreadable column not counted, or a readable one hidden: %+v", tbl)
 	}
 	for _, c := range tbl.Columns {
-		if c.Name == "has_hiv_diagnosis" || c.Name == "secret" {
-			t.Fatalf("a suppressed column name was disclosed: %s", c.Name)
+		if c.Name == "secret" {
+			t.Fatalf("an unreadable column name was disclosed: %s", c.Name)
 		}
 	}
 }
@@ -726,7 +516,7 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 // R9.2: the approval screen shows the override rather than obeying it.
 func TestApprovalSQLShowsBidiOverrides(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	a.mustJSON("POST", "/v1/connections/c1/query",
 		map[string]any{"sql": "SELECT id FROM users -- \u202e DROP"}, nil)
 
@@ -744,7 +534,7 @@ func TestApprovalSQLShowsBidiOverrides(t *testing.T) {
 // already has it.
 func TestEventStreamCarriesNoRequestID(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("task")
+	a := r.agent()
 	b := r.browser()
 
 	req, err := http.NewRequest("GET", r.ui.URL+"/v1/events", nil)
@@ -789,53 +579,11 @@ func TestEventStreamCarriesNoRequestID(t *testing.T) {
 	}
 }
 
-// R9.3a and R9.3c: approving with a grant writes the narrowest scope covering
-// the approved request — one entry per relation the plan touched, with §9.3's
-// ten-times-what-was-approved ceiling when the human did not name one.
-func TestApprovingWithAGrantWritesOneEntryPerRelation(t *testing.T) {
-	users := types.RelationRef{Schema: "public", Relation: "users"}
-	orders := types.RelationRef{Schema: "public", Relation: "orders"}
-	r := escalatingRig(t, users, orders)
-	a := r.agent("reconcile OPS-441")
-	cli := r.socket()
-
-	var tk types.Ticket
-	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
-	cli.mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{
-		"decision": "approve", "actor": "ming",
-		"grant": map[string]any{"lifetime": types.GrantSession},
-	}, nil)
-
-	grants := r.d.Grants()
-	if len(grants) != 2 {
-		t.Fatalf("want one grant per relation, got %d: %+v", len(grants), grants)
-	}
-	seen := map[string]bool{}
-	for _, g := range grants {
-		seen[g.Path.Relation.String()] = true
-		if g.Lifetime != types.GrantSession {
-			t.Fatalf("want a session grant, got %q", g.Lifetime)
-		}
-		if g.SessionID == "" {
-			t.Fatal("a session grant was written without a session to die with")
-		}
-		if g.RowCeiling != 100 { // 10 x the 10 estimated rows
-			t.Fatalf("ceiling %d, want ten times the approved estimate", g.RowCeiling)
-		}
-		if g.Path.ConnectionID != "c1" {
-			t.Fatalf("grant escaped its connection: %s", g.Path)
-		}
-	}
-	if !seen["public.users"] || !seen["public.orders"] {
-		t.Fatalf("the grant set does not cover the plan: %v", seen)
-	}
-}
-
 // A decision on a ticket that is already settled is refused, and the queue does
 // not grow a second copy.
 func TestATicketIsDecidedOnce(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -884,51 +632,11 @@ func TestConnectionDetailIsCompleteAndCarriesDuration(t *testing.T) {
 	}
 }
 
-// R4.1: the privilege audit is its own surface. It reports every connection's
-// findings with the statement that would narrow each one, and reporting is all
-// it does — the connection carrying them answers queries like any other.
-func TestAuditReportsFindingsAndGatesNothing(t *testing.T) {
-	r := newRig(t)
-	r.vault.conns["c1"].Findings = []types.Finding{{
-		ID: "rolsuper", Kind: types.FindingAttribute, Subject: "rolsuper",
-		Detail:   "This role can do anything on the server.",
-		Narrower: "CREATE ROLE app_ro LOGIN;",
-	}}
-
-	var reports []struct {
-		ConnectionID string          `json:"connection_id"`
-		Name         string          `json:"name"`
-		Findings     []types.Finding `json:"findings"`
-	}
-	r.socket().mustJSON("GET", "/v1/audit", nil, &reports)
-
-	if len(reports) != 1 {
-		t.Fatalf("got %d report(s), want 1", len(reports))
-	}
-	if reports[0].ConnectionID != "c1" || reports[0].Name != "prod" {
-		t.Fatalf("report does not name its connection: %+v", reports[0])
-	}
-	if len(reports[0].Findings) != 1 {
-		t.Fatalf("got %d finding(s), want 1", len(reports[0].Findings))
-	}
-	// The suggested fix is the reason the screen is worth opening; a report
-	// that dropped it would leave the operator with a problem and no move.
-	if got := reports[0].Findings[0].Narrower; got != "CREATE ROLE app_ro LOGIN;" {
-		t.Errorf("Narrower = %q, want the narrowing statement", got)
-	}
-
-	// And the connection is untouched by any of it.
-	resp, raw := r.socket().do("GET", "/v1/connections/c1", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("a connection with findings is not describable: %d %s", resp.StatusCode, raw)
-	}
-}
-
 // A human reviewing Activity sees what the agent received, masked as it was
 // sent. The rows are held in memory beside the audit record, never in it (R10b).
 func TestActivityRecordCarriesTheResultTheAgentSaw(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -1013,65 +721,7 @@ func TestHostCarriesSeveralConnections(t *testing.T) {
 	}
 }
 
-func Test_DET_C1_DescribeShowsAConnectionsPassesInOrder(t *testing.T) {
-	r := newRig(t)
-	b := r.browser()
-	b.mustJSON("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "list"}, {"kind": "patterns"}}}, nil)
-	var d struct {
-		Detection []types.Stage `json:"detection"`
-	}
-	b.mustJSON("GET", "/v1/connections/c1", nil, &d)
-	if !slices.Equal(stageKinds(d.Detection), []types.StageKind{"list", "patterns"}) {
-		t.Errorf("detection = %v, want [list patterns]", d.Detection)
-	}
-}
-
-func Test_DET_C2_AnAgentCannotChangeDetection(t *testing.T) {
-	r := newRig(t)
-	before := stageKinds(r.vault.conns["c1"].Detection)
-	a := r.agent("reconcile OPS-441")
-	for _, req := range []struct {
-		method, path string
-		body         any
-	}{
-		{"PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{}}},
-		{"PUT", "/v1/connections/c1/terms", map[string]any{"allow": []string{"jane@example.com"}}},
-	} {
-		if resp, _ := a.do(req.method, req.path, req.body); resp.StatusCode == http.StatusOK {
-			t.Errorf("%s %s succeeded from an MCP session", req.method, req.path)
-		}
-	}
-	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) {
-		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
-	}
-	if len(r.vault.terms["c1"].Allow) != 0 {
-		t.Errorf("terms changed to %+v", r.vault.terms["c1"])
-	}
-}
-
-func Test_DET_C3_AnUnknownPassIsRejected(t *testing.T) {
-	r := newRig(t)
-	before := stageKinds(r.vault.conns["c1"].Detection)
-	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "patterns"}, {"kind": "magic"}}})
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("an unknown pass was accepted: %s", raw)
-	}
-	if !strings.Contains(string(raw), "patterns") || !strings.Contains(string(raw), "list") {
-		t.Errorf("the error does not name the known stage kinds: %s", raw)
-	}
-	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) {
-		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
-	}
-}
-
-func Test_DET_C37_PresidioIsNotAPassYet(t *testing.T) {
-	r := newRig(t)
-	if resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "presidio"}}}); resp.StatusCode == http.StatusOK {
-		t.Fatalf("presidio was accepted as a pass: %s", raw)
-	}
-}
-
-func Test_DET_C26_ANewConnectionStartsWithPatterns(t *testing.T) {
+func TestDetectionIsAnOperatorSetting(t *testing.T) {
 	r := newRig(t)
 	b := r.browser()
 	var c struct {
@@ -1081,134 +731,50 @@ func Test_DET_C26_ANewConnectionStartsWithPatterns(t *testing.T) {
 		"name": "new", "host_id": "h1", "database": "db", "credential": map[string]any{"user": "u"},
 	}, &c)
 	var d struct {
-		Detection []types.Stage `json:"detection"`
+		Detection types.Detection `json:"detection"`
 	}
 	b.mustJSON("GET", "/v1/connections/"+c.ID, nil, &d)
-	if !slices.Equal(stageKinds(d.Detection), []types.StageKind{"patterns"}) {
-		t.Errorf("detection = %v, want [patterns]", d.Detection)
+	if d.Detection != types.DetectionScan {
+		t.Errorf("a new connection's detection = %q, want scan", d.Detection)
 	}
-}
-
-func Test_DET_C31_TermsNeverComeBackOut(t *testing.T) {
-	r := newRig(t)
-	b := r.browser()
-	const deny, allow = "Acme Corp Secret", "support@yourco.example"
-	var put map[string]any
-	b.mustJSON("PUT", "/v1/connections/c1/terms", map[string]any{"deny": []string{deny}, "allow": []string{allow}}, &put)
-	if got := r.vault.terms["c1"]; !slices.Equal(got.Deny, []string{deny}) || !slices.Equal(got.Allow, []string{allow}) {
-		t.Fatalf("terms were not stored: %+v", got)
+	b.mustJSON("PATCH", "/v1/connections/c1", map[string]any{"detection": "all"}, nil)
+	b.mustJSON("GET", "/v1/connections/c1", nil, &d)
+	if d.Detection != types.DetectionAll {
+		t.Errorf("detection = %q, want all", d.Detection)
 	}
-	_, patch := b.do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "patterns"}, {"kind": "list"}}})
-	_, desc := b.do("GET", "/v1/connections/c1", nil)
-	_, list := b.do("GET", "/v1/connections", nil)
-	putRaw, _ := json.Marshal(put)
-	for name, raw := range map[string][]byte{"terms response": putRaw, "patch": patch, "describe": desc, "list": list} {
-		if strings.Contains(string(raw), deny) || strings.Contains(string(raw), allow) {
-			t.Errorf("%s carries a term: %s", name, raw)
+	for _, bad := range []any{"sometimes", []map[string]any{{"kind": "patterns"}}} {
+		if resp, raw := b.do("PATCH", "/v1/connections/c1", map[string]any{"detection": bad}); resp.StatusCode == http.StatusOK {
+			t.Errorf("detection %v was accepted: %s", bad, raw)
+		}
+	}
+	a := r.agent()
+	if resp, _ := a.do("PATCH", "/v1/connections/c1", map[string]any{"detection": "off"}); resp.StatusCode == http.StatusOK {
+		t.Error("an MCP session changed detection")
+	}
+	if got := r.vault.conns["c1"].Detection; got != types.DetectionAll {
+		t.Errorf("detection = %q after refused changes, want all", got)
+	}
+	for _, path := range []string{"/v1/connections/c1/terms", "/v1/catalog/c1/grants"} {
+		if resp, _ := b.do("POST", path, nil); resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("%s still has a route: %d", path, resp.StatusCode)
 		}
 	}
 }
 
-func stageKinds(stages []types.Stage) []types.StageKind {
-	out := make([]types.StageKind, len(stages))
-	for i, st := range stages {
-		out[i] = st.Kind
-	}
-	return out
-}
-
-func Test_DET_C46_ABadEntityNameIsRefused(t *testing.T) {
+func TestPatchRefusesAReadsOrWritesValueKeeperDoesNotKnow(t *testing.T) {
 	r := newRig(t)
-	before := stageKinds(r.vault.conns["c1"].Detection)
-	for _, bad := range []string{"", "email⟩", "Email Address"} {
-		resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{
-			"detection": []map[string]any{{"kind": "patterns", "entities": []string{bad}}},
-		})
+	for _, body := range []map[string]any{{"reads": "sometimes"}, {"writes": "approve"}} {
+		resp, raw := r.browser().do("PATCH", "/v1/connections/c1", body)
 		if resp.StatusCode == http.StatusOK {
-			t.Errorf("entity %q was accepted: %s", bad, raw)
+			t.Errorf("%v was accepted: %s", body, raw)
 		}
 	}
-	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) || len(r.vault.conns["c1"].Detection) > 0 && len(r.vault.conns["c1"].Detection[0].Entities) > 0 {
-		t.Errorf("stages changed to %+v", r.vault.conns["c1"].Detection)
+	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"reads": "never", "writes": "allow"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a known setting was refused: %d %s", resp.StatusCode, raw)
 	}
-}
-
-func Test_DET_C40_ExpressionsNeverComeBackOut(t *testing.T) {
-	r := newRig(t)
-	b := r.browser()
-	const expr = `EMP-SECRET-\d{6}`
-	_, put := b.do("PUT", "/v1/connections/c1/terms", map[string]any{"patterns": []map[string]any{{"label": "employee_id", "expr": expr}}})
-	if got := r.vault.terms["c1"].Patterns; len(got) != 1 || got[0].Expr != expr {
-		t.Fatalf("expression was not stored: %+v", got)
-	}
-	_, desc := b.do("GET", "/v1/connections/c1", nil)
-	_, list := b.do("GET", "/v1/connections", nil)
-	for name, raw := range map[string][]byte{"terms response": put, "describe": desc, "list": list} {
-		if strings.Contains(string(raw), "EMP-SECRET") {
-			t.Errorf("%s carries an expression: %s", name, raw)
-		}
-	}
-}
-
-func Test_DET_C41_AnExpressionThatDoesNotCompileIsRefusedByName(t *testing.T) {
-	r := newRig(t)
-	r.vault.terms["c1"] = ports.Terms{Deny: []string{"kept"}}
-	resp, raw := r.browser().do("PUT", "/v1/connections/c1/terms", map[string]any{
-		"deny":     []string{"replaced"},
-		"patterns": []map[string]any{{"label": "badge", "expr": `EMP-(`}},
-	})
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("an expression that does not compile was accepted: %s", raw)
-	}
-	if !strings.Contains(string(raw), "badge") {
-		t.Errorf("the refusal does not name the expression: %s", raw)
-	}
-	if got := r.vault.terms["c1"]; !slices.Equal(got.Deny, []string{"kept"}) || len(got.Patterns) != 0 {
-		t.Errorf("stored terms changed to %+v", got)
-	}
-}
-
-func Test_DET_C42_AnEmptyMatchOrABadLabelIsRefused(t *testing.T) {
-	r := newRig(t)
-	for _, p := range []map[string]any{
-		{"label": "anything", "expr": `x*`},
-		{"label": "bad⟩label", "expr": `EMP-\d{6}`},
-	} {
-		resp, raw := r.browser().do("PUT", "/v1/connections/c1/terms", map[string]any{"patterns": []map[string]any{p}})
-		if resp.StatusCode == http.StatusOK {
-			t.Errorf("%v was accepted: %s", p, raw)
-		}
-	}
-	if got := r.vault.terms["c1"]; len(got.Patterns) != 0 {
-		t.Errorf("something was stored: %+v", got)
-	}
-}
-
-// `keeper audit` with no name reads every connection's report from here; the
-// UI's Audit page going away takes nothing from the CLI.
-func Test_PRIV_C9_TheCLIsAuditReportStillAnswers(t *testing.T) {
-	r := newRig(t)
-	var reports []struct {
-		ConnectionID string `json:"connection_id"`
-	}
-	r.socket().mustJSON("GET", "/v1/audit", nil, &reports)
-	if len(reports) == 0 || reports[0].ConnectionID != "c1" {
-		t.Errorf("reports = %+v, want the registered connection's", reports)
-	}
-}
-
-func Test_JDG_C4_PermissiveModeIsRefused(t *testing.T) {
-	r := newRig(t)
-	before := r.vault.conns["c1"].Mode
-	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"mode": "permissive"})
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("permissive was accepted: %s", raw)
-	}
-	if !strings.Contains(string(raw), "strict") || !strings.Contains(string(raw), "assisted") || strings.Contains(string(raw), "permissive") {
-		t.Errorf("the refusal should name strict and assisted only: %s", raw)
-	}
-	if r.vault.conns["c1"].Mode != before {
-		t.Errorf("mode changed to %s", r.vault.conns["c1"].Mode)
+	if c := r.vault.conns["c1"]; c.Reads != types.ReadsNever || c.Writes != types.WritesAllow {
+		t.Errorf("reads=%s writes=%s", c.Reads, c.Writes)
 	}
 }
 
@@ -1230,7 +796,7 @@ type decisionRecord struct {
 
 func Test_SHELL_C7_ARefusalIsRecordedWithWhoDecided(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
 	r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "refuse", "actor": "ming"}, nil)
@@ -1274,13 +840,13 @@ func Test_SHELL_C12_ANonPositiveRetentionIsRefused(t *testing.T) {
 	}
 }
 
-func Test_WRITE_C2_TheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
+func TestTheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
 	r := newRig(t)
 	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Database = "h1", "app"
-	r.vault.conns["c9"] = &types.Connection{ID: "c9", Name: "prod_rw", HostID: "h1", Database: "app", Writes: types.WritesApprove, Mode: types.ModeAssisted, Limits: types.DefaultLimits()}
-	r.vault.conns["c8"] = &types.Connection{ID: "c8", Name: "other_db", HostID: "h1", Database: "other", Writes: types.WritesApprove, Mode: types.ModeAssisted, Limits: types.DefaultLimits()}
+	r.vault.conns["c9"] = &types.Connection{ID: "c9", Name: "prod_rw", HostID: "h1", Database: "app", Writes: types.WritesAsk, Reads: types.ReadsUncertain, Limits: types.DefaultLimits()}
+	r.vault.conns["c8"] = &types.Connection{ID: "c8", Name: "other_db", HostID: "h1", Database: "other", Writes: types.WritesAsk, Reads: types.ReadsUncertain, Limits: types.DefaultLimits()}
 	r.pipe.err = &types.Error{Code: types.CodeWritesOff, Summary: "writes are off for this profile"}
-	a := r.agent("fix a status")
+	a := r.agent()
 	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "UPDATE orders SET status = 'x'"})
 	if resp.StatusCode == http.StatusOK && !strings.Contains(string(raw), "writes_off") {
 		t.Fatalf("not refused: %s", raw)
@@ -1297,9 +863,8 @@ func Test_WRITE_C2_TheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
 
 func Test_WRITE_C3_AgentsSeeProfileDetailsButNeverAPassword(t *testing.T) {
 	r := newRig(t)
-	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Writes = "h1", types.WritesApprove
-	r.vault.terms["c1"] = ports.Terms{}
-	a := r.agent("look around")
+	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Writes = "h1", types.WritesAsk
+	a := r.agent()
 	var conns []struct {
 		Name     string `json:"name"`
 		Host     string `json:"host"`
@@ -1314,8 +879,8 @@ func Test_WRITE_C3_AgentsSeeProfileDetailsButNeverAPassword(t *testing.T) {
 		t.Fatalf("connections = %+v", conns)
 	}
 	c := conns[0]
-	if c.Host != "db1" || c.Address != "h" || c.Port != 5432 || c.Database != "app" || c.Username != "app_ro" || c.Writes != "approve" {
-		t.Errorf("profile = %+v, want host db1 at h:5432, database app, username app_ro, writes approve", c)
+	if c.Host != "db1" || c.Address != "h" || c.Port != 5432 || c.Database != "app" || c.Username != "app_ro" || c.Writes != "ask" {
+		t.Errorf("profile = %+v, want host db1 at h:5432, database app, username app_ro, writes ask", c)
 	}
 	for _, path := range []string{"/v1/connections", "/v1/connections/c1"} {
 		_, raw := a.do("GET", path, nil)
@@ -1333,7 +898,7 @@ func Test_WRITE_C6_PreviewedValuesReachOnlyTheApprover(t *testing.T) {
 		Operation: "UPDATE", RowCount: 1, PreviewedAt: time.Now(),
 		Changes: &types.WriteChanges{Columns: []string{"email"}, Rows: []types.ChangedRow{{Old: []string{"old@x"}, New: []string{secret}}}},
 	}
-	a := r.agent("fix an address")
+	a := r.agent()
 	cli := r.socket()
 
 	_, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "UPDATE users SET email = 'x'"})
@@ -1358,7 +923,7 @@ func Test_WRITE_C6_PreviewedValuesReachOnlyTheApprover(t *testing.T) {
 
 func Test_WRITE_C9_AnAgentCancelsItsOwnPendingRequest(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("look at last week's orders")
+	a := r.agent()
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
 
@@ -1383,31 +948,17 @@ func Test_WRITE_C9_AnAgentCancelsItsOwnPendingRequest(t *testing.T) {
 
 func Test_WRITE_C10_AnAgentCannotCancelAnotherSessionsRequest(t *testing.T) {
 	r := escalatingRig(t)
-	owner := r.agent("look at last week's orders")
+	owner := r.agent()
 	var tk types.Ticket
 	owner.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
 
-	other := r.agent("something else")
+	other := r.agent()
 	resp, raw := other.do("POST", "/v1/tickets/"+tk.ID+"/cancel", nil)
 	if resp.StatusCode == http.StatusOK {
 		t.Fatalf("another session cancelled the request: %s", raw)
 	}
 	if q := r.d.Approvals(); len(q) != 1 {
 		t.Errorf("the request left the Inbox: %+v", q)
-	}
-}
-
-func Test_TOKEN_C9_AnUnknownTokenScopeIsRefusedNamingBoth(t *testing.T) {
-	r := newRig(t)
-	a := r.agent("")
-	resp, raw := a.do("POST", "/v1/session/intent", map[string]any{"intent": "look around", "token_scope": "forever"})
-	if resp.StatusCode == http.StatusOK || !strings.Contains(string(raw), "session") || !strings.Contains(string(raw), "persistent") {
-		t.Fatalf("scope forever: %d %s; want a refusal naming session and persistent", resp.StatusCode, raw)
-	}
-	a.mustJSON("POST", "/v1/session/intent", map[string]any{"intent": "look around", "token_scope": "persistent"}, nil)
-	sessions := r.d.Sessions()
-	if len(sessions) != 1 || sessions[0].TokenScope != types.ScopePersistent {
-		t.Errorf("sessions = %+v, want token_scope persistent", sessions)
 	}
 }
 

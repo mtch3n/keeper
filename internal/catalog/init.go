@@ -170,15 +170,7 @@ func (in *initRun) degrade() {
 // nothing about the data, which is why the proposal goes to needs review; what
 // it changes is the default a hurried operator accepts.
 func personalByName(name string) (types.ColumnPolicy, bool) {
-	n := strings.ToLower(name)
-	has := func(parts ...string) bool {
-		for _, p := range parts {
-			if n == p || strings.HasPrefix(n, p+"_") || strings.HasSuffix(n, "_"+p) || strings.Contains(n, "_"+p+"_") {
-				return true
-			}
-		}
-		return false
-	}
+	has := nameHas(name)
 	switch {
 	case has("dob", "birthdate", "birthday", "date_of_birth", "birth_date"):
 		return types.ColumnPolicy{Policy: types.PolicyRedact}, true
@@ -192,4 +184,18 @@ func personalByName(name string) (types.ColumnPolicy, bool) {
 		return types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "iban"}, true
 	}
 	return types.ColumnPolicy{}, false
+}
+
+// nameHas reports whether a column name is, or has as an underscore-separated
+// word, any of parts.
+func nameHas(name string) func(parts ...string) bool {
+	n := strings.ToLower(name)
+	return func(parts ...string) bool {
+		for _, p := range parts {
+			if n == p || strings.HasPrefix(n, p+"_") || strings.HasSuffix(n, "_"+p) || strings.Contains(n, "_"+p+"_") {
+				return true
+			}
+		}
+		return false
+	}
 }

@@ -32,9 +32,8 @@ func (c *Client) Explain(ctx context.Context, connID, sql string, params []Param
 	return &out, nil
 }
 
-// QueryOutcome is what `query` returned: either a completed Result (tier 0/1,
-// SPEC §3.2) or a Ticket to poll with GetResult (tier 2/3). Exactly one is
-// non-nil.
+// QueryOutcome is what `query` returned: either a completed Result or a Ticket
+// to poll with GetResult when a person must accept first. Exactly one is non-nil.
 type QueryOutcome struct {
 	Result *types.QueryResult
 	Ticket *types.Ticket
@@ -81,6 +80,8 @@ func (c *Client) Query(ctx context.Context, connID, sql string, params []Param, 
 // /v1/tickets/{id} → {state, result?, error?}).
 type TicketResult struct {
 	State  types.TicketState  `json:"state"`
+	URL    string             `json:"url,omitzero"`
+	Write  bool               `json:"write,omitzero"`
 	Result *types.QueryResult `json:"result,omitzero"`
 	Error  *types.Error       `json:"error,omitzero"`
 }
@@ -108,6 +109,25 @@ func (c *Client) GetResult(ctx context.Context, ticket string, waitMillis int) (
 func (c *Client) CancelTicket(ctx context.Context, ticket string) (*TicketResult, error) {
 	var out TicketResult
 	if err := c.do(ctx, http.MethodPost, "/v1/tickets/"+url.PathEscape(ticket)+"/cancel", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// AnswerTicket posts the answer of the approval dialog the server opened for
+// this session's own ticket. A ticket that is unknown, expired or another
+// session's is refused as unknown; one already settled returns its settled
+// state, because the first decision wins.
+func (c *Client) AnswerTicket(ctx context.Context, ticket string, accept bool) (*TicketResult, error) {
+	decision := "refuse"
+	if accept {
+		decision = "approve"
+	}
+	body := struct {
+		Decision string `json:"decision"`
+	}{Decision: decision}
+	var out TicketResult
+	if err := c.do(ctx, http.MethodPost, "/v1/tickets/"+url.PathEscape(ticket)+"/answer", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

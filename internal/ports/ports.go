@@ -67,10 +67,6 @@ type Vault interface {
 	Settings(ctx context.Context) (types.Settings, error)
 	SetSettings(ctx context.Context, s types.Settings) error
 
-	// Terms returns a connection's list-pass terms; SetTerms replaces them.
-	Terms(ctx context.Context, id string) (Terms, error)
-	SetTerms(ctx context.Context, id string, t Terms) error
-
 	// DSN assembles the connection string from the connection's host and its
 	// credential.
 	DSN(ctx context.Context, id string) (string, error)
@@ -84,14 +80,6 @@ type Vault interface {
 	// Import replaces this vault with an export sealed under passphrase,
 	// refusing anything it cannot open or that is not a whole vault.
 	Import(ctx context.Context, data []byte, passphrase string) error
-	RotateMaster(ctx context.Context) error
-}
-
-// Auditor is internal/pgaudit. It runs G0 against a live connection and reports
-// what it found. It never refuses and never disables: what it returns is a
-// report the operator reads, not a gate on the connection. SPEC R4.1.
-type Auditor interface {
-	Audit(ctx context.Context, dsn string, role Role) ([]types.Finding, error)
 }
 
 // CatalogFor resolves the catalog for one connection.
@@ -159,8 +147,6 @@ type CatalogStore interface {
 	// Init proposes a policy for every column, grouped by how safe the proposal
 	// is to accept without reading it. sample is 0 for no row sampling.
 	Init(ctx context.Context, connID string, sample int) (*InitProposal, error)
-	// SuggestGrants emits GRANT SELECT (...) per table, omitting drop columns.
-	SuggestGrants(ctx context.Context, connID string) ([]string, error)
 	// Unclassified is the Catalog screen's backlog.
 	Unclassified(ctx context.Context, connID string) ([]string, error)
 }
@@ -196,27 +182,10 @@ type Detector interface {
 	Identity() DetectorIdentity
 }
 
-// DetectorFor returns a connection's detector: the chain of passes its
-// operator chose. It is nil, with no error, when the connection runs no
-// passes, and a nil detector examines nothing.
+// DetectorFor returns a connection's detector: the detector its
+// detection setting allows. It is nil, with no error, when detection is off,
+// and a nil detector examines nothing.
 type DetectorFor func(ctx context.Context, connID string) (Detector, error)
-
-// Terms are a connection's list-pass terms: deny terms are always PII, and a
-// span whose text equals an allow term is never redacted. They exist between
-// the human surface, the vault and the list pass and are never returned by
-// any API.
-type Terms struct {
-	Deny     []string
-	Allow    []string
-	Patterns []Pattern
-}
-
-// Pattern is one operator regular expression the list pass matches. A hit is
-// labelled Label, or "custom" when Label is empty.
-type Pattern struct {
-	Label string `json:"label,omitzero"`
-	Expr  string `json:"expr"`
-}
 
 // Span is one detected range, half-open.
 type Span struct {
@@ -256,10 +225,8 @@ type ResolvedParam struct {
 type Statement struct {
 	ConnectionID string
 	Params       []ResolvedParam
-	// Persistent is set when this statement's tokens persist: the session
-	// declared persistent and the connection allows it. Otherwise they are
-	// session tokens.
-	Persistent bool
+	// Detection is the connection's detection setting for this statement.
+	Detection types.Detection
 }
 
 type statementKey struct{}
@@ -343,10 +310,11 @@ type Executor interface {
 // the Redactor before it reaches the Executor, so Executor never sees one.
 type Param struct {
 	Value any
+	// Policy is the source policy of a value resolved from a token. Empty is a plain value.
+	Policy types.Policy
 }
 
-// PlanFacts is what EXPLAIN told us. Denylists and allow rules are evaluated
-// against Relations, never against statement text: SPEC R7.4c.
+// PlanFacts is what EXPLAIN told us. Decisions read it, never statement text.
 type PlanFacts struct {
 	StatementType string
 	Relations     []uint32
@@ -354,7 +322,10 @@ type PlanFacts struct {
 	EstimatedRows int64
 	EstimatedCost float64
 	Writes        bool
-	HasFilter     bool
+	// Uncertain is set when a volatile function name appears as a call in the
+	// plan, or when keeper could not look that up.
+	Uncertain bool
+	HasFilter bool
 	// Filters are the columns the plan's conditions name: filters, index and
 	// join conditions.
 	Filters []ColumnRef
@@ -415,9 +386,9 @@ type AuditLog interface {
 	// Normalize strips literals and comments from a statement and keeps quoted
 	// identifiers only where they match the catalog. SPEC R10a and R10c.
 	Normalize(sql string, known func(string) bool) string
-	// ScreenIntent rejects a session intent that carries PII, using the same rule
-	// pass as a scan column. SPEC R10c.
-	ScreenIntent(ctx context.Context, intent string) error
+	// ScreenText rejects user-visible task text that carries PII, using the same
+	// rule pass as a scan column. SPEC R10c.
+	ScreenText(ctx context.Context, text string) error
 	// Prune deletes every record older than the retention, in whole days.
 	Prune(ctx context.Context, retentionDays int) error
 	// LegacyPlaintext is the path of a plaintext log an earlier keeper left, or
@@ -429,7 +400,6 @@ type AuditLog interface {
 type AuditFilter struct {
 	SessionID    string
 	ConnectionID string
-	Tier         *types.Tier
 	Since        time.Time
 	// Before is an audit id: only records written before it are returned. It
 	// is how the Activity screen pages back through a log longer than Limit.

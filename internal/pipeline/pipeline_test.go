@@ -39,9 +39,6 @@ func TestComputedNumericInheritsWithinItsFamily(t *testing.T) {
 	if tr.Basis != types.BasisInherited {
 		t.Errorf("basis = %q, want inherited", tr.Basis)
 	}
-	if dec.Tier != types.Tier1Record {
-		t.Errorf("tier = %d, want 1", dec.Tier)
-	}
 }
 
 // The same aggregate over a relation with no sensitive numeric column is allow
@@ -61,9 +58,6 @@ func TestComputedNumericIgnoresOtherFamilies(t *testing.T) {
 	}
 	if got := transformFor(t, dec, "count").Policy; got != types.PolicyAllow {
 		t.Errorf("count over orders = %q, want allow", got)
-	}
-	if dec.Tier != types.Tier0Run {
-		t.Errorf("tier = %d, want 0", dec.Tier)
 	}
 	if dec.Result.Rows[0][0] != int64(7) {
 		t.Errorf("an allow column was masked: %v", dec.Result.Rows[0][0])
@@ -109,30 +103,6 @@ func TestComputedTextOverACleanRelationIsAllowed(t *testing.T) {
 	}
 }
 
-// drop is never inherited (R7.6b). users.ssn is drop, and a computed text column
-// over users must land on redact rather than deleting itself from the response —
-// measured, SELECT upper(status), count(*) ... GROUP BY 1 returned counts with no
-// group key when the rule got this wrong.
-func TestDropIsNeverInheritedByAComputedColumn(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{computed("upper", "text"), computed("count", "int8")}
-		h.exec.rows = [][]any{{"ACTIVE", int64(3)}}
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT upper(status), count(*) FROM users GROUP BY 1"})
-
-	if got := transformFor(t, dec, "upper").Policy; got != types.PolicyRedact {
-		t.Errorf("computed text over users = %q, want redact", got)
-	}
-	if names := columnNames(dec.Result.Columns); len(names) != 2 {
-		t.Fatalf("the group key was dropped from the response: %v", names)
-	}
-	if dec.Result.Rows[0][1] != maskMarker {
-		t.Error("count(*) over users should be redacted, not returned")
-	}
-}
-
 // R7.6's third branch: a computed column with no referenced relation inherits
 // from its parameters, and is redact if that is indeterminable.
 func TestComputedColumnWithNoRelationRedactsWhenIndeterminable(t *testing.T) {
@@ -167,9 +137,8 @@ func TestTokenParameterRaisesTextOutputOnly(t *testing.T) {
 	})
 
 	dec := h.query(t, Request{
-		SQL:           "SELECT 'Hi ' || $1::text, count(*) FROM clean_ids",
-		Params:        []ports.Param{{Value: "Ada"}},
-		ParamPolicies: []types.Policy{types.PolicyToken},
+		SQL:    "SELECT 'Hi ' || $1::text, count(*) FROM clean_ids",
+		Params: []ports.Param{{Value: "Ada", Policy: types.PolicyToken}},
 	})
 
 	greeting := transformFor(t, dec, "greeting")
@@ -186,7 +155,7 @@ func TestTokenParameterRaisesTextOutputOnly(t *testing.T) {
 
 // --- R5.4a and R7.7d: the unresolved column ---------------------------------
 
-func TestUnresolvedColumnRedactsAtTierOne(t *testing.T) {
+func TestUnresolvedColumnRedactsAndStillRuns(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.exec.cols = []types.ColumnMeta{
 			fromColumn("id", "int8", usersOID, 1),
@@ -204,9 +173,6 @@ func TestUnresolvedColumnRedactsAtTierOne(t *testing.T) {
 	if dec.Escalation != nil {
 		t.Fatal("an unresolved column must not escalate: a human cannot decide it from a prompt")
 	}
-	if dec.Tier != types.Tier1Record {
-		t.Errorf("tier = %d, want 1 — never tier 2 or 3 (R7.7d)", dec.Tier)
-	}
 	tr := transformFor(t, dec, "payload")
 	if tr.Policy != types.PolicyRedact || tr.Basis != types.BasisUnknown {
 		t.Errorf("payload = %q/%q, want redact/unknown", tr.Policy, tr.Basis)
@@ -219,81 +185,13 @@ func TestUnresolvedColumnRedactsAtTierOne(t *testing.T) {
 	}
 }
 
-// --- R7.7a: a drop column is tier 1 and simply absent ------------------------
+// --- R4.2c: DDL is refused under every setting, with any approval ---
 
-func TestDropColumnRunsAtTierOneAndIsAbsentFromTheResponse(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{
-			fromColumn("id", "int8", usersOID, 1),
-			fromColumn("ssn", "text", usersOID, 3),
-		}
-		h.exec.rows = [][]any{{int64(1), "123-45-6789"}, {int64(2), "987-65-4321"}}
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT id, ssn FROM users"})
-
-	if dec.Error != nil || dec.Escalation != nil {
-		t.Fatalf("a drop column is not an escalation: err=%v esc=%v", dec.Error, dec.Escalation)
-	}
-	if dec.Tier != types.Tier1Record {
-		t.Errorf("tier = %d, want 1", dec.Tier)
-	}
-	if names := columnNames(dec.Result.Columns); len(names) != 1 || names[0] != "id" {
-		t.Errorf("columns = %v, want only id", names)
-	}
-	for _, row := range dec.Result.Rows {
-		if len(row) != 1 {
-			t.Fatalf("row still carries the dropped column: %v", row)
-		}
-		for _, v := range row {
-			if s, ok := v.(string); ok && strings.Contains(s, "-") {
-				t.Fatalf("an SSN survived into the response: %v", v)
-			}
-		}
-	}
-	// transforms still reports the removal, which is what tells the agent the
-	// column exists and why it is not here.
-	if got := transformFor(t, dec, "ssn").Policy; got != types.PolicyDrop {
-		t.Errorf("transforms[ssn] = %q, want drop", got)
-	}
-}
-
-// --- R6.4b: a hidden name is hidden on every surface -------------------------
-
-func TestHideNameIsSuppressedInColumnsAndTransforms(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{
-			fromColumn("id", "int8", usersOID, 1),
-			fromColumn("internal_flag", "bool", usersOID, 6),
-		}
-		h.exec.rows = [][]any{{int64(1), true}}
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT id, internal_flag FROM users"})
-
-	for _, name := range columnNames(dec.Result.Columns) {
-		if name == "internal_flag" {
-			t.Fatal("a hide_name column's name reached the response")
-		}
-	}
-	for name := range dec.Result.Transforms {
-		if name == "internal_flag" {
-			t.Fatal("a hide_name column's name reached the transforms map")
-		}
-	}
-	if len(dec.Result.Columns) != 2 {
-		t.Errorf("columns = %v, want the hidden column kept under a placeholder", columnNames(dec.Result.Columns))
-	}
-}
-
-// --- R4.2c: DDL is refused at every tier, in every mode, with any approval ----
-
-func TestDDLIsRefusedEvenWithAnApprovalInEveryMode(t *testing.T) {
-	for _, mode := range []types.Mode{types.ModeStrict, types.ModeAssisted} {
+func TestDDLIsRefusedEvenWithAnApprovalUnderEveryReadsSetting(t *testing.T) {
+	for _, reads := range []types.Reads{types.ReadsAlways, types.ReadsUncertain, types.ReadsNever} {
 		h := newHarness(t, func(h *harness) {
-			h.authority.conn.Mode = mode
+			h.authority.conn.Reads = reads
+			h.authority.conn.Writes = types.WritesAllow
 			h.exec.cols = nil
 			h.exec.plan = &ports.PlanFacts{StatementType: pgdb.StmtDDL}
 		})
@@ -304,23 +202,19 @@ func TestDDLIsRefusedEvenWithAnApprovalInEveryMode(t *testing.T) {
 		})
 
 		if dec.Error == nil || dec.Error.Code != types.CodeDDLRefused {
-			t.Fatalf("mode %s: got %v, want ddl_refused", mode, dec.Error)
-		}
-		if dec.Tier != types.Tier4Refuse {
-			t.Errorf("mode %s: tier = %d, want 4", mode, dec.Tier)
+			t.Fatalf("reads %s: got %v, want ddl_refused", reads, dec.Error)
 		}
 		if h.exec.called("Run") || h.exec.called("CommitWrite") || h.exec.called("PreviewWrite") {
-			t.Errorf("mode %s: DDL reached the database: %v", mode, h.exec.calls)
+			t.Errorf("reads %s: DDL reached the database: %v", reads, h.exec.calls)
 		}
 	}
 }
 
 // --- R4.2d–f: the write path ------------------------------------------------
 
-func TestWriteEscalatesToTierThreeWithAPreviewAndCommitsOnlyOnApproval(t *testing.T) {
+func TestWriteAskWaitsWithAPreviewAndCommitsOnlyOnApproval(t *testing.T) {
 	setup := func(h *harness) {
-		h.authority.conn.Mode = types.ModeAssisted
-		h.authority.conn.Writes = types.WritesApprove
+		h.authority.conn.Writes = types.WritesAsk
 		// UPDATE ... RETURNING user_email: rows exist, and they are output in
 		// exactly the sense §8 means.
 		h.exec.cols = []types.ColumnMeta{fromColumn("user_email", "text", ordersOID, 3)}
@@ -332,19 +226,13 @@ func TestWriteEscalatesToTierThreeWithAPreviewAndCommitsOnlyOnApproval(t *testin
 			RelationNames: []types.RelationRef{ordersRef}, Relations: []uint32{ordersOID},
 			EstimatedRows: 4,
 		}
-		// A standing grant exists for the relation; it must not lower a write.
-		h.authority.grants[types.PathRef{ConnectionID: "acme_prod", Relation: ordersRef}] =
-			&types.Grant{ID: "g-1", RowCeiling: 1000}
 	}
 
 	h := newHarness(t, setup)
 	dec := h.query(t, Request{SQL: "UPDATE orders SET status='x' RETURNING user_email"})
 
 	if dec.Escalation == nil {
-		t.Fatalf("a write must reach tier 3: err=%v", dec.Error)
-	}
-	if dec.Tier != types.Tier3Approve {
-		t.Errorf("tier = %d, want 3 — no mode and no allow rule authorizes a write", dec.Tier)
+		t.Fatalf("a write on writes=ask must wait: err=%v", dec.Error)
 	}
 	if dec.Error == nil || dec.Error.Code != types.CodeApprovalRequired {
 		t.Errorf("error = %v, want approval_required", dec.Error)
@@ -388,136 +276,47 @@ func TestWriteEscalatesToTierThreeWithAPreviewAndCommitsOnlyOnApproval(t *testin
 	}
 }
 
-// --- R4.5: the denylist, through a view -------------------------------------
-
-func TestDenylistedRelationReachedThroughAViewIsRefused(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.authority.conn.Denylist = []types.RelationRef{usersRef}
-		h.authority.conn.Mode = types.ModeAssisted
-		h.exec.cols = []types.ColumnMeta{computed("n", "int8")}
-		// The statement names public.user_stats. EXPLAIN expands the view, so
-		// the plan names the base table — which is the point of R7.4c.
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{
-		SQL:      "SELECT count(*) FROM public.user_stats",
-		Approval: &Approval{TicketID: "t-1", Approver: "ada"},
-	})
-
-	if dec.Error == nil || dec.Error.Code != types.CodeDenylisted {
-		t.Fatalf("got %v, want denylisted", dec.Error)
-	}
-	if !strings.Contains(dec.Error.Summary, usersRef.String()) {
-		t.Errorf("the refusal must name the base table it caught; got %q", dec.Error.Summary)
-	}
-	if dec.Tier != types.Tier4Refuse {
-		t.Errorf("tier = %d, want 4 — no approval overrides the denylist and no mode relaxes it", dec.Tier)
-	}
-	if h.exec.called("Run") {
-		t.Error("a denylisted statement reached the database")
-	}
-}
-
-// --- R9.3c: a grant covers exactly the path it names -------------------------
-
-func grantPath(rel types.RelationRef) types.PathRef {
-	return types.PathRef{ConnectionID: "acme_prod", Relation: rel}
-}
-
-func TestGrantForOneRelationDoesNotCoverAJoinToAnother(t *testing.T) {
-	// A statement near the row cap is tier 2; a complete set of grants lowers it
-	// to tier 1, and an incomplete set does not.
-	base := func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", ordersOID, 1)}
-		h.exec.rows = [][]any{{int64(1)}}
-		h.exec.plan = readPlan(9000, ordersRef, cleanRef) // well past 80% of the 1000-row ceiling
-	}
-
-	// Only one of the two relations is granted.
-	partial := newHarness(t, func(h *harness) {
-		base(h)
-		h.authority.grants[grantPath(ordersRef)] = &types.Grant{ID: "g-orders", RowCeiling: 5000}
-	})
-	dec := partial.query(t, Request{SQL: "SELECT o.id FROM orders o JOIN clean_ids c ON c.id = o.id"})
-	if dec.Tier != types.Tier2Uncertain {
-		t.Errorf("tier = %d, want 2: one unlisted relation sends the statement back to its normal tier", dec.Tier)
-	}
-	if strings.HasPrefix(dec.Result.Authorization, "grant:") {
-		t.Errorf("authorization = %q: a partial match is not a match", dec.Result.Authorization)
-	}
-
-	// Both relations granted.
-	full := newHarness(t, func(h *harness) {
-		base(h)
-		h.authority.grants[grantPath(ordersRef)] = &types.Grant{ID: "g-orders", RowCeiling: 5000}
-		h.authority.grants[grantPath(cleanRef)] = &types.Grant{ID: "g-clean", RowCeiling: 5000}
-	})
-	dec = full.query(t, Request{SQL: "SELECT o.id FROM orders o JOIN clean_ids c ON c.id = o.id"})
-	if dec.Tier != types.Tier1Record {
-		t.Errorf("tier = %d, want 1: a grant lowers the tier but never below 1", dec.Tier)
-	}
-	if !strings.HasPrefix(dec.Result.Authorization, "grant:") {
-		t.Errorf("authorization = %q, want a grant", dec.Result.Authorization)
-	}
-
-	// A suspended grant is not a grant (R9.3b).
-	suspended := newHarness(t, func(h *harness) {
-		base(h)
-		h.authority.grants[grantPath(ordersRef)] = &types.Grant{ID: "g-orders", RowCeiling: 5000, Suspended: true}
-		h.authority.grants[grantPath(cleanRef)] = &types.Grant{ID: "g-clean", RowCeiling: 5000}
-	})
-	dec = suspended.query(t, Request{SQL: "SELECT o.id FROM orders o JOIN clean_ids c ON c.id = o.id"})
-	if dec.Tier != types.Tier2Uncertain {
-		t.Errorf("tier = %d, want 2: a schema change suspends the rule pending review", dec.Tier)
-	}
-}
-
-func TestGrantRowCeilingBoundsTheRequest(t *testing.T) {
+func TestRowCeilingBoundsTheRequest(t *testing.T) {
 	h := newHarness(t)
 	conn := testConnection()
 	conn.Limits.MaxRowsCeiling = 1000
-	got := h.pipe.rowCeiling(Request{MaxRows: 900}, conn, []*types.Grant{{RowCeiling: 50}})
-	if got != 50 {
-		t.Errorf("rowCeiling = %d, want 50", got)
+	if got := h.pipe.rowCeiling(Request{MaxRows: 900}, conn); got != 900 {
+		t.Errorf("rowCeiling = %d, want 900", got)
 	}
-	if got := h.pipe.rowCeiling(Request{MaxRows: 99999}, conn, nil); got != 1000 {
+	if got := h.pipe.rowCeiling(Request{MaxRows: 99999}, conn); got != 1000 {
 		t.Errorf("rowCeiling = %d, want the operator ceiling: the agent cannot raise it", got)
 	}
 }
 
-// --- G6 tiers -----------------------------------------------------------------
+// --- stale catalog ---
 
-func TestStaleCatalogIsUncertaintyNotPermission(t *testing.T) {
+func TestStaleCatalogIsNotedAndTheStatementStillFollowsTheSettings(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.catalog.fresh = false
-		h.authority.conn.Mode = types.ModeStrict
 		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
+		h.exec.rows = [][]any{{int64(1)}}
 		h.exec.plan = readPlan(1, cleanRef)
 	})
 
 	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
 
-	if dec.Escalation == nil {
-		t.Fatalf("a changed view definition in strict mode should reach a human: tier %d", dec.Tier)
+	if dec.Result == nil {
+		t.Fatalf("a stale catalog must not change the outcome of reads=uncertain: %v", dec.Error)
 	}
-	if !hasReason(dec.Escalation.Facts.Reasons, ReasonStaleCatalog) {
-		t.Errorf("reasons = %v, want stale_catalog", dec.Escalation.Facts.Reasons)
+	if !hasLayer(dec.Result.Degradations, "catalog") {
+		t.Errorf("degradations = %v, want the catalog named", dec.Result.Degradations)
 	}
 }
 
 // --- G1, G3 and G9 ----------------------------------------------------------
 
-func TestMultiStatementInputIsRefusedAtTierFour(t *testing.T) {
+func TestMultiStatementInputIsRefused(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.exec.describeErr = &types.Error{Code: types.CodeMultiStatement, Summary: "one statement only"}
 	})
 	dec := h.query(t, Request{SQL: "SELECT 1; DROP TABLE users"})
 	if dec.Error == nil || dec.Error.Code != types.CodeMultiStatement {
 		t.Fatalf("got %v, want multi_statement", dec.Error)
-	}
-	if dec.Tier != types.Tier4Refuse {
-		t.Errorf("tier = %d, want 4", dec.Tier)
 	}
 	if h.exec.called("Plan") {
 		t.Error("an inadmissible statement was planned")
@@ -539,9 +338,6 @@ func TestPermissionDeniedNamesTheReadableColumns(t *testing.T) {
 	if !strings.Contains(dec.Error.Summary, "email") || !strings.Contains(dec.Error.Summary, "status") {
 		t.Errorf("the error must name what may be read; got %q", dec.Error.Summary)
 	}
-	if strings.Contains(dec.Error.Summary, "internal_flag") {
-		t.Error("a hide_name column was disclosed in an error message")
-	}
 	if h.audit.last(t).ErrorCode != types.CodePermissionDenied {
 		t.Error("a permission denial must be logged as Invariant A working")
 	}
@@ -558,9 +354,8 @@ func TestAuditIsNeverSkipped(t *testing.T) {
 		}, Request{SQL: "DROP TABLE users"}},
 		{"escalation", func(h *harness) {
 			h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
-			h.exec.plan = readPlan(9000, cleanRef)
-			h.authority.conn.Mode = types.ModeStrict
-			h.catalog.fresh = false
+			h.exec.plan = readPlan(1, cleanRef)
+			h.authority.conn.Reads = types.ReadsAlways
 		}, Request{SQL: "SELECT id FROM clean_ids"}},
 		{"result", func(h *harness) {
 			h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
@@ -575,7 +370,7 @@ func TestAuditIsNeverSkipped(t *testing.T) {
 		if rec.ID != dec.AuditID {
 			t.Errorf("%s: audit id %q does not match the decision's %q", c.name, rec.ID, dec.AuditID)
 		}
-		if rec.SessionID != "sess-1" || rec.Intent == "" {
+		if rec.SessionID != "sess-1" || rec.Client.Name == "" {
 			t.Errorf("%s: the session is missing from the record", c.name)
 		}
 		if !strings.HasPrefix(rec.Statement, "NORMALIZED:") {
@@ -598,31 +393,9 @@ func TestAuditFailureStopsTheResponse(t *testing.T) {
 	}
 }
 
-// R4.1: a privilege finding is a report, not a gate. This is the test that
-// keeps it one — the pipeline must not grow a check on Findings, whatever a
-// later reading of "the connection is degraded" suggests.
-func TestFindingsDoNotBlockAQuery(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{computed("label", "text")}
-		h.exec.rows = [][]any{{"ok"}}
-		h.exec.plan = readPlan(1, cleanRef)
-		h.authority.conn.Findings = []types.Finding{
-			{ID: "rolsuper", Kind: types.FindingAttribute, Subject: "rolsuper",
-				Detail: "this role is a superuser"},
-		}
-	})
-	dec := h.query(t, Request{SQL: "SELECT label FROM clean_ids"})
-	if dec.Error != nil {
-		t.Fatalf("a finding refused the query: %v", dec.Error)
-	}
-	if !h.exec.called("Describe") {
-		t.Error("the statement never reached the database")
-	}
-}
-
 // --- Explain ----------------------------------------------------------------
 
-func TestExplainPredictsTheTierWithoutExecuting(t *testing.T) {
+func TestExplainPredictsTheOutcomeWithoutExecuting(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.exec.cols = []types.ColumnMeta{
 			fromColumn("id", "int8", usersOID, 1),
@@ -641,13 +414,13 @@ func TestExplainPredictsTheTierWithoutExecuting(t *testing.T) {
 	if h.exec.called("Run") {
 		t.Fatal("explain executed the statement")
 	}
-	if res.PredictedTier != types.Tier1Record {
-		t.Errorf("predicted tier = %d, want 1", res.PredictedTier)
+	if res.Outcome != types.OutcomeRun {
+		t.Errorf("outcome = %q, want run", res.Outcome)
 	}
-	if names := columnNames(res.OutputColumns); len(names) != 2 {
-		t.Errorf("output columns = %v, want the drop column omitted", names)
+	if names := columnNames(res.OutputColumns); len(names) != 3 {
+		t.Errorf("output columns = %v, want all three", names)
 	}
-	if !hasReason(res.Reasons, ReasonDropped) || !hasReason(res.Reasons, ReasonMasked) {
+	if !hasReason(res.Reasons, ReasonMasked) {
 		t.Errorf("reasons = %v", res.Reasons)
 	}
 }
@@ -720,52 +493,16 @@ func Test_DET_C7_AnUnexaminedScanColumnIsReportedAsADegradation(t *testing.T) {
 	}
 }
 
-// nearCeiling is an ordinary read whose plan expects close to the row ceiling.
-func nearCeiling(h *harness) {
-	h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
-	h.exec.rows = [][]any{{int64(1)}}
-	h.exec.plan = readPlan(9000, cleanRef)
-}
-
 func hasLayer(ds []types.Degradation, layer string) bool {
 	return slices.ContainsFunc(ds, func(d types.Degradation) bool { return d.Layer == layer })
 }
 
-func Test_JDG_C1_AssistedRunsAnUncertainReadMasked(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		nearCeiling(h)
-		h.authority.conn.Mode = types.ModeAssisted
-	})
-	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
-	if dec.Result == nil {
-		t.Fatalf("an uncertain read did not run in assisted mode: %v", dec.Error)
-	}
-	if dec.Tier != types.Tier2Uncertain {
-		t.Errorf("tier = %d, want 2", dec.Tier)
-	}
-	if hasLayer(dec.Result.Degradations, "judge") {
-		t.Errorf("degradations = %v name a judge", dec.Result.Degradations)
-	}
-}
-
-func Test_JDG_C2_StrictSendsAnUncertainReadToApproval(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		nearCeiling(h)
-		h.authority.conn.Mode = types.ModeStrict
-	})
-	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
-	if dec.Tier != types.Tier3Approve || dec.Result != nil {
-		t.Errorf("tier = %d, result = %v; want it waiting for approval at tier 3", dec.Tier, dec.Result)
-	}
-}
-
-func Test_JDG_C3_AChangedViewInAssistedReportsOnlyTheCatalog(t *testing.T) {
+func TestAChangedViewInAssistedReportsOnlyTheCatalog(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
 		h.exec.rows = [][]any{{int64(1)}}
 		h.exec.plan = readPlan(10, cleanRef)
 		h.catalog.fresh = false
-		h.authority.conn.Mode = types.ModeAssisted
 	})
 	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
 	if dec.Result == nil {
@@ -776,20 +513,9 @@ func Test_JDG_C3_AChangedViewInAssistedReportsOnlyTheCatalog(t *testing.T) {
 	}
 }
 
-func Test_JDG_C5_AStoredPermissiveModeBehavesAsStrict(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		nearCeiling(h)
-		h.authority.conn.Mode = types.Mode("permissive")
-	})
-	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
-	if dec.Tier != types.Tier3Approve || dec.Result != nil {
-		t.Errorf("tier = %d, result = %v; want it waiting for approval as strict would", dec.Tier, dec.Result)
-	}
-}
-
 func Test_WRITE_C1_AnAllowedWriteWaitsThenRunsOnApproval(t *testing.T) {
 	setup := func(h *harness) {
-		h.authority.conn.Writes = types.WritesApprove
+		h.authority.conn.Writes = types.WritesAsk
 		h.exec.previewTag, h.exec.commitTag = 2, 2
 		h.exec.plan = &ports.PlanFacts{
 			StatementType: pgdb.StmtUpdate, Writes: true,
@@ -798,8 +524,8 @@ func Test_WRITE_C1_AnAllowedWriteWaitsThenRunsOnApproval(t *testing.T) {
 	}
 	h := newHarness(t, setup)
 	dec := h.query(t, Request{SQL: "UPDATE orders SET status = 'x'"})
-	if dec.Escalation == nil || dec.Tier != types.Tier3Approve {
-		t.Fatalf("an allowed write did not wait for approval: tier %d, err %v", dec.Tier, dec.Error)
+	if dec.Escalation == nil {
+		t.Fatalf("an allowed write did not wait for approval: err %v", dec.Error)
 	}
 	if h.exec.called("CommitWrite") {
 		t.Fatal("the write ran before its approval")
@@ -811,7 +537,7 @@ func Test_WRITE_C1_AnAllowedWriteWaitsThenRunsOnApproval(t *testing.T) {
 	}
 }
 
-func Test_WRITE_C2_AWriteOnAReadOnlyProfileIsRefusedAtOnce(t *testing.T) {
+func TestAWriteOnAReadOnlyProfileIsRefusedAtOnce(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.authority.conn.Writes = types.WritesOff
 		h.exec.plan = &ports.PlanFacts{
@@ -838,7 +564,7 @@ func changedRows(n int) *types.WriteChanges {
 
 func writeHarness(t *testing.T, rows int) *harness {
 	return newHarness(t, func(h *harness) {
-		h.authority.conn.Writes = types.WritesApprove
+		h.authority.conn.Writes = types.WritesAsk
 		h.exec.previewTag = int64(rows)
 		h.exec.changes = changedRows(rows)
 		h.exec.plan = &ports.PlanFacts{
@@ -878,7 +604,7 @@ func Test_WRITE_C5_ALargeWriteShowsTheFirstFiftyRows(t *testing.T) {
 
 func Test_WRITE_C7_ADeleteIsMarkedDestructiveWithItsTargetAndProtection(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
-		h.authority.conn.Writes = types.WritesApprove
+		h.authority.conn.Writes = types.WritesAsk
 		h.exec.previewTag = 1
 		h.exec.plan = &ports.PlanFacts{
 			StatementType: pgdb.StmtDelete, Writes: true,
@@ -893,12 +619,9 @@ func Test_WRITE_C7_ADeleteIsMarkedDestructiveWithItsTargetAndProtection(t *testi
 	if f.Risk != types.RiskDestructive || f.StatementType != "DELETE" || !slices.Equal(f.Targets, []types.RelationRef{ordersRef}) {
 		t.Errorf("facts = risk %q, verb %q, targets %v; want destructive DELETE on orders", f.Risk, f.StatementType, f.Targets)
 	}
-	if f.Protection.Writes != types.WritesApprove || f.Protection.RoleWrites != "yes" {
-		t.Errorf("protection = %+v, want writes approve and a role that can write", f.Protection)
-	}
 }
 
-func Test_WRITE_C12_AStatementKeeperCannotClassifyIsDestructive(t *testing.T) {
+func TestAStatementKeeperCannotClassifyIsDestructive(t *testing.T) {
 	for _, stmt := range []string{"", "COPY", "CALL"} {
 		risk, unreadable := riskOf(stmt)
 		if risk != types.RiskDestructive || !unreadable {
@@ -929,7 +652,7 @@ func Test_WRITE_C8_TheCardListsExpandedColumnsAndFlagsASensitiveFilter(t *testin
 	if !slices.Equal(f.Columns, []string{"id", "email", "status"}) {
 		t.Errorf("columns = %v, want SELECT * expanded", f.Columns)
 	}
-	want := []types.FilterColumn{{Relation: usersRef, Column: "ssn", Flag: "sensitive", Policy: types.PolicyDrop}}
+	want := []types.FilterColumn{{Relation: usersRef, Column: "ssn", Flag: "sensitive", Policy: types.PolicyRedact}}
 	if !slices.Equal(f.Filters, want) {
 		t.Errorf("filters = %+v, want ssn flagged sensitive", f.Filters)
 	}
@@ -992,48 +715,5 @@ func Test_WRITE_C14_ARowLargerThanTheCapLeavesNoRows(t *testing.T) {
 	}
 	if len(dec.Result.Rows) != 0 || !dec.Result.Truncated || dec.Result.TruncatedBy != types.CutBySize {
 		t.Errorf("rows = %d, truncated %v by %q; want none, cut by size", len(dec.Result.Rows), dec.Result.Truncated, dec.Result.TruncatedBy)
-	}
-}
-
-func Test_TOKEN_C7_PersistentScopeOnAConnectionThatForbidsItGetsSessionTokens(t *testing.T) {
-	for _, allow := range []bool{false, true} {
-		h := newHarness(t, func(h *harness) {
-			h.authority.conn.PersistentTokens = allow
-			h.exec.cols = []types.ColumnMeta{fromColumn("email", "text", usersOID, 2)}
-			h.exec.rows = [][]any{{"jane@example.com"}}
-			h.exec.plan = readPlan(1, usersRef)
-		})
-		sess := testSession()
-		sess.TokenScope = types.ScopePersistent
-		dec := h.query(t, Request{SQL: "SELECT email FROM users", Session: sess})
-		if dec.Result == nil {
-			t.Fatalf("no result: %v", dec.Error)
-		}
-		if got := h.redactor.statements[len(h.redactor.statements)-1].Persistent; got != allow {
-			t.Errorf("allow=%v: tokens persistent = %v", allow, got)
-		}
-		said := slices.ContainsFunc(dec.Result.Degradations, func(d types.Degradation) bool { return d.Layer == "token" })
-		if said == allow {
-			t.Errorf("allow=%v: the response says tokens are session tokens: %v (degradations %v)", allow, said, dec.Result.Degradations)
-		}
-	}
-}
-
-func Test_LAZY_C13_AStaleCatalogStopsAnAllowRuleAndSuspendsTheConnectionsRules(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.catalog.fresh = false
-		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", ordersOID, 1)}
-		h.exec.rows = [][]any{{int64(1)}}
-		h.exec.plan = readPlan(1, ordersRef)
-		h.authority.grants[types.PathRef{ConnectionID: "acme_prod", Relation: ordersRef}] = &types.Grant{ID: "g-1", RowCeiling: 1000}
-	})
-	sess := testSession()
-	h.authority.conn.Mode = types.ModeStrict
-	dec := h.query(t, Request{SQL: "SELECT id FROM orders", Session: sess})
-	if dec.Result != nil && dec.Result.Authorization == "grant:g-1" {
-		t.Errorf("the allow rule lowered a statement on a stale catalog")
-	}
-	if !slices.Contains(h.authority.suspended, "acme_prod") {
-		t.Errorf("the connection's rules were not suspended: %v", h.authority.suspended)
 	}
 }

@@ -16,7 +16,6 @@ import (
 type ActivityFilter struct {
 	SessionID    string
 	ConnectionID string
-	Tier         *types.Tier
 	Since        time.Time
 	Limit        int
 }
@@ -29,9 +28,6 @@ func (c *Client) ListActivity(ctx context.Context, f ActivityFilter) ([]types.Au
 	}
 	if f.ConnectionID != "" {
 		q.Set("connection", f.ConnectionID)
-	}
-	if f.Tier != nil {
-		q.Set("tier", fmt.Sprint(int(*f.Tier)))
 	}
 	if !f.Since.IsZero() {
 		q.Set("since", f.Since.Format(time.RFC3339))
@@ -73,8 +69,6 @@ type DoctorReport struct {
 	PendingApprovals int                     `json:"pending_approvals"`
 	OpenTickets      int                     `json:"open_tickets"`
 	OpenRequests     int                     `json:"open_requests"`
-	Grants           int                     `json:"grants"`
-	SuspendedGrants  int                     `json:"suspended_grants"`
 	LogRetentionDays int                     `json:"log_retention_days"`
 	// ConnectionIdleMinutes is how long a database's connections stay open
 	// with nobody using them.
@@ -85,9 +79,10 @@ type DoctorReport struct {
 // ConnectionHealth is one connection's line in a doctor report: what the vault
 // holds. doctor never connects to a database; `keeper connection test` does.
 type ConnectionHealth struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Findings int    `json:"findings"`
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Reads  types.Reads  `json:"reads"`
+	Writes types.Writes `json:"writes"`
 }
 
 // GetDoctor fetches the daemon-connected doctor report. cmd/keeper's

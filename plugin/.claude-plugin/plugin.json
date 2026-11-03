@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "keeper",
-  "version": "0.0.9",
-  "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, span-level redaction of free text, an approval queue shared across every agent session, and a local form for values that must never be typed into chat.",
+  "version": "0.2.1",
+  "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, redaction of free text, approval in the agent's terminal, and a local form for values that must never be typed into chat.",
   "author": {
     "name": "mtch3n"
   },
@@ -18,5 +18,8 @@
     "mcp",
     "masking"
   ],
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "types": "./types/index.d.ts"
 }

@@ -5,8 +5,8 @@
 //
 // The two listeners exist because they carry different authority, and the
 // difference is enforced per route rather than assumed from the address. An MCP
-// session cannot register a connection, accept a G0 finding, approve a ticket,
-// grant a path, edit the catalog or change a limit — §6.3 and R4.1f — and the
+// session cannot register a connection, approve a ticket,
+// change a setting, edit the catalog or change a limit — §6.3 and R4.1f — and the
 // agent surface is not reachable from a browser at all.
 //
 // This package is also the only place an error becomes a types.Error. A
@@ -297,8 +297,8 @@ func (s *Server) authorize(rq *reqInfo, acc access, r *http.Request) error {
 		return nil
 
 	case accessHuman:
-		// §6.3: register_connection, set_policy, catalog init, approve, grants,
-		// allow, denylist and every §4.5 limit are CLI and UI only. A connection
+		// §6.3: register_connection, set_policy, catalog init, approve,
+		// the reads and writes settings and every §4.5 limit are CLI and UI only. A connection
 		// that ever handshook is an agent connection, so omitting the header is
 		// not a way around this.
 		if agentConn || claimsSession {

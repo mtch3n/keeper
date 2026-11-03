@@ -26,18 +26,16 @@ func run(args []string) error {
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "connect":
+		return runConnect(rest)
 	case "host":
 		return runHost(rest)
 	case "connection":
 		return runConnection(rest)
 	case "catalog":
 		return runCatalog(rest)
-	case "audit":
-		return runAudit(rest)
 	case "approve":
 		return runApprove(rest)
-	case "allow":
-		return runAllow(rest)
 	case "activity":
 		return runActivity(rest)
 	case "doctor":
@@ -48,6 +46,8 @@ func run(args []string) error {
 		return runDaemon(rest)
 	case "ui":
 		return runUI(rest)
+	case "hook":
+		return runHook(rest)
 	case "version":
 		return runVersion(rest)
 	case "update":
@@ -69,31 +69,29 @@ func usage() {
 	fmt.Fprint(os.Stderr, `keeper — operate a keeper daemon and its registered connections
 
 Usage:
-  keeper host add --name H --address A [--port 5432] [--sslmode prefer]
+  keeper connect [--name N]
+      reads a PostgreSQL connection string at a hidden prompt, or one line from stdin
   keeper host ls
   keeper host rm <name>
-  keeper connection add --name X --host H --database D --user U [--writes off|approve] [--catalog path]
-      passwords are prompted for, or read one per line from stdin
   keeper connection ls
   keeper connection show <name>
-  keeper connection set <name> [--mode ...] [--detection kind[:entity+entity][@raw],...|off] [--writes off|approve] [--persistent-tokens on|off] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]
-  keeper connection terms <name> [--deny T]... [--allow T]... [--regex label=expr]...
-  keeper connection denylist <name> [--add schema.table] [--remove schema.table] [--list]
+  keeper connection set <name> [--reads always|uncertain|never] [--detection off|scan|all] [--writes off|ask|allow] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]
   keeper connection test <name>
   keeper connection rm <name>
   keeper catalog init <name> [--sample N]
-  keeper catalog edit <name> <schema.table.column> --policy P [--namespace N] [--form F] [--hide-name]
-  keeper catalog grants <name>
+  keeper catalog edit <name> <schema.table.column> --policy P [--namespace N]
   keeper catalog ls <name> [--unclassified]
-  keeper audit [<name>] [--rerun]
   keeper approve [<ticket>]
-  keeper allow ls | keeper allow revoke <id>
-  keeper activity [--session S] [--connection C] [--tier N] [--since D] [--limit N]
+  keeper activity [--session S] [--connection C] [--since D] [--limit N]
   keeper doctor
   keeper update [--check] [--force]
-  keeper vault export > file | import [--replace] file | rotate-master
+  keeper vault export > file | import [--replace] file
   keeper daemon start | restart | status
   keeper ui
+  keeper hook session-start | pre-tool-use | waiting
+      for the agent plugin's hooks; prints JSON for the client
+  keeper mcp
+      the MCP server on stdio, started by the agent's client
 
 Every command accepts --json for machine-readable output.
 `)

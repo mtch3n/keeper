@@ -203,7 +203,7 @@ func Test_DET_C20_NoPassesProposesNothing(t *testing.T) {
 	}
 }
 
-func Test_DET_C6_InitProposesAndWritesNothing(t *testing.T) {
+func TestInitProposesAndWritesNothing(t *testing.T) {
 	s, paths := openTestStore(t, testInitDeps(), nil)
 	read := func() string {
 		c, _ := os.ReadFile(paths.Committed)
@@ -225,7 +225,7 @@ func Test_DET_C6_InitProposesAndWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := entries["public.users.contact"]; ok {
+	if got := entries["public.users.contact"]; got.Policy == types.PolicyToken {
 		t.Error("a proposal became a catalog entry without being accepted")
 	}
 }

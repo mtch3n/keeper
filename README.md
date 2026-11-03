@@ -1,67 +1,181 @@
 # keeper
 
-An MCP database server that reduces how much sensitive data reaches an agent's
-context, without making you approve every query.
-
-The problem is not an attacker. It is the normal operation of an agentic
-workflow: a database row becomes an MCP response, becomes agent context, becomes
-a request to a cloud model provider, a transcript on disk, a context summary, a
-commit message. A human with a database account may legitimately read every SSN
-in it; an agent reading the same rows ships them to a third party and embeds them
-in artefacts that outlive the session.
-
-keeper sits between the two and masks results on the way out.
+keeper sits between an agent and your PostgreSQL database. It runs the agent's
+SQL and masks the result before the result enters the agent's context. The agent
+gets rows it can join and count on. It does not get the personal data inside them.
 
 ```
 database → keeper → MCP response → agent context → cloud provider
              ↑
-     policies, tokens, redaction, audit
+       masking, tokens
 ```
 
-## What it does
+keeper pseudonymises. It does not anonymise. Its output is still personal data
+under GDPR Article 4(11).
 
-- **Masks results by column identity**, using the server's own `(tableOID, attnum)`
-  answer rather than parsing the SELECT list. Aliases, CTEs, subqueries, views and
-  function wrappers all resolve correctly because none of them are being guessed at.
-- **Keyed, namespaced tokens** so masked columns still join, group and count
-  distinct. `⟨email1:a3f21b4c9d8e7f60⟩` is unmistakably not real data, which is the
-  feature — a plausible fake is worse for an LLM consumer than an obvious token.
-- **Audits the credential and tells you what it found.** It never refuses one and
-  never holds one shut: a master account works immediately. Findings are grouped
-  by kind on the connection's Privileges tab, with the statements that would
-  narrow the grants, copyable as one script. Acting on it is database work you choose to do; keeper does not
-  run those statements, because a tool that can narrow its own grants can widen
-  them.
-- **One Inbox across every agent**, attributed to the session and workspace (and
-  the task, when the agent states one), so a human working across three windows
-  can tell whose work they are authorizing.
-- **Writes wait for a human, who sees what changes.** A profile is read-only
-  unless you allow writes, and then every INSERT, UPDATE and DELETE waits in the
-  Inbox showing the rows it would change.
-- **Sensitive input never goes through the prompt.** `/keeper` opens a local form;
-  only a token returns to the conversation.
-- **An activity log** that answers what left this machine, and when, encrypted
-  with the vault's key and kept for a number of days you choose (30 by default).
+## First run
 
-## What it does not do
+1. Install the plugin in your agent. The plugin starts keeper through a launcher
+   that downloads the release, checks its checksum and installs it in
+   `~/.local/bin`.
 
-It pseudonymises rather than anonymises; output remains personal data under GDPR
-Article 4(11). It does not detect an agent inferring a masked value through
-narrowing predicates. It does not author SQL. It does not replace database access
-control — where you can revoke a grant, that is better than anything here, and
-`keeper catalog grants` writes the statement for you.
+   Claude Code:
 
-The limitations are stated rather than implied on purpose, and the ones above are
-a summary rather than the list.
+   ```
+   /plugin marketplace add mtch3n/keeper
+   /plugin install keeper@keeper
+   ```
 
-## Install
+   Codex: add the same repository as a plugin marketplace and install the
+   `keeper` plugin. Check the Codex plugin docs for the exact command in your
+   Codex version. See "Codex" below for two settings it needs.
 
-### From a release
+   If `~/.local/bin` is not on your `PATH`, the plugin still works. Add the
+   folder to `PATH` so that your terminal finds `keeper`:
+   `export PATH="$HOME/.local/bin:$PATH"`.
+
+2. Register a database. Run this in your own terminal, not in the agent:
+
+   ```sh
+   keeper connect
+   ```
+
+   Paste a PostgreSQL connection string at the hidden prompt, for example
+   `postgres://app_ro:...@db.internal/app?sslmode=require`. keeper makes one
+   profile for that login. The profile reads and masks. It cannot write.
+
+3. Ask the agent a question about your data. The agent calls `query`, and the
+   rows come back on the same call.
+
+4. In the first result, the email column is a token, for example
+   `⟨email1:a3f21b4c9d8e7f60⟩`. Within one session, the same email gives the same
+   token, so joins, `GROUP BY` and `COUNT(DISTINCT ...)` still work. Another
+   session gets a different token for the same email. The result also names
+   the one command that changes how a column is masked:
+
+   ```sh
+   keeper catalog edit <profile> <schema.table.column> --policy allow
+   ```
+
+keeper classifies columns on its own, by name and type. You do not have to set up
+a catalog before the first query.
+
+## Profile settings
+
+Each profile has three settings. Change them with `keeper connection set`, or in
+the dashboard (`keeper ui`).
+
+| Setting | Values | Meaning |
+|---|---|---|
+| `reads` | `always`, `uncertain`, `never` | `always`: every read asks a person first. `uncertain`: a read asks when its plan calls a volatile function. `never`: reads run without a question. |
+| `writes` | `off`, `ask`, `allow` | `off`: a write is refused. `ask`: a person approves each write and sees the rows it changes. `allow`: a write runs. |
+| `detection` | `off`, `scan`, `all` | `scan` (the default): pattern detection examines the text of `scan` columns. `all`: it also examines the text of `allow` columns. `off`: it examines nothing, so `scan` cells are redacted whole. |
+
+```sh
+keeper connection set prod --reads uncertain --writes ask --detection scan
+keeper connection show prod
+```
+
+## Approvals
+
+When a statement needs a person, the agent's client shows a dialog in the
+agent's terminal. The same `query` call then returns the rows after the person
+accepts.
+
+- A read: press Enter to run it.
+- A write: the person must choose "Run once" or "Refuse". Nothing is
+  preselected, so a stray Enter does not commit a write.
+- Esc, or a client that cannot show a dialog (a headless run), does not decide
+  the statement. The agent gets a ticket and a local link. The ticket waits in
+  the Inbox of the dashboard, and keeper sends a desktop notification with the
+  link. The agent polls `get_result` until a person decides.
+
+`keeper approve` lists and decides tickets from a terminal.
+
+## Declare personal data columns
+
+keeper classifies a column on its own by its name and its type only. A name that
+says personal data gets `token` (or `redact` when the column is not text). Other
+text columns are redacted. Numeric, boolean, date and time, and UUID columns are
+allowed. `keeper catalog init <profile> --sample N` samples N rows per column and
+prints proposals in two groups, safe to accept in bulk and needs review. It only
+proposes: it changes nothing until you run `keeper catalog edit`. To set the
+policy of one column yourself:
+
+```sh
+keeper catalog ls prod --unclassified
+keeper catalog edit prod public.customers.email --policy token
+```
+
+The policies are `allow`, `token`, `redact` and `scan`. The Catalog tab of the
+dashboard does the same. Only a person can change the catalog. The agent cannot.
+
+## Move the vault
+
+`keeper vault export > keeper.vault` seals your registered connections under a
+passphrase that you type at export time. `keeper vault import keeper.vault`
+restores them on another machine. keeper does not store the passphrase.
+
+## What keeper does not promise
+
+- **The transaction blocks database writes on reads. It does not stop effects
+  outside the transaction.** The same role can call `pg_terminate_backend`. A
+  superuser can also call `dblink_exec`, `pg_read_file` and `pg_stat_reset`. Use a
+  role that is not a superuser.
+- **The `uncertain` rule looks for volatile function calls in the plan.** It
+  misses a function that is declared STABLE or IMMUTABLE but calls a volatile one.
+  It also misses immutable functions that run at plan time. For certainty, set
+  `reads=always`.
+- **keeper hides values. It does not hide that a table or column exists.** It
+  does not stop inference, such as `length(email)` or a predicate that narrows
+  the rows. Use database grants to control which tables a role can reach.
+- **Automatic classification lets numeric columns with unremarkable names
+  through**, such as `balance`. Review them and declare the ones that matter.
+- **A client can answer the dialog for the person.** An Elicitation hook in the
+  client can auto-answer it. Check your client's hooks.
+- **The launcher's checksum comes from the same release as the binary.** It
+  guards against a corrupt download. It does not guard against a compromised
+  release.
+- **Hooks are guidance, not enforcement.** The plugin's hooks tell the agent to
+  use keeper and deny some raw database clients. An agent or a person can work
+  around them.
+
+## Codex
+
+The plugin cannot set tool approval in Codex. To avoid a second question
+on top of keeper's own dialog, set the approval mode for the keeper server in
+your Codex config (`~/.codex/config.toml`). Check this for your Codex version:
+
+```toml
+[mcp_servers.keeper]
+default_tools_approval_mode = "approve"
+```
+
+The key is `mcp_servers.<id>.default_tools_approval_mode`. Its documented values
+are `auto`, `prompt`, `writes` and `approve`. The Codex docs do not say what
+each value does, so check which one skips the question. A per-tool key,
+`mcp_servers.<id>.tools.<tool>.approval_mode`, also exists. Check the
+[config reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+for your Codex version.
+
+Codex runs a hook only after you trust it. Open `/hooks` in the Codex CLI (or
+Settings, Hooks in the desktop app) and trust the plugin's hooks. A plugin update
+that changes a hook needs a new review.
+
+## Other MCP clients
+
+Point the client at `keeper mcp` over stdio. The daemon starts on demand.
+
+```json
+{ "mcpServers": { "keeper": { "command": "keeper", "args": ["mcp"] } } }
+```
+
+## Install without the plugin
 
 ```sh
 # pick your platform from https://github.com/mtch3n/keeper/releases
 base=https://github.com/mtch3n/keeper/releases/latest/download
-asset=keeper_0.0.4_linux_amd64                 # _darwin_arm64, _linux_arm64, ...
+asset=keeper_<version>_linux_amd64             # _darwin_arm64, _linux_arm64, ...
 
 curl -fsSLO "$base/SHA256SUMS"
 curl -fsSLO "$base/$asset.tar.gz"
@@ -70,166 +184,43 @@ tar xzf "$asset.tar.gz"
 install -m755 "$asset/keeper" ~/.local/bin/
 ```
 
-One binary, three entry points: `keeper` is the CLI, `keeper daemon` runs the
-daemon, `keeper mcp` is the MCP server. Verify the checksum — this is about to
-hold a database credential, and that is the one step that checks what you
-downloaded.
-
-That is the last time you do it by hand:
-
-```sh
-keeper update --check            # what is published, and what you are running
-keeper update                    # verify, replace, and restart onto it
-```
-
-`update` checks the daemon before it downloads anything. If sessions are
-connected or an approval is waiting, it names them and stops without touching
-the binary, because the restart that completes an update cancels every pending
-ticket and permanently invalidates every token those sessions hold. `--force`
-when that is acceptable. It refuses outright when the binary belongs to a
-package manager, since the next upgrade of that package would undo it.
-
-It is a CLI command and is not on the MCP surface. An agent that could replace
-keeper's own executable would be removing its own supervision, which is the
-same reason it cannot register a connection, re-run a privilege audit or
-approve.
-
-### From source
+From source (Go 1.27 and pnpm):
 
 ```sh
 git clone https://github.com/mtch3n/keeper && cd keeper
-make build                       # needs Go 1.27 and pnpm
+make build
 install -m755 bin/keeper ~/.local/bin/
 ```
 
-## Set up a connection
-
-Either the CLI or the web UI — the same flow, and the UI is the one designed for
-it:
-
-```sh
-keeper ui                        # prints a loopback URL; add the host and its databases there
-```
-
-A host is the server, entered once. Each database and role on it is its own
-connection, with its own catalog, mode and audit:
-
-```sh
-keeper host add --name prod-db --address db.internal --sslmode require
-
-keeper connection add --name prod --host prod-db --database app --user app_ro
-# prompts for the password (or reads it from stdin), audits the role and prints
-# every privilege finding with the statement that would narrow it. The
-# connection is usable from this point on.
-
-keeper connection add --name billing --host prod-db --database billing --user analyst
-
-keeper catalog init prod --sample 200
-keeper audit          # the same report, any time, for every connection
-```
-
-keeper never refuses a credential and never blocks one. A master account works;
-what it will not do is let you hold one without knowing, so `keeper audit` and
-the connection's Privileges tab say what the role can do beyond reading, and what
-would narrow it. Nothing there has to be answered before the connection runs.
-
-A profile is read-only until you allow writes on it (`keeper connection set prod
---writes approve`, or the Limits tab); keeper never switches an agent to another
-profile to get a write through.
-
-`catalog init` proposes a policy for every column and groups the proposals: typed
-scalars and name matches are safe to accept in bulk, and free text no rule
-matched is the review task — that is where unnamed name and address columns live.
-Expect fifteen minutes once, then it is a file in your repo that gets reviewed
-like code.
-
-## Connect an agent
-
-**Claude Code**, with the plugin — the skill, the `/keeper` command and the MCP
-server together:
-
-```
-/plugin marketplace add mtch3n/keeper
-/plugin install keeper@keeper
-```
-
-The plugin also ships a `keeper-install` skill, so an agent can get you the rest
-of the way — it checks what is present, installs what is missing, and hands back
-the parts only you can do.
-
-**Any other MCP client**: point it at `keeper mcp` over stdio. The daemon starts
-on demand.
-
-```json
-{ "mcpServers": { "keeper": { "command": "keeper", "args": ["mcp"] } } }
-```
-
-**Codex**: copy `plugin/codex/keeper.md` into your skills directory for the
-`$keeper` flow, and register `keeper-mcp` the usual way.
+After that, `keeper update --check` shows the published version, and
+`keeper update` verifies, replaces and restarts onto it. It stops when a session
+is connected or a ticket is waiting. `--force` overrides that. Only a person can
+run it. It is not an MCP tool.
 
 ## The daemon
 
-It starts on demand — an MCP client or the CLI spawns it when the socket is
-absent, the way `gpg-agent` and `ssh-agent` do — and it is not a system service.
-It runs as you, uses your OS keychain and your `$XDG_RUNTIME_DIR`; a root service
-would be wrong on every one of those.
-
-It also stops on its own, after `KEEPER_IDLE_EXIT` (4h by default) with nothing
-attached: no sessions, no queued approvals, no open local requests and no live
-event streams — so a dashboard you left open keeps it alive, and an agent that
-comes back simply starts it again. Standing permissions are on disk, so nothing
-is lost. Set it to a negative duration to disable it.
-
-The vault opens itself from your OS keychain when the daemon starts; there is no
-unlock step. `keeper vault export` writes a copy sealed under a passphrase you
-choose, and `keeper vault import` restores it on another machine.
-
-`docs/keeper.service` is a user-level systemd unit for people who would rather it
-stayed up. It is not installed for you.
-
-## Day to day
+The daemon starts when an MCP client or the CLI needs it. It is not a system
+service. It runs as you and opens the vault from your OS keychain. It stops by
+itself after `KEEPER_IDLE_EXIT` (4h by default) with nothing attached. A negative
+value disables that. `docs/keeper.service` is a user-level systemd unit if you
+want the daemon to stay up.
 
 ```sh
-keeper approve                   # the queue, across every agent session
+keeper doctor                    # daemon, key source, connections
+keeper daemon status
+keeper ui                        # the dashboard's local URL
 keeper activity --since 24h      # what ran, and what was applied to it
-keeper doctor                    # daemon, key source, detector, connections
-keeper version                   # both versions, because they refuse each other on a mismatch
 ```
 
-Most of that is also in the UI, which is where the work is meant to happen. It
-opens on the Inbox: everything waiting on you, each item saying which agent and
-profile it is for, how much it can change, and what it reads or writes. Settings
-holds the connections and the permission list, which shows when each grant was
-last used — the only thing that tells you which ones to revoke.
-
-## Where the reasoning lives
-
-Comments in this repository cite a specification by section — `SPEC R8.5a`,
-`§9.2`, `R4.1`. That document is the working record and is not published; the
-reasoning a comment needs is in the comment, and the citation is there so a
-future change can be traced to the decision it belongs to rather than guessed at.
-
-What is public and load-bearing is `internal/integration`. Those tests are the
-measurements: they run against a real PostgreSQL, MySQL and SQLite, and each one
-states in its own words what it is establishing and what follows if the answer
-comes back the other way.
+Windows compiles and does not run: there is no named pipe and no single-daemon
+election.
 
 ## Changelog and contributing
 
 [CHANGELOG.md](./CHANGELOG.md) is generated from the commit history by
 `make changelog`. [CONTRIBUTING.md](./CONTRIBUTING.md) has the commit convention
-that makes that work, and the handful of rules that are not negotiable —
-matching output columns by identity rather than by name being the first of them.
+and the rules that are not negotiable. The first is that output columns match by
+`(tableOID, attnum)`, never by name.
 
-## Status
-
-First tagged build. Three measurements are closed with reproductions — view
-provenance, engine column origin, and sidecar network isolation on Linux — and
-several remain open, including detector quality and the managed-server function
-inventory. Nothing here was marked done because its
-requirement was written down.
-
-Windows compiles and does not run: there is no named pipe and no single-daemon
-election. MySQL does not ship, because its driver discards the column origin
-`internal/integration/engines_test.go` measures, and name matching is not an
-acceptable substitute.
+`internal/integration` holds the measurements. Those tests run against a real
+PostgreSQL, and each one states what it establishes.

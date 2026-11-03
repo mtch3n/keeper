@@ -36,10 +36,3 @@ func (c *Client) ImportVault(ctx context.Context, data []byte, passphrase string
 	}{data, passphrase}
 	return c.do(ctx, http.MethodPost, "/v1/vault/import", body, nil)
 }
-
-// RotateMaster asks keeperd to rotate the vault's master key
-// (POST /v1/vault/rotate-master). Like ExportVault, this endpoint is implied
-// by the CLI surface rather than spelled out in CONTRACT §3's table.
-func (c *Client) RotateMaster(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, "/v1/vault/rotate-master", nil, nil)
-}

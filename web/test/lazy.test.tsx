@@ -8,11 +8,11 @@ function daemon() {
   const d = fakeDaemon()
   const sent: { path: string; body: unknown }[] = []
   d.on('GET', '/v1/connections', () => [200, [summary('c1', 'one')]])
-  d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one', '2026-10-06T12:00:00Z', [])])
+  d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one')])
   d.on('GET', '/v1/hosts', () => [200, [{ id: 'h1', name: 'prod-db', address: 'db.internal', port: 5432, sslmode: 'require', connections: ['c1'] }]])
   d.on('GET', '/v1/doctor', () => [
     200,
-    doctorReport({ connection_idle_minutes: 7, connections: [{ id: 'c1', name: 'one', findings: 2, mode: 'assisted' }] }),
+    doctorReport({ connection_idle_minutes: 7 }),
   ])
   d.on('GET', '/v1/settings', () => [200, { log_retention_days: 30, connection_idle_minutes: 7 }])
   d.on('PUT', '/v1/settings', (body) => {

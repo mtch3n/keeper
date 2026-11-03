@@ -31,7 +31,7 @@ jobs:
       # so a version older than the toolchain fails with "export data version 4
       # is greater than maximum supported version 2" rather than a finding.
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 
       # SPEC R7.4b. Go cannot make a string literal fail to compile, so the
       # prohibition on EXPLAIN ANALYZE is enforced here or nowhere: it executes
@@ -78,6 +78,9 @@ jobs:
       # and obvious in a diff, which is the right way round for a linter.
       - name: ui audit
         run: pnpm ui-audit
+
+      - name: test
+        run: pnpm test
 
       - run: pnpm build
 

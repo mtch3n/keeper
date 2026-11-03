@@ -9,7 +9,6 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -302,11 +301,7 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, cred ports.Cr
 	return nil
 }
 
-// Update replaces the stored connection's editable state: mode, limits,
-// denylist, writes setting and findings. Findings are stored as the last audit
-// reported them and gate nothing; a re-audit that turns up a new privilege
-// changes what the audit report says and leaves the connection usable, which
-// is what makes the audit separable from the connection at all: SPEC R4.1.
+// Update replaces the stored connection's editable state.
 func (v *Vault) Update(ctx context.Context, c *types.Connection) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -370,40 +365,6 @@ func (v *Vault) SetSettings(ctx context.Context, s types.Settings) error {
 	v.doc.Settings = &s
 	if err := v.persist(); err != nil {
 		v.doc.Settings = prev
-		return err
-	}
-	return nil
-}
-
-// Terms returns a connection's list-pass terms.
-func (v *Vault) Terms(ctx context.Context, id string) (ports.Terms, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.open {
-		return ports.Terms{}, errNotOpen()
-	}
-	rec, ok := v.doc.find(id)
-	if !ok {
-		return ports.Terms{}, &NotFoundError{ID: id}
-	}
-	return ports.Terms{Deny: slices.Clone(rec.Deny), Allow: slices.Clone(rec.Allow), Patterns: slices.Clone(rec.Patterns)}, nil
-}
-
-// SetTerms replaces a connection's list-pass terms.
-func (v *Vault) SetTerms(ctx context.Context, id string, t ports.Terms) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.open {
-		return errNotOpen()
-	}
-	rec, ok := v.doc.find(id)
-	if !ok {
-		return &NotFoundError{ID: id}
-	}
-	prevDeny, prevAllow, prevPatterns := rec.Deny, rec.Allow, rec.Patterns
-	rec.Deny, rec.Allow, rec.Patterns = slices.Clone(t.Deny), slices.Clone(t.Allow), slices.Clone(t.Patterns)
-	if err := v.persist(); err != nil {
-		rec.Deny, rec.Allow, rec.Patterns = prevDeny, prevAllow, prevPatterns
 		return err
 	}
 	return nil
@@ -521,53 +482,8 @@ func (v *Vault) Export(ctx context.Context) ([]byte, error) {
 	return json.Marshal(v.doc, opts...)
 }
 
-// RotateMaster generates a new master key, re-encrypts the vault under it,
-// and persists the new key to the same source currently in use. It supports
-// the keychain and key.age sources, which it can rewrite itself. It refuses
-// for the env source: KEEPER_MASTER_KEY is owned by whatever set the process
-// environment, and a rotation keeper cannot persist is a vault nothing can
-// open afterwards. SPEC §4.3.
-func (v *Vault) RotateMaster(ctx context.Context) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.open {
-		return errNotOpen()
-	}
-	if v.source == sourceEnv {
-		return errors.New("vault: cannot rotate the master key while the key source is KEEPER_MASTER_KEY; set a new value out of band")
-	}
-
-	newKey := make([]byte, masterKeyLen)
-	if _, err := rand.Read(newKey); err != nil {
-		return fmt.Errorf("vault: generate new master key: %w", err)
-	}
-	ciphertext, err := encryptDocument(newKey, v.doc)
-	if err != nil {
-		return fmt.Errorf("vault: encrypt with new master key: %w", err)
-	}
-
-	switch v.source {
-	case sourceKeychain:
-		if err := keychainSet(keyringService, keyringUser, base64.StdEncoding.EncodeToString(newKey)); err != nil {
-			return fmt.Errorf("vault: store new key in keychain: %w", err)
-		}
-	case sourceKeyFile:
-		if err := atomicWrite(keyFilePath(v.dir), newKey, 0o600); err != nil {
-			return fmt.Errorf("vault: write %s: %w", keyFileName, err)
-		}
-	default:
-		return fmt.Errorf("vault: unknown key source %q", v.source)
-	}
-
-	if err := atomicWrite(v.vaultPath(), ciphertext, 0o600); err != nil {
-		return fmt.Errorf("vault: write %s: %w", vaultFileName, err)
-	}
-	v.key = newKey
-	return nil
-}
-
 // Import replaces this vault with an export sealed under passphrase, keys and
-// all, so a persistent token minted where it was exported resolves here. The
+// all. The
 // vault is left as it was unless the export opens, parses, and is whole: every
 // connection on a host it carries, with a login and a token key.
 func (v *Vault) Import(ctx context.Context, data []byte, passphrase string) error {

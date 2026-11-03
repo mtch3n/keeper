@@ -1,24 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { getDoctor, getSettings, updateSettings, type DoctorReport, type Settings } from '@/lib/api'
-import { notificationsOn, setNotificationsOn } from '@/lib/notify'
-import { PermissionsSection } from '@/pages/PermissionsSection'
 import { age } from '@/lib/render'
 import { positiveInt, useSave } from '@/lib/save'
 import { SettingSection } from '@/components/wrappers/SettingSection'
 
 /**
- * What this daemon is doing (UI.md §2.3, §2.7).
+ * What this daemon is doing.
  *
  * A connection's page answers *what may this connection do*; this screen answers *what is
  * this daemon doing*, which is the question you ask when something is wrong. So
@@ -28,14 +24,11 @@ import { SettingSection } from '@/components/wrappers/SettingSection'
 
 /**
  * The daemon-wide choices: how long the activity log keeps a record, how long a
- * database's connections stay open unused, and whether this browser raises a
- * notification when something new waits in the Inbox.
+ * database's connections stay open unused.
  */
 function Preferences() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const save = useSave()
-  const [notify, setNotify] = useState(notificationsOn())
-  const [permission, setPermission] = useState(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission)
 
   useEffect(() => {
     getSettings()
@@ -66,29 +59,6 @@ function Preferences() {
           busy={save.busy}
           onSave={(n) => store({ connection_idle_minutes: n })}
         />
-        <Field orientation="horizontal">
-          <Switch
-            id="notify"
-            checked={notify}
-            onCheckedChange={(on) => {
-              setNotificationsOn(on)
-              setNotify(on)
-              if (on && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-                void Notification.requestPermission().then(setPermission)
-              }
-            }}
-          />
-          <FieldContent>
-            <FieldLabel htmlFor="notify">Notify me when something waits in the Inbox</FieldLabel>
-            <FieldDescription>
-              {permission === 'denied'
-                ? 'This browser has blocked notifications for keeper; allow them in its site settings.'
-                : permission === 'unsupported'
-                  ? 'This browser cannot show notifications.'
-                  : 'Only while keeper is open in a tab you are not looking at.'}
-            </FieldDescription>
-          </FieldContent>
-        </Field>
       </FieldGroup>
     </SettingSection>
   )
@@ -168,8 +138,6 @@ export function SettingsPage() {
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
       <Preferences />
       <Separator />
-      <PermissionsSection />
-      <Separator />
       {report === null ? (
         <div className="flex flex-col gap-2">
           <p className="text-meta text-muted-foreground">Checking the daemon and every connection…</p>
@@ -187,9 +155,6 @@ export function SettingsPage() {
             {report.pending_approvals} approval(s), {report.open_requests} local request(s)
           </Fact>
           <Fact label="tickets">{report.open_tickets} open</Fact>
-          <Fact label="allow rules">
-            {report.grants} · {report.suspended_grants} suspended by a schema change
-          </Fact>
         </Facts>
       </section>
 
@@ -250,47 +215,6 @@ export function SettingsPage() {
 
       <Separator />
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-heading">Connections</h2>
-        {report.connections?.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Mode</TableHead>
-                <TableHead className="text-right">Findings</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {report.connections.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="text-meta">
-                    <Link to={`/connections/${c.id}`} className="hover:underline">
-                      {c.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="text-meta">{c.mode}</TableCell>
-                  {/* A count and a link, never a state: a finding does not stop
-                      this connection, and doctor calling it a fault would be the
-                      acceptance gate under another name (SPEC R4.1). */}
-                  <TableCell className="text-right text-meta">
-                    {c.findings > 0 ? (
-                      <Link to={`/connections/${c.id}/privileges`} className="underline underline-offset-4">
-                        {c.findings}
-                      </Link>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <p className="text-meta text-muted-foreground">no connections registered</p>
-        )}
-      </section>
-
       {report.sessions?.length ? (
         <>
           <Separator />
@@ -301,7 +225,6 @@ export function SettingsPage() {
                 <TableRow>
                   <TableHead>Client</TableHead>
                   <TableHead>Workspace</TableHead>
-                  <TableHead>Intent</TableHead>
                   <TableHead className="text-right">Connected</TableHead>
                 </TableRow>
               </TableHeader>
@@ -312,13 +235,12 @@ export function SettingsPage() {
                       {s.client.name} {s.client.version ?? ''}
                     </TableCell>
                     <TableCell className="text-meta">{s.client.workspace ?? '—'}</TableCell>
-                    <TableCell className="text-sm">{s.intent ?? '—'}</TableCell>
                     <TableCell className="text-right text-meta">{age(s.connected_at)} ago</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-            <p className="text-meta text-muted-foreground">Closing a session discards its tickets, tokens and grants.</p>
+            <p className="text-meta text-muted-foreground">Closing a session discards its tickets and tokens.</p>
           </section>
         </>
       ) : null}

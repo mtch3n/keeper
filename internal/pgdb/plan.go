@@ -4,9 +4,12 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
@@ -24,7 +27,7 @@ const (
 	// CREATE, ALTER, DROP, GRANT, TRUNCATE, DECLARE, SET and the rest — plus the
 	// plannable ones that produce neither rows nor a ModifyTable node, which is
 	// what CREATE TABLE AS and SELECT INTO look like from here. keeper refuses
-	// all of them at tier 4 (SPEC R4.2c).
+	// all of them (SPEC R4.2c).
 	StmtDDL = "DDL"
 )
 
@@ -204,6 +207,7 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 		EstimatedCost: w.cost,
 		HasFilter:     w.filtered,
 		Writes:        len(w.targets) > 0,
+		Uncertain:     volatileCalled(ctx, c, raw),
 	}
 
 	switch {
@@ -220,7 +224,7 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 	default:
 		// Plannable, but it returns no rows and modifies no relation: CREATE
 		// TABLE AS, SELECT INTO, DECLARE. Not a read and not a write keeper can
-		// preview, so it joins DDL at tier 4.
+		// preview, so it joins DDL.
 		return &ports.PlanFacts{StatementType: StmtDDL}, nil
 	}
 
@@ -245,6 +249,42 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 		return nil, err
 	}
 	return facts, nil
+}
+
+// callName is a call-shaped name in the plan's JSON text: a bare name or an
+// escaped-quoted one, directly followed by an opening parenthesis. A literal
+// that looks like a call matches too, which can only add a question.
+var callName = regexp.MustCompile(`(?:\\"([^"\\]+)\\"|([A-Za-z_][A-Za-z0-9_$]*))\(`)
+
+const volatileSQL = `SELECT 1 FROM pg_proc WHERE provolatile = 'v' AND lower(proname) = ANY($1) LIMIT 1`
+
+// volatileCalled reports whether a function the catalog marks volatile is named
+// as a call in the plan. keeper reads no statement text for this. A failed
+// lookup counts as uncertain.
+func volatileCalled(ctx context.Context, c *conn, planJSON []byte) bool {
+	var names []string
+	for _, m := range callName.FindAllSubmatch(planJSON, -1) {
+		names = append(names, strings.ToLower(cmp.Or(string(m[1]), string(m[2]))))
+	}
+	if len(names) == 0 {
+		return false
+	}
+	// A savepoint, because a failed lookup (a role that cannot read pg_proc)
+	// would otherwise abort the statement's own transaction.
+	sp, err := c.tx.Begin(ctx)
+	if err != nil {
+		return true
+	}
+	var one int
+	err = sp.QueryRow(ctx, volatileSQL, names).Scan(&one)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		_ = sp.Rollback(ctx)
+		return true
+	}
+	if sp.Commit(ctx) != nil {
+		return true
+	}
+	return err == nil
 }
 
 // resolveColumnsSQL turns (schema, relation, column) names into the
@@ -289,9 +329,9 @@ func resolveColumns(ctx context.Context, c *conn, refs []colRef) ([]ports.Column
 }
 
 // resolveRelationsSQL turns the plan's relation names into the identities the
-// catalog and the denylist are keyed by, and adds every inheritance and
-// partition ancestor. A denylist entry naming a partitioned parent has to catch
-// a plan that only ever names leaf partitions.
+// catalog is keyed by, and adds every inheritance and
+// partition ancestor, so a plan that only names leaf partitions still carries
+// the parent.
 const resolveRelationsSQL = `
 WITH RECURSIVE q(s, r) AS (
     SELECT * FROM unnest($1::text[], $2::text[])

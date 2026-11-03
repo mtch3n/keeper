@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/mtchen/keeper/internal/types"
@@ -43,10 +42,6 @@ type Session struct {
 	client      types.ClientInfo
 	connectedAt time.Time
 	conn        net.Conn
-
-	mu     sync.Mutex
-	intent string
-	scope  types.TokenScope
 }
 
 // ID is the session identifier clients send in X-Keeper-Session.
@@ -57,15 +52,7 @@ func (s *Session) Conn() net.Conn { return s.conn }
 
 // Info is the snapshot the approval queue, the audit log and the pipeline read.
 func (s *Session) Info() types.Session {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return types.Session{ID: s.id, Client: s.client, Intent: s.intent, TokenScope: s.scope, ConnectedAt: s.connectedAt}
-}
-
-func (s *Session) setIntent(v string, scope types.TokenScope) {
-	s.mu.Lock()
-	s.intent, s.scope = v, scope
-	s.mu.Unlock()
+	return types.Session{ID: s.id, Client: s.client, ConnectedAt: s.connectedAt}
 }
 
 // OpenSession is the handshake. The session binds to the connection the request
@@ -95,8 +82,8 @@ func (d *Daemon) OpenSession(ctx context.Context, client types.ClientInfo) (*Ses
 // SessionFor resolves the id a request carried, and refuses it when the request
 // did not arrive on that session's own connection. A session id borrowed onto a
 // second connection is not that session: R3.4e says the connection is the
-// session, and every scope that hangs off it — tickets, the reverse map, session
-// grants — would otherwise be reachable from a connection the daemon never
+// session, and every scope that hangs off it — tickets, the reverse map —
+// would otherwise be reachable from a connection the daemon never
 // handed it to.
 func (d *Daemon) SessionFor(ctx context.Context, id string) (*Session, error) {
 	if id == "" {
@@ -135,30 +122,9 @@ func (d *Daemon) Sessions() []types.Session {
 	return out
 }
 
-// SetIntent records set_session_intent. R10c screens it with the patterns
-// stage, in process, because the intent is user-supplied text that reaches the
-// approval queue and the audit log.
-func (d *Daemon) SetIntent(ctx context.Context, s *Session, intent string, scope types.TokenScope) error {
-	switch scope {
-	case "":
-		scope = types.ScopeSession
-	case types.ScopeSession, types.ScopePersistent:
-	default:
-		return errValidation("token_scope", "must be session or persistent")
-	}
-	if intent != "" {
-		if err := d.deps.Audit.ScreenIntent(ctx, intent); err != nil {
-			return errIntentScreened
-		}
-	}
-	s.setIntent(intent, scope)
-	d.hub.Publish(Event{Type: EventSession, Data: SessionEvent{Action: "intent", Session: s.Info()}})
-	return nil
-}
-
 // CloseConn ends the session bound to a connection and drops everything scoped
 // to it: tickets are cancelled, queue items are cancelled rather than silently
-// removed, session grants are revoked, pending local requests are invalidated
+// removed, pending local requests are invalidated
 // and the reverse map is cleared. R3.4d and R3.4e, and §2.5's rule that a human
 // reading a row deserves to be told why it went.
 func (d *Daemon) CloseConn(c net.Conn) {
@@ -184,12 +150,6 @@ func (d *Daemon) CloseConn(c net.Conn) {
 			events = append(events, d.dequeueLocked(id, "session_closed")...)
 		}
 		delete(d.tickets, id)
-	}
-	for id, g := range d.grants {
-		if g.SessionID == s.id {
-			delete(d.grants, id)
-			events = append(events, Event{Type: EventApproval, Data: GrantEvent{Action: "revoked", GrantID: id}})
-		}
 	}
 	for id, r := range d.requests {
 		if r.r.SessionID != s.id {

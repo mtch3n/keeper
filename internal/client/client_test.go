@@ -112,9 +112,9 @@ func TestSessionHeaderCarried(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
 	})
 	var gotHeader string
-	mux.HandleFunc("POST /v1/session/intent", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		gotHeader = r.Header.Get("X-Keeper-Session")
-		writeJSON(t, w, http.StatusOK, okResponse{OK: true})
+		writeJSON(t, w, http.StatusOK, []ConnectionSummary{})
 	})
 	sock, _ := newTestServer(t, mux)
 
@@ -124,8 +124,8 @@ func TestSessionHeaderCarried(t *testing.T) {
 	}
 	defer c.Close()
 
-	if err := c.SetSessionIntent(t.Context(), "reconciliation OPS-441", ""); err != nil {
-		t.Fatalf("SetSessionIntent: %v", err)
+	if _, err := c.ListConnections(t.Context()); err != nil {
+		t.Fatalf("ListConnections: %v", err)
 	}
 	if gotHeader != "sess-1" {
 		t.Errorf("X-Keeper-Session = %q, want sess-1", gotHeader)
@@ -139,7 +139,7 @@ func TestListConnections(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusOK, []ConnectionSummary{
-			{ID: "c1", Name: "prod", Engine: "postgresql", Mode: types.ModeAssisted, Profile: Profile{Database: "app", Username: "app_ro"}},
+			{ID: "c1", Name: "prod", Engine: "postgresql", Profile: Profile{Database: "app", Username: "app_ro", Reads: types.ReadsUncertain}},
 		})
 	})
 	sock, _ := newTestServer(t, mux)
@@ -158,33 +158,6 @@ func TestListConnections(t *testing.T) {
 	}
 }
 
-// The daemon answers catalog grants with {"statements": [...]}, the shape the UI
-// reads. The client decoded a bare array, so `keeper catalog grants` failed on
-// every connection.
-func TestCatalogGrantsReadsTheDaemonsShape(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
-	})
-	mux.HandleFunc("POST /v1/catalog/c1/grants", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, map[string][]string{"statements": {"GRANT SELECT (id) ON public.users TO app_ro;"}})
-	})
-	sock, _ := newTestServer(t, mux)
-	c, err := Dial(t.Context(), sock, types.ClientInfo{Name: "keeper"})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer c.Close()
-
-	stmts, err := c.CatalogGrants(t.Context(), "c1")
-	if err != nil {
-		t.Fatalf("CatalogGrants: %v", err)
-	}
-	if len(stmts) != 1 {
-		t.Errorf("statements = %q", stmts)
-	}
-}
-
 func TestQueryResultVsTicket(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +168,6 @@ func TestQueryResultVsTicket(t *testing.T) {
 			Rows:       [][]any{{"1"}},
 			RowCount:   1,
 			Transforms: map[string]types.Transform{},
-			Tier:       types.Tier0Run,
 			AuditID:    "a1",
 		})
 	})
@@ -203,7 +175,6 @@ func TestQueryResultVsTicket(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, types.Ticket{
 			ID:      "tik-1",
 			State:   types.TicketPending,
-			Tier:    types.Tier2Uncertain,
 			AuditID: "a2",
 		})
 	})
@@ -290,32 +261,6 @@ func TestGetResultWaitMsQueryParam(t *testing.T) {
 	}
 	if gotQuery != "wait_ms=25000" {
 		t.Errorf("query = %q, want wait_ms=25000", gotQuery)
-	}
-}
-
-func TestGetAuthorizationResultNeverCarriesToken(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
-	})
-	mux.HandleFunc("GET /v1/requests/req-1", func(w http.ResponseWriter, r *http.Request) {
-		// Even if keeperd misbehaved and sent a token, the client must not
-		// hand it back from GetAuthorizationResult (SPEC R8.7g).
-		writeJSON(t, w, http.StatusOK, RequestResult{State: "ready", Token: "should-not-leak"})
-	})
-	sock, _ := newTestServer(t, mux)
-	c, err := Dial(t.Context(), sock, types.ClientInfo{Name: "keeper-mcp"})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer c.Close()
-
-	res, err := c.GetAuthorizationResult(t.Context(), "req-1", 1000)
-	if err != nil {
-		t.Fatalf("GetAuthorizationResult: %v", err)
-	}
-	if res.Token != "" {
-		t.Errorf("Token = %q, want empty", res.Token)
 	}
 }
 

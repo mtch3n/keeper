@@ -4,14 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"time"
 
-	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
 // Profile mirrors daemon.Profile: where a connection logs in and as whom, and
-// whether it may write. The password never appears here or anywhere else.
+// what its reads ask and whether it may write. The password never appears here or anywhere else.
 type Profile struct {
 	Host     string       `json:"host"`
 	Address  string       `json:"address"`
@@ -19,15 +17,15 @@ type Profile struct {
 	Database string       `json:"database"`
 	Username string       `json:"username"`
 	Writes   types.Writes `json:"writes"`
+	Reads    types.Reads  `json:"reads"`
 }
 
 // ConnectionSummary is one row of list_connections / `keeper connection ls`
 // (CONTRACT §3: GET /v1/connections).
 type ConnectionSummary struct {
-	ID     string     `json:"id"`
-	Name   string     `json:"name"`
-	Engine string     `json:"engine"`
-	Mode   types.Mode `json:"mode"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Engine string `json:"engine"`
 	Profile
 }
 
@@ -38,25 +36,6 @@ func (c *Client) ListConnections(ctx context.Context) ([]ConnectionSummary, erro
 		return nil, err
 	}
 	return out, nil
-}
-
-// AuditedPrivileges is the G0 half of describe_connection: what the last
-// privilege audit found, and when it ran. Nothing in it gates the connection
-// (SPEC R4.1) — `keeper audit` is where these are meant to be read.
-type AuditedPrivileges struct {
-	AuditedAt time.Time       `json:"audited_at"`
-	Findings  []types.Finding `json:"findings,omitzero"`
-}
-
-// AuditReport is one connection's entry in `keeper audit`, mirroring
-// daemon.AuditReport.
-type AuditReport struct {
-	ConnectionID string          `json:"connection_id"`
-	Name         string          `json:"name"`
-	Database     string          `json:"database"`
-	Role         string          `json:"role"`
-	AuditedAt    time.Time       `json:"audited_at"`
-	Findings     []types.Finding `json:"findings,omitzero"`
 }
 
 // CatalogStatus is the freshness and backlog half.
@@ -77,16 +56,12 @@ type ConnectionDetail struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version,omitzero"`
 	Profile
-	Schemas           []string             `json:"schemas,omitzero"`
-	AuditedPrivileges AuditedPrivileges    `json:"audited_privileges"`
-	CatalogStatus     CatalogStatus        `json:"catalog_status"`
-	PolicySummary     map[types.Policy]int `json:"policy_summary,omitzero"`
-	Mode              types.Mode           `json:"mode"`
-	Limits            types.Limits         `json:"limits"`
-	PersistentTokens  bool                 `json:"persistent_tokens"`
-	Denylist          []types.RelationRef  `json:"denylist,omitzero"`
-	Detection         []types.Stage        `json:"detection"`
-	Degradations      []types.Degradation  `json:"degradations,omitzero"`
+	Schemas       []string             `json:"schemas,omitzero"`
+	CatalogStatus CatalogStatus        `json:"catalog_status"`
+	PolicySummary map[types.Policy]int `json:"policy_summary,omitzero"`
+	Limits        types.Limits         `json:"limits"`
+	Detection     types.Detection      `json:"detection"`
+	Degradations  []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // DescribeConnection returns describe_connection's field set for one
@@ -116,9 +91,7 @@ type RegisterConnectionParams struct {
 	CatalogPath string       `json:"catalog_path,omitzero"`
 }
 
-// RegisterConnection stores a connection and audits it once (G0). The
-// returned connection carries every finding and is usable regardless of them:
-// the audit advises, it does not gate (SPEC R4.1).
+// RegisterConnection stores a connection.
 func (c *Client) RegisterConnection(ctx context.Context, p RegisterConnectionParams) (*types.Connection, error) {
 	var out types.Connection
 	if err := c.do(ctx, http.MethodPost, "/v1/connections", p, &out); err != nil {
@@ -127,79 +100,21 @@ func (c *Client) RegisterConnection(ctx context.Context, p RegisterConnectionPar
 	return &out, nil
 }
 
-// AuditConnection re-runs G0 against a registered connection.
-func (c *Client) AuditConnection(ctx context.Context, id string) (*types.Connection, error) {
-	var out types.Connection
-	if err := c.do(ctx, http.MethodPost, "/v1/connections/"+url.PathEscape(id)+"/audit", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// Audit returns the privilege-audit report for every connection.
-func (c *Client) Audit(ctx context.Context) ([]AuditReport, error) {
-	var out []AuditReport
-	if err := c.do(ctx, http.MethodGet, "/v1/audit", nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // PatchConnectionParams is PATCH /v1/connections/{id}. An unset field is left
 // alone; Limits, when set, replaces every limit, so a caller changing one reads
 // the others first.
 type PatchConnectionParams struct {
-	Mode types.Mode `json:"mode,omitzero"`
+	Reads types.Reads `json:"reads,omitzero"`
 	// Limits replaces all of the connection's limits when set.
-	Limits *types.Limits `json:"limits,omitzero"`
-	// Detection replaces the connection's passes when set; an empty list turns
-	// detection off.
-	Detection        *[]types.Stage `json:"detection,omitzero"`
-	Writes           types.Writes   `json:"writes,omitzero"`
-	PersistentTokens *bool          `json:"persistent_tokens,omitzero"`
+	Limits    *types.Limits   `json:"limits,omitzero"`
+	Detection types.Detection `json:"detection,omitzero"`
+	Writes    types.Writes    `json:"writes,omitzero"`
 }
 
-// PatchConnection updates a connection's mode and/or limits.
+// PatchConnection updates a connection's settings.
 func (c *Client) PatchConnection(ctx context.Context, id string, p PatchConnectionParams) (*types.Connection, error) {
 	var out types.Connection
 	if err := c.do(ctx, http.MethodPatch, "/v1/connections/"+url.PathEscape(id), p, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// TermCounts is how many list-pass terms a connection holds. The terms
-// themselves never come back from the daemon.
-type TermCounts struct {
-	Deny     int `json:"deny"`
-	Allow    int `json:"allow"`
-	Patterns int `json:"patterns"`
-}
-
-// SetTerms replaces a connection's list-stage terms and expressions.
-func (c *Client) SetTerms(ctx context.Context, id string, t ports.Terms) (*TermCounts, error) {
-	body := struct {
-		Deny     []string        `json:"deny"`
-		Allow    []string        `json:"allow"`
-		Patterns []ports.Pattern `json:"patterns"`
-	}{Deny: t.Deny, Allow: t.Allow, Patterns: t.Patterns}
-	var out TermCounts
-	if err := c.do(ctx, http.MethodPut, "/v1/connections/"+url.PathEscape(id)+"/terms", body, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// SetDenylist replaces a connection's denylist wholesale (`keeper connection
-// denylist --add/--remove` compute the new set client-side and call this
-// once). SPEC R4.5: entries are (schema, table) names resolved to OIDs the
-// way catalog entries are.
-func (c *Client) SetDenylist(ctx context.Context, id string, relations []types.RelationRef) (*types.Connection, error) {
-	body := struct {
-		Relations []types.RelationRef `json:"relations"`
-	}{Relations: relations}
-	var out types.Connection
-	if err := c.do(ctx, http.MethodPut, "/v1/connections/"+url.PathEscape(id)+"/denylist", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -215,13 +130,11 @@ type SchemaColumn struct {
 	Policy   types.Policy `json:"policy"`
 }
 
-// SchemaTable is one table of get_schema's response. HiddenCount is how many
-// hide_name columns were omitted from Columns (SPEC R6.4b).
+// SchemaTable is one table of get_schema's response.
 type SchemaTable struct {
-	Schema      string         `json:"schema"`
-	Name        string         `json:"name"`
-	Columns     []SchemaColumn `json:"columns"`
-	HiddenCount int            `json:"hidden_count,omitzero"`
+	Schema  string         `json:"schema"`
+	Name    string         `json:"name"`
+	Columns []SchemaColumn `json:"columns"`
 }
 
 // SchemaResult is get_schema's whole response.

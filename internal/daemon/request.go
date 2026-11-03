@@ -52,14 +52,12 @@ type RequestSpec struct {
 	ConnectionID string
 	Namespace    string
 	Purpose      string
-	Path         *types.PathRef
 	Facts        *types.ApprovalFacts
 	SQL          string
 }
 
 // RequestView is GET /v1/requests/{id}: state, and for a ready input request the
-// token and its namespace. Never a raw value, and never a token for an
-// authorization request.
+// token and its namespace. Never a raw value.
 type RequestView struct {
 	State     string            `json:"state"`
 	Kind      types.RequestKind `json:"kind"`
@@ -75,15 +73,11 @@ type LocalRequestView struct {
 	ConnectionID string               `json:"connection_id"`
 	Namespace    string               `json:"namespace,omitzero"`
 	Purpose      string               `json:"purpose,omitzero"`
-	Path         *types.PathRef       `json:"path,omitzero"`
 	Facts        *types.ApprovalFacts `json:"facts,omitzero"`
 	SQL          string               `json:"sql,omitzero"`
 	Session      types.Session        `json:"session"`
 	State        string               `json:"state"`
 	ExpiresAt    time.Time            `json:"expires_at"`
-	Mode         types.Mode           `json:"mode,omitzero"`
-	AlreadyHeld  bool                 `json:"already_granted,omitzero"`
-	Grants       []types.Grant        `json:"grants,omitzero"`
 }
 
 // OpenRequest creates a local request bound to the calling session and its
@@ -94,30 +88,24 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 		if spec.Namespace == "" {
 			return nil, errValidation("namespace", "is required for an input request")
 		}
-	case types.RequestAuthorization:
-		if spec.Path == nil || spec.Path.Relation.Schema == "" || spec.Path.Relation.Relation == "" {
-			return nil, errValidation("path", "is required for an authorization request")
-		}
 	default:
-		return nil, errValidation("kind", "must be input or authorization")
+		return nil, errValidation("kind", "must be input")
 	}
 	if spec.ConnectionID == "" {
 		return nil, errValidation("connection_id", "is required")
 	}
+	conn, err := d.usableConnection(ctx, spec.ConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	spec.ConnectionID = conn.ID
 	if spec.Purpose != "" {
 		// R8.7c: purpose is screened user-visible task text. It never carries a
 		// value, and R10c's screen is what makes that true rather than hoped.
-		if err := d.deps.Audit.ScreenIntent(ctx, spec.Purpose); err != nil {
-			return nil, errIntentScreened
+		if err := d.deps.Audit.ScreenText(ctx, spec.Purpose); err != nil {
+			return nil, errTextScreened
 		}
 	}
-	if spec.Path != nil && spec.Path.ConnectionID == "" {
-		spec.Path.ConnectionID = spec.ConnectionID
-	}
-	if spec.Path != nil && spec.Path.ConnectionID != spec.ConnectionID {
-		return nil, errValidation("path.connection_id", "must name the request's own connection")
-	}
-
 	now := d.now()
 	id := capability()
 	r := &localRequest{
@@ -127,7 +115,6 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 			SessionID:    s.id,
 			ConnectionID: spec.ConnectionID,
 			Namespace:    spec.Namespace,
-			Path:         spec.Path,
 			Purpose:      spec.Purpose,
 			URL:          d.cfg.UIBase + "/r/" + id,
 			State:        statePending,
@@ -203,7 +190,6 @@ func (d *Daemon) LocalRequest(ctx context.Context, id string) (*LocalRequestView
 		ConnectionID: r.r.ConnectionID,
 		Namespace:    r.r.Namespace,
 		Purpose:      r.r.Purpose,
-		Path:         r.r.Path,
 		Facts:        r.facts,
 		SQL:          r.sql,
 		State:        r.r.State,
@@ -212,22 +198,8 @@ func (d *Daemon) LocalRequest(ctx context.Context, id string) (*LocalRequestView
 	if s != nil {
 		v.Session = s.Info()
 	}
-	if r.r.Kind == types.RequestAuthorization && r.r.Path != nil {
-		// UI §6.2's "already granted": a second request for a path someone
-		// granted a moment ago in another window resolves without a second
-		// prompt, and says so.
-		if g := d.findGrantLocked(r.r.SessionID, r.r.Path.ConnectionID, r.r.Path.Relation, d.now()); g != nil {
-			v.AlreadyHeld = true
-			v.Grants = []types.Grant{*g}
-		}
-	}
 	d.mu.Unlock()
 
-	// UI §6.1: the page states the effective mode, because what happens to an
-	// uncertain value depends on it (§9.4).
-	if c, err := d.deps.Vault.Connection(ctx, v.ConnectionID); err == nil && c != nil {
-		v.Mode = c.Mode
-	}
 	return v, nil
 }
 
@@ -265,7 +237,7 @@ func (d *Daemon) AnswerInput(ctx context.Context, id, connectionID, namespace, v
 	sessionID, connID, ns := r.r.SessionID, r.r.ConnectionID, r.r.Namespace
 	d.mu.Unlock()
 
-	token, err := d.deps.Redactor.Mint(ports.WithStatement(ctx, ports.Statement{ConnectionID: connID, Persistent: d.persistentTokens(ctx, sessionID, connID)}), sessionID, connID, ns, value)
+	token, err := d.deps.Redactor.Mint(ports.WithStatement(ctx, ports.Statement{ConnectionID: connID}), sessionID, connID, ns, value)
 	if err != nil {
 		return err
 	}
@@ -288,45 +260,6 @@ func (d *Daemon) AnswerInput(ctx context.Context, id, connectionID, namespace, v
 
 	d.hub.Publish(Event{Type: EventRequest, Data: RequestEvent{Action: "answered", Kind: types.RequestInput, State: stateReady}})
 	return nil
-}
-
-// AnswerAuthorization grants the path the request named. Nothing is returned to
-// the session: no token is minted, and the waiting statement simply re-evaluates
-// against a grant that now exists (R8.7g).
-func (d *Daemon) AnswerAuthorization(ctx context.Context, id string, req GrantRequest, actor string) ([]types.Grant, error) {
-	d.mu.Lock()
-	r, ok := d.requests[id]
-	if !ok {
-		d.mu.Unlock()
-		return nil, errRequestUnknown
-	}
-	if r.r.Kind != types.RequestAuthorization {
-		d.mu.Unlock()
-		return nil, errValidation("kind", "this request is not an authorization request")
-	}
-	if err := d.answerableLocked(r); err != nil {
-		d.mu.Unlock()
-		return nil, err
-	}
-	path, sessionID := *r.r.Path, r.r.SessionID
-	d.mu.Unlock()
-
-	g, err := d.CreateGrant(sessionID, path, req, actor)
-	if err != nil {
-		return nil, err
-	}
-
-	d.mu.Lock()
-	r, ok = d.requests[id]
-	if ok && r.r.State == statePending {
-		r.r.State = stateReady
-		r.settledAt = d.now()
-		r.notify()
-	}
-	d.mu.Unlock()
-
-	d.hub.Publish(Event{Type: EventRequest, Data: RequestEvent{Action: "answered", Kind: types.RequestAuthorization, State: stateReady}})
-	return []types.Grant{*g}, nil
 }
 
 // RebindRequest is R8.7c's explicit retarget: selecting another connection in the
@@ -354,9 +287,6 @@ func (d *Daemon) RebindRequest(ctx context.Context, id, connectionID string) (*t
 		Purpose:      r.r.Purpose,
 		Facts:        r.facts,
 		SQL:          r.sql,
-	}
-	if r.r.Path != nil {
-		spec.Path = &types.PathRef{ConnectionID: connectionID, Relation: r.r.Path.Relation}
 	}
 	r.r.State = stateCancelled
 	r.settledAt = d.now()
@@ -418,17 +348,4 @@ func (d *Daemon) PendingRequests() []types.LocalRequest {
 	}
 	slices.SortFunc(out, func(a, b types.LocalRequest) int { return strings.Compare(a.ID, b.ID) })
 	return out
-}
-
-// persistentTokens reports whether a session's tokens on a connection persist:
-// its agent declared persistent and the connection allows it.
-func (d *Daemon) persistentTokens(ctx context.Context, sessionID, connID string) bool {
-	d.mu.Lock()
-	s := d.sessions[sessionID]
-	d.mu.Unlock()
-	if s == nil || s.Info().TokenScope != types.ScopePersistent {
-		return false
-	}
-	c, err := d.deps.Vault.Connection(ctx, connID)
-	return err == nil && c != nil && c.PersistentTokens
 }

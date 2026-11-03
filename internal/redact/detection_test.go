@@ -3,7 +3,6 @@ package redact_test
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 
 	"github.com/mtchen/keeper/internal/detect"
@@ -52,60 +51,13 @@ func scanOnce(t *testing.T, det ports.Detector, cells ...any) ([]any, types.Tran
 }
 
 func Test_DET_C15_PatternsRedactsAValidCardAndKeepsAnInvalidOne(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns()}, nil)
+	chain := detect.NewPatterns()
 	got, _ := scanOnce(t, chain, "card 4111 1111 1111 1111", "ref 4111 1111 1111 1112")
 	if want := "card " + redact.RedactedSpan("credit_card"); got[0] != want {
 		t.Errorf("valid card: got %q, want %q", got[0], want)
 	}
 	if got[1] != "ref 4111 1111 1111 1112" {
 		t.Errorf("a number failing Luhn was changed: %q", got[1])
-	}
-}
-
-func Test_DET_C30_ListRedactsADenyTermWhateverItsCase(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{mustList(t, ports.Terms{Deny: []string{"Acme Corp"}})}, nil)
-	got, _ := scanOnce(t, chain, "invoice for ACME corp")
-	if want := "invoice for " + redact.RedactedSpan(detect.TypeCustom); got[0] != want {
-		t.Errorf("got %q, want %q", got[0], want)
-	}
-}
-
-func Test_DET_C32_PassesAddUpAndASharedSpanYieldsOneMarker(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{
-		detect.NewPatterns(),
-		mustList(t, ports.Terms{Deny: []string{"jane@example.com", "Jane Roe"}}),
-	}, nil)
-	got, _ := scanOnce(t, chain, "jane@example.com met Jane Roe")
-	want := redact.RedactedSpan("email_address") + " met " + redact.RedactedSpan(detect.TypeCustom)
-	if got[0] != want {
-		t.Errorf("got %q, want %q", got[0], want)
-	}
-}
-
-func Test_DET_C33_OneFailingPassRedactsTheWholeCell(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns(), failing{}}, nil)
-	got, tr := scanOnce(t, chain, "jane@example.com met Jane Roe")
-	if got[0] != redact.RedactedMarker {
-		t.Errorf("got %q, want the whole cell redacted", got[0])
-	}
-	if tr.Basis != types.BasisUnexamined {
-		t.Errorf("basis = %q, want unexamined", tr.Basis)
-	}
-}
-
-func Test_DET_C35_AnAllowTermStaysVisible(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns()}, []string{"support@yourco.com"})
-	got, _ := scanOnce(t, chain, "write support@yourco.com or jane@example.com")
-	if want := "write support@yourco.com or " + redact.RedactedSpan("email_address"); got[0] != want {
-		t.Errorf("got %q, want %q", got[0], want)
-	}
-}
-
-func Test_DET_C36_APartialAllowMatchReleasesNothing(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns()}, []string{"support@yourco.com"})
-	got, _ := scanOnce(t, chain, "mail support@yourco.com.evil.io")
-	if got[0] == "mail support@yourco.com.evil.io" {
-		t.Errorf("a span only partly equal to an allow term was released: %q", got[0])
 	}
 }
 
@@ -138,7 +90,7 @@ func Test_DET_C17_ASpanPastTheEndRedactsTheWholeCell(t *testing.T) {
 	}
 }
 
-func Test_DET_C25_NoPassesRedactsEveryScanCell(t *testing.T) {
+func TestNoPassesRedactsEveryScanCell(t *testing.T) {
 	got, tr := scanOnce(t, nil, "nothing sensitive", "jane@example.com")
 	for i, g := range got {
 		if g != redact.RedactedMarker {
@@ -222,8 +174,8 @@ func (c *counting) Detect(_ context.Context, texts []string) ([][]ports.Span, er
 }
 func (c *counting) Identity() ports.DetectorIdentity { return ports.DetectorIdentity{Name: "counting"} }
 
-func Test_DET_C5_DetectionNeverTouchesAnAllowColumn(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns()}, nil)
+func TestDetectionNeverTouchesAnAllowColumn(t *testing.T) {
+	chain := detect.NewPatterns()
 	r, err := redact.New(redact.Config{
 		Keys:      keys{},
 		Detectors: func(context.Context, string) (ports.Detector, error) { return chain, nil },
@@ -267,96 +219,9 @@ func Test_DET_C22_AValueTokenizedEarlierIsReTokenizedInOutput(t *testing.T) {
 }
 
 func Test_DET_C38_ABareLowScoreHitIsStillRedacted(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns()}, nil)
+	chain := detect.NewPatterns()
 	got, _ := scanOnce(t, chain, "jane@example.com")
 	if got[0] != redact.RedactedSpan("email_address") {
 		t.Errorf("got %q: a hit below any score threshold was released", got[0])
-	}
-}
-
-func mustList(t *testing.T, terms ports.Terms) *detect.List {
-	t.Helper()
-	l, err := detect.NewList(terms)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return l
-}
-
-// recording is a stage that finds nothing and remembers what it was sent.
-type recording struct{ got []string }
-
-func (r *recording) Detect(_ context.Context, texts []string) ([][]ports.Span, error) {
-	r.got = append(r.got, texts...)
-	out := make([][]ports.Span, len(texts))
-	for i := range out {
-		out[i] = []ports.Span{}
-	}
-	return out, nil
-}
-func (r *recording) Identity() ports.DetectorIdentity {
-	return ports.DetectorIdentity{Name: "recording"}
-}
-
-func Test_DET_C45_AnEntitiesFilterKeepsOnlyThoseTypes(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{
-		detect.Only(detect.NewPatterns(), []string{"email_address"}),
-		mustList(t, ports.Terms{}),
-	}, nil)
-	got, _ := scanOnce(t, chain, "mail jane@example.com or call (415) 555-0132")
-	if want := "mail " + redact.RedactedSpan("email_address") + " or call (415) 555-0132"; got[0] != want {
-		t.Errorf("got %q, want %q", got[0], want)
-	}
-}
-
-func Test_DET_C47_ALaterStageReceivesEarlierHitsMasked(t *testing.T) {
-	rec := &recording{}
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns(), rec}, nil)
-	scanOnce(t, chain, "mail jane@example.com now")
-	if want := []string{"mail **************** now"}; !slices.Equal(rec.got, want) {
-		t.Errorf("later stage received %q, want %q", rec.got, want)
-	}
-}
-
-func Test_DET_C48_ARawStageReceivesTheOriginalText(t *testing.T) {
-	rec := &recording{}
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns(), detect.Raw(rec)}, nil)
-	scanOnce(t, chain, "mail jane@example.com now")
-	if want := []string{"mail jane@example.com now"}; !slices.Equal(rec.got, want) {
-		t.Errorf("raw stage received %q, want %q", rec.got, want)
-	}
-}
-
-func Test_DET_C49_ACoveredTextIsSentToNoLaterStage(t *testing.T) {
-	rec := &recording{}
-	chain := detect.NewChain([]ports.Detector{detect.NewPatterns(), rec}, nil)
-	got, _ := scanOnce(t, chain, "jane@example.com", "and jane@example.com")
-	if want := []string{"and ****************"}; !slices.Equal(rec.got, want) {
-		t.Errorf("later stage received %q, want only the text with something left: %q", rec.got, want)
-	}
-	if got[0] != redact.RedactedSpan("email_address") {
-		t.Errorf("covered cell = %q", got[0])
-	}
-}
-
-func Test_DET_C50_MaskingKeepsPositionsThroughMultiByteText(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{
-		detect.NewPatterns(),
-		mustList(t, ports.Terms{Deny: []string{"Jane Roe"}}),
-	}, nil)
-	got, _ := scanOnce(t, chain, "café jane@example.com met Jane Roe")
-	want := "café " + redact.RedactedSpan("email_address") + " met " + redact.RedactedSpan(detect.TypeCustom)
-	if got[0] != want {
-		t.Errorf("got %q, want %q", got[0], want)
-	}
-}
-
-func Test_DET_C39_AnOwnExpressionRedactsUnderItsLabel(t *testing.T) {
-	chain := detect.NewChain([]ports.Detector{
-		mustList(t, ports.Terms{Patterns: []ports.Pattern{{Label: "employee_id", Expr: `EMP-\d{6}`}}}),
-	}, nil)
-	got, _ := scanOnce(t, chain, "badge EMP-123456")
-	if want := "badge " + redact.RedactedSpan("employee_id"); got[0] != want {
-		t.Errorf("got %q, want %q", got[0], want)
 	}
 }

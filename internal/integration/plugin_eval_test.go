@@ -95,7 +95,7 @@ func TestThePluginReleasesNoSeededPersonalData(t *testing.T) {
 	if changed != 3 {
 		t.Errorf("the approval shows %d changed rows, want 3", changed)
 	}
-	if err := op.DecideApproval(ctx, tk.Ticket, client.DecisionApprove, nil); err != nil {
+	if err := op.DecideApproval(ctx, tk.Ticket, client.DecisionApprove); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	result := agent.call(t, "get_result", map[string]any{"ticket": tk.Ticket, "wait_ms": 10000})
@@ -277,7 +277,7 @@ func register(t *testing.T, op *client.Client, db shopDB) (ro, rw string) {
 		}
 		return c.ID
 	}
-	return add("shop_ro", "shop_eval_ro", db.roPass, types.WritesOff), add("shop_rw", "shop_eval_rw", db.rwPass, types.WritesApprove)
+	return add("shop_ro", "shop_eval_ro", db.roPass, types.WritesOff), add("shop_rw", "shop_eval_rw", db.rwPass, types.WritesAsk)
 }
 
 type agentSession struct{ cs *mcp.ClientSession }

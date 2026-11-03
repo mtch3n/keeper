@@ -19,8 +19,8 @@ import (
 type Dependencies struct {
 	Introspector Introspector
 	Sampler      ColumnSampler
-	// Detectors returns a connection's chain of passes, which init samples
-	// through. A connection with none gets no proposals.
+	// Detectors returns a connection's detector, which init samples through. A
+	// connection with detection off gets no proposals.
 	Detectors    ports.DetectorFor
 	Privileges   PrivilegeChecker
 	Fingerprints Fingerprinter
@@ -57,9 +57,16 @@ func (s *Store) Open(ctx context.Context, connID string, paths Paths) (*Catalog,
 		return nil, err
 	}
 	if s.deps.Introspector != nil {
-		if err := s.recatalogIdentity(ctx, c); err != nil {
+		relations, err := s.deps.Introspector.Introspect(ctx, connID)
+		if err == nil {
+			err = c.resolve(ctx, relations)
+		}
+		if err == nil {
+			err = c.classify(relations)
+		}
+		if err != nil {
 			c.close()
-			return nil, err
+			return nil, fmt.Errorf("catalog: opening %s: %w", connID, err)
 		}
 	}
 
@@ -207,8 +214,8 @@ func (s *Store) Raise(ctx context.Context, connID, key string, p types.ColumnPol
 	if hasOverlay {
 		currentPolicy = current.Policy
 	}
-	if currentPolicy == types.PolicyDrop || p.Policy.Rank() <= currentPolicy.Rank() {
-		return nil // never lowers, and drop is never touched automatically.
+	if p.Policy.Rank() <= currentPolicy.Rank() {
+		return nil // never lowers.
 	}
 
 	overlay[ck] = p

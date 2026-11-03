@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -34,7 +33,6 @@ func TestWriteAppendsOneLinePerRecord(t *testing.T) {
 			SessionID:  "s1",
 			Connection: "c1",
 			Statement:  "SELECT id FROM users WHERE email = $1",
-			Tier:       types.Tier(i),
 			RowCount:   i,
 			Duration:   time.Duration(i) * time.Millisecond,
 		}
@@ -115,41 +113,15 @@ func TestWriteReNormalizesDefensively(t *testing.T) {
 	}
 }
 
-func TestWriteWithholdsAnUnscreenedIntent(t *testing.T) {
-	l := newLog(t)
-	r := &types.AuditRecord{
-		Intent:    "look up the order for jane@example.com",
-		Statement: "SELECT id FROM orders WHERE email = $1",
-	}
-	if err := l.Write(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(r.Intent, "jane@example.com") {
-		t.Fatalf("intent kept the value: %q", r.Intent)
-	}
-	if !strings.Contains(r.Intent, "email") {
-		t.Errorf("intent should name what was found: %q", r.Intent)
-	}
-	clean := &types.AuditRecord{Intent: "reconcile last week's refunds", Statement: "SELECT 1"}
-	if err := l.Write(t.Context(), clean); err != nil {
-		t.Fatal(err)
-	}
-	if clean.Intent != "reconcile last week's refunds" {
-		t.Errorf("a clean intent was altered: %q", clean.Intent)
-	}
-}
-
 func TestQueryAndGet(t *testing.T) {
 	l := newLog(t)
 	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	tiers := []types.Tier{types.Tier0Run, types.Tier1Record, types.Tier3Approve}
 	var ids []string
-	for i, tier := range tiers {
+	for i := range 3 {
 		r := &types.AuditRecord{
 			At:         base.Add(time.Duration(i) * time.Hour),
 			SessionID:  []string{"s1", "s2", "s1"}[i],
 			Connection: []string{"c1", "c1", "c2"}[i],
-			Tier:       tier,
 			Statement:  "SELECT 1",
 			Transforms: map[string]types.Transform{"email": {Policy: types.PolicyToken, Namespace: "email", Basis: types.BasisCatalog}},
 			Duration:   250 * time.Millisecond,
@@ -178,11 +150,6 @@ func TestQueryAndGet(t *testing.T) {
 	byConn, _ := l.Query(t.Context(), ports.AuditFilter{ConnectionID: "c2"})
 	if len(byConn) != 1 {
 		t.Errorf("connection filter returned %d", len(byConn))
-	}
-	tier := types.Tier1Record
-	byTier, _ := l.Query(t.Context(), ports.AuditFilter{Tier: &tier})
-	if len(byTier) != 1 || byTier[0].Tier != types.Tier1Record {
-		t.Errorf("tier filter returned %v", byTier)
 	}
 	since, _ := l.Query(t.Context(), ports.AuditFilter{Since: base.Add(90 * time.Minute)})
 	if len(since) != 1 {
@@ -243,7 +210,7 @@ func TestQueryOnAMissingFile(t *testing.T) {
 	}
 }
 
-func TestScreenIntent(t *testing.T) {
+func TestScreenText(t *testing.T) {
 	l := newLog(t)
 	rejected := []string{
 		"find the order for jane@example.com",
@@ -251,24 +218,24 @@ func TestScreenIntent(t *testing.T) {
 		"look up 078-05-1120",
 		"the account GB82WEST12345698765432",
 	}
-	for _, intent := range rejected {
-		err := l.ScreenIntent(t.Context(), intent)
+	for _, text := range rejected {
+		err := l.ScreenText(t.Context(), text)
 		if err == nil {
-			t.Errorf("ScreenIntent(%q) accepted it", intent)
+			t.Errorf("ScreenText(%q) accepted it", text)
 			continue
 		}
-		ie, ok := errors.AsType[*IntentError](err)
+		ie, ok := errors.AsType[*TextError](err)
 		if !ok {
-			t.Errorf("ScreenIntent(%q) returned %T", intent, err)
+			t.Errorf("ScreenText(%q) returned %T", text, err)
 			continue
 		}
 		if len(ie.Types) == 0 {
-			t.Errorf("ScreenIntent(%q) named no types", intent)
+			t.Errorf("ScreenText(%q) named no types", text)
 		}
 		// The error names kinds, never the text.
-		for _, frag := range strings.Fields(intent) {
+		for _, frag := range strings.Fields(text) {
 			if len(frag) > 6 && strings.Contains(err.Error(), frag) {
-				t.Errorf("ScreenIntent error echoed the intent: %q", err.Error())
+				t.Errorf("ScreenText error echoed the text: %q", err.Error())
 			}
 		}
 	}
@@ -277,22 +244,22 @@ func TestScreenIntent(t *testing.T) {
 		"reconcile last week's refunds by region",
 		"find orders placed after the price change",
 	}
-	for _, intent := range accepted {
-		if err := l.ScreenIntent(t.Context(), intent); err != nil {
-			t.Errorf("ScreenIntent(%q) = %v", intent, err)
+	for _, text := range accepted {
+		if err := l.ScreenText(t.Context(), text); err != nil {
+			t.Errorf("ScreenText(%q) = %v", text, err)
 		}
 	}
 }
 
-func TestScreenIntentFailsClosedOnADetectorError(t *testing.T) {
+func TestScreenTextFailsClosedOnADetectorError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "activity")
 	l, err := New(Config{Key: testKey, Dir: path, Detector: brokenDetector{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	if err := l.ScreenIntent(t.Context(), "anything at all"); err == nil {
-		t.Error("an unscreened intent was accepted")
+	if err := l.ScreenText(t.Context(), "anything at all"); err == nil {
+		t.Error("an unscreened text was accepted")
 	}
 }
 
@@ -330,43 +297,5 @@ func TestConcurrentWrites(t *testing.T) {
 func TestNewRequiresADetector(t *testing.T) {
 	if _, err := New(Config{Key: testKey, Dir: filepath.Join(t.TempDir(), "activity")}); err == nil {
 		t.Error("New accepted a nil detector")
-	}
-}
-
-// An intent belongs to a session, not a connection, so whatever passes a
-// connection runs, the intent is screened in process by the patterns pass and
-// never leaves the machine.
-func Test_DET_C18_AnIntentIsScreenedByThePatternsPass(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "activity")
-	l, err := New(Config{Key: testKey, Dir: path, Detector: detect.NewPatterns()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	err = l.ScreenIntent(t.Context(), "follow up with jane@example.com")
-	ie, ok := errors.AsType[*IntentError](err)
-	if !ok || !slices.Contains(ie.Types, "email_address") {
-		t.Fatalf("ScreenIntent = %v, want an email_address rejection", err)
-	}
-}
-
-func Test_DET_C19_AnUnscreenedIntentIsRejectedAndNotRecorded(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "activity")
-	l, err := New(Config{Key: testKey, Dir: path, Detector: brokenDetector{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	const intent = "reconcile refunds for OPS-441"
-	if _, ok := errors.AsType[*IntentError](l.ScreenIntent(t.Context(), intent)); !ok {
-		t.Fatal("an intent the detector did not screen was not rejected as one to restate")
-	}
-	// The audit record itself is never dropped; its intent text is withheld.
-	if err := l.Write(t.Context(), &types.AuditRecord{ID: "a1", Intent: intent}); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(path)
-	if strings.Contains(string(data), "OPS-441") {
-		t.Errorf("the unscreened intent reached the log: %s", data)
 	}
 }

@@ -10,46 +10,42 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// registerTools adds exactly the ten tools SPEC §6.1/§6.3 and R8.7b expose to
-// an agent, and nothing else. register_connection, set_policy, catalog init,
-// approve, grants, allow and denylist are CLI/UI only (R4.1f, §6.3) and must
-// never be added here.
+// registerTools adds exactly the tools an agent gets, and nothing else.
+// register_connection, set_policy, catalog init, approve and every setting are
+// CLI/UI only and must never be added here.
 func registerTools(s *mcp.Server, h *daemonHolder) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "set_session_intent",
-		Description: "Optionally state this session's task, shown to the human beside anything that waits for approval, and declare how long its tokens live (token_scope). Queries do not require it.",
-	}, h.setSessionIntent)
-
-	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_connections",
-		Description: "List every registered database connection available to this session.",
+		Description: "List every registered database connection available to this session. Every connection_id and id argument accepts a connection id or the exact profile name.",
 	}, h.listConnections)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "describe_connection",
-		Description: "Describe one connection: engine, version, database, schema, role, audited privileges, catalog status, policy summary and mode.",
+		Description: "Describe one connection: engine, version, database, schema, role, what its reads and writes settings do (reads: always, uncertain or never asks first; writes: off, ask or allow), catalog status and policy summary.",
 	}, h.describeConnection)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_schema",
-		Description: "Get a connection's schema, filterable by schema and table pattern. Columns whose names are marked sensitive are omitted and counted, not listed.",
+		Description: "Get a connection's schema, filterable by schema and table pattern.",
 	}, h.getSchema)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "explain",
-		Description: "Dry-run a statement: what it would touch, what would be masked, and whether it would escalate, without spending an approval.",
+		Description: "Dry-run a statement: what it would touch, what would be masked, and its outcome (run, ask or refuse) under this connection's reads and writes settings, without spending an approval.",
 	}, h.explain)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "query",
-		Description: "Run a statement (read or write) against a connection. Returns rows directly for a low-tier read, " +
-			"or a ticket to poll with get_result when the statement needs approval. max_rows is bounded by an operator " +
-			"ceiling this tool cannot raise.",
+		Description: "Run a statement (read or write) against a connection. Returns rows directly when the connection's " +
+			"settings let it run. When a person must accept first, the client shows them a dialog and this same call " +
+			"returns the rows once they accept, or a refusal if they decline. If the client cannot show a dialog, or the " +
+			"person dismisses it, you get a ticket and a link: tell the person to open the link, then poll get_result. " +
+			"max_rows is bounded by an operator ceiling this tool cannot raise.",
 	}, h.query)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_result",
-		Description: "Poll a ticket returned by query. Call again while state is pending_approval; wait_ms is capped at 25000.",
+		Description: "Poll a ticket that query returned with a link, because no dialog settled it. Call again while state is pending_approval; wait_ms is capped at 25000.",
 	}, h.getResult)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -68,38 +64,6 @@ func registerTools(s *mcp.Server, h *daemonHolder) {
 		Description: "Poll an input request. A ready result carries only an opaque token and its namespace, never the value itself.",
 	}, h.getInputResult)
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name: "request_authorization",
-		Description: "Open a local browser form asking a human to authorize reading one relation (schema.table) this " +
-			"session is not yet permitted to read. Present the returned url to the user, then poll get_authorization_result.",
-	}, h.requestAuthorization)
-
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_authorization_result",
-		Description: "Poll an authorization request. Never returns a token — only a state change the next query observes.",
-	}, h.getAuthorizationResult)
-}
-
-// --- set_session_intent ---
-
-type SetSessionIntentIn struct {
-	Intent     string           `json:"intent,omitzero" jsonschema:"optional: the session's task, e.g. 'reconciliation investigation OPS-441'"`
-	TokenScope types.TokenScope `json:"token_scope,omitzero" jsonschema:"session (default): tokens resolve only in this session; persistent: tokens mean the same value across sessions and machines, where the connection allows it"`
-}
-
-type OkOut struct {
-	OK bool `json:"ok"`
-}
-
-func (h *daemonHolder) setSessionIntent(ctx context.Context, req *mcp.CallToolRequest, in SetSessionIntentIn) (*mcp.CallToolResult, OkOut, error) {
-	cli, err := h.get(ctx, req)
-	if err != nil {
-		return nil, OkOut{}, err
-	}
-	if err := cli.SetSessionIntent(ctx, in.Intent, in.TokenScope); err != nil {
-		return nil, OkOut{}, err
-	}
-	return nil, OkOut{OK: true}, nil
 }
 
 // --- list_connections ---
@@ -141,7 +105,7 @@ func (h *daemonHolder) listConnections(ctx context.Context, req *mcp.CallToolReq
 // --- describe_connection ---
 
 type DescribeConnectionIn struct {
-	ID string `json:"id" jsonschema:"the connection id from list_connections"`
+	ID string `json:"id" jsonschema:"the connection id from list_connections, or the exact profile name"`
 }
 
 func (h *daemonHolder) describeConnection(ctx context.Context, req *mcp.CallToolRequest, in DescribeConnectionIn) (*mcp.CallToolResult, client.ConnectionDetail, error) {
@@ -159,7 +123,7 @@ func (h *daemonHolder) describeConnection(ctx context.Context, req *mcp.CallTool
 // --- get_schema ---
 
 type GetSchemaIn struct {
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"connection_id" jsonschema:"a connection id, or the exact profile name"`
 	Schema       string `json:"schema,omitzero" jsonschema:"restrict to this schema name"`
 	TablePattern string `json:"table_pattern,omitzero" jsonschema:"restrict to tables matching this pattern"`
 }
@@ -229,23 +193,30 @@ type QueryIn struct {
 // types.QueryResult, or {ticket, state, reason, audit_id} when the
 // statement escalated (SPEC §6.1). Exactly one shape is populated.
 type QueryOut struct {
-	Rows       [][]any                    `json:"rows,omitzero"`
-	Columns    []types.ColumnMeta         `json:"columns,omitzero"`
-	RowCount   int                        `json:"row_count,omitzero"`
-	Truncated  bool                       `json:"truncated,omitzero"`
-	Transforms map[string]types.Transform `json:"transforms,omitzero"`
-	Tier       types.Tier                 `json:"tier,omitzero"`
-	AuditID    string                     `json:"audit_id,omitzero"`
+	Rows         [][]any                    `json:"rows,omitzero"`
+	Columns      []types.ColumnMeta         `json:"columns,omitzero"`
+	RowCount     int                        `json:"row_count,omitzero"`
+	Truncated    bool                       `json:"truncated,omitzero"`
+	Transforms   map[string]types.Transform `json:"transforms,omitzero"`
+	ExecutedRows int64                      `json:"executed_rows,omitzero"`
+	AuditID      string                     `json:"audit_id,omitzero"`
+	Hint         string                     `json:"hint,omitzero"`
 
 	Ticket string            `json:"ticket,omitzero"`
 	State  types.TicketState `json:"state,omitzero"`
 	Reason string            `json:"reason,omitzero"`
+	Link   string            `json:"link,omitzero"`
+	Next   string            `json:"next,omitzero"`
 }
 
 func (h *daemonHolder) query(ctx context.Context, req *mcp.CallToolRequest, in QueryIn) (*mcp.CallToolResult, QueryOut, error) {
 	cli, err := h.get(ctx, req)
 	if err != nil {
 		return nil, QueryOut{}, err
+	}
+	if req.Params.RequestState != "" || len(req.Params.InputResponses) > 0 {
+		out, err := h.answered(ctx, cli, req)
+		return nil, out, err
 	}
 	outcome, err := cli.Query(ctx, in.ConnectionID, in.SQL, toClientParams(in.Params), in.MaxRows)
 	if err != nil {
@@ -255,11 +226,77 @@ func (h *daemonHolder) query(ctx context.Context, req *mcp.CallToolRequest, in Q
 		r := outcome.Result
 		return nil, QueryOut{
 			Rows: r.Rows, Columns: r.Columns, RowCount: r.RowCount, Truncated: r.Truncated,
-			Transforms: r.Transforms, Tier: r.Tier, AuditID: r.AuditID,
+			Transforms: r.Transforms, ExecutedRows: r.ExecutedRows, AuditID: r.AuditID, Hint: r.Hint,
 		}, nil
 	}
 	t := outcome.Ticket
-	return nil, QueryOut{Ticket: t.ID, State: t.State, Reason: t.Reason, AuditID: t.AuditID}, nil
+	if ip := req.Session.InitializeParams(); ip != nil && ip.Capabilities != nil && ip.Capabilities.Elicitation != nil {
+		return &mcp.CallToolResult{
+			RequestState:  t.ID,
+			InputRequests: mcp.InputRequestMap{dialogKey: elicitation(t)},
+		}, QueryOut{}, nil
+	}
+	return nil, waiting(t.ID, t.State, t.Reason, t.AuditID, t.URL), nil
+}
+
+// waiting is what an agent gets when no dialog can settle its ticket: the
+// ticket, the local page where a person can, and how to collect the rows.
+func waiting(id string, state types.TicketState, reason, auditID, url string) QueryOut {
+	return QueryOut{
+		Ticket: id, State: state, Reason: reason, AuditID: auditID, Link: url,
+		Next: "A person must accept this statement. Show them the link, or they can use keeper's Inbox. Then call get_result with the ticket; do not resubmit the statement.",
+	}
+}
+
+var errResubmit = &types.Error{
+	Code:    types.CodeTicketUnknown,
+	Summary: "this approval dialog no longer applies to a statement keeper holds; nothing ran, so resubmit the statement",
+	Action:  "resubmit the statement",
+}
+
+// answered is the retry round. RequestState is client-supplied and proves
+// nothing: the daemon accepts an answer only for a ticket this session owns, and
+// an error before the answer is posted means nothing ran.
+func (h *daemonHolder) answered(ctx context.Context, cli *client.Client, req *mcp.CallToolRequest) (QueryOut, error) {
+	id := req.Params.RequestState
+	resp, ok := req.Params.InputResponses[dialogKey].(*mcp.ElicitResult)
+	if id == "" || !ok {
+		return QueryOut{}, errResubmit
+	}
+	choice, _ := resp.Content[dialogKey].(string)
+	cur, err := cli.GetResult(ctx, id, 0)
+	if err != nil {
+		return QueryOut{}, errResubmit
+	}
+	switch {
+	case runs(resp.Action, choice, cur.Write):
+		cur, err = cli.AnswerTicket(ctx, id, true)
+	case refuses(resp.Action, choice):
+		cur, err = cli.AnswerTicket(ctx, id, false)
+	}
+	if err != nil {
+		return QueryOut{}, errResubmit
+	}
+	if cur.State == types.TicketPending {
+		return waiting(id, cur.State, "", "", cur.URL), nil
+	}
+	for !cur.State.Terminal() {
+		if cur, err = cli.GetResult(ctx, id, 25000); err != nil {
+			return QueryOut{}, err
+		}
+	}
+	switch {
+	case cur.State == types.TicketReady && cur.Result != nil:
+		r := cur.Result
+		return QueryOut{
+			Rows: r.Rows, Columns: r.Columns, RowCount: r.RowCount, Truncated: r.Truncated,
+			Transforms: r.Transforms, ExecutedRows: r.ExecutedRows, AuditID: r.AuditID, Hint: r.Hint,
+		}, nil
+	case cur.Error != nil:
+		return QueryOut{}, cur.Error
+	default:
+		return QueryOut{}, &types.Error{Code: types.CodeApprovalRefused, Summary: "the statement was " + string(cur.State) + " and did not run", Action: "resubmit it if it is still needed"}
+	}
 }
 
 // --- cancel ---
@@ -297,6 +334,7 @@ type GetResultOut struct {
 	State      types.TicketState          `json:"state"`
 	Rows       [][]any                    `json:"rows,omitzero"`
 	Transforms map[string]types.Transform `json:"transforms,omitzero"`
+	Hint       string                     `json:"hint,omitzero"`
 	Error      *types.Error               `json:"error,omitzero"`
 }
 
@@ -313,6 +351,7 @@ func (h *daemonHolder) getResult(ctx context.Context, req *mcp.CallToolRequest, 
 	if res.Result != nil {
 		out.Rows = res.Result.Rows
 		out.Transforms = res.Result.Transforms
+		out.Hint = res.Result.Hint
 	}
 	return nil, out, nil
 }
@@ -320,13 +359,12 @@ func (h *daemonHolder) getResult(ctx context.Context, req *mcp.CallToolRequest, 
 // --- request_input ---
 
 type RequestInputIn struct {
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"connection_id" jsonschema:"a connection id, or the exact profile name"`
 	Namespace    string `json:"namespace" jsonschema:"the token namespace; two columns tokenized under the same namespace can be joined on"`
 	Purpose      string `json:"purpose,omitzero" jsonschema:"screened, user-visible task text; never a value"`
 }
 
-// LocalRequestOut is request_input / request_authorization's response
-// (SPEC R8.7b, R8.7g): a link to the local page, never the value itself.
+// LocalRequestOut is request_input's response: a link to the local page, never the value itself.
 type LocalRequestOut struct {
 	RequestID string `json:"request_id"`
 	URL       string `json:"url"`
@@ -372,55 +410,4 @@ func (h *daemonHolder) getInputResult(ctx context.Context, req *mcp.CallToolRequ
 		return nil, client.RequestResult{}, err
 	}
 	return nil, *res, nil
-}
-
-// --- request_authorization ---
-
-type RequestAuthorizationIn struct {
-	ConnectionID string `json:"connection_id"`
-	Path         string `json:"path" jsonschema:"the relation this session may not yet read, as schema.table"`
-	Purpose      string `json:"purpose,omitzero" jsonschema:"screened, user-visible task text; never a value"`
-}
-
-func (h *daemonHolder) requestAuthorization(ctx context.Context, req *mcp.CallToolRequest, in RequestAuthorizationIn) (*mcp.CallToolResult, LocalRequestOut, error) {
-	cli, err := h.get(ctx, req)
-	if err != nil {
-		return nil, LocalRequestOut{}, err
-	}
-	rel, err := parseRelationPath(in.Path)
-	if err != nil {
-		return nil, LocalRequestOut{}, err
-	}
-	path := types.PathRef{ConnectionID: in.ConnectionID, Relation: rel}
-	r, err := cli.RequestAuthorization(ctx, in.ConnectionID, path, in.Purpose)
-	if err != nil {
-		return nil, LocalRequestOut{}, err
-	}
-	return nil, fromLocalRequest(r), nil
-}
-
-// --- get_authorization_result ---
-
-type GetAuthorizationResultIn struct {
-	RequestID string `json:"request_id"`
-	WaitMs    int    `json:"wait_ms,omitzero" jsonschema:"how long to block waiting for the human to decide, capped at 25000ms"`
-}
-
-// AuthorizationResultOut is get_authorization_result's response: a state
-// only. It has no Token field at all — not omitted, absent — because an
-// authorization result must never carry one (SPEC R8.7g).
-type AuthorizationResultOut struct {
-	State string `json:"state"`
-}
-
-func (h *daemonHolder) getAuthorizationResult(ctx context.Context, req *mcp.CallToolRequest, in GetAuthorizationResultIn) (*mcp.CallToolResult, AuthorizationResultOut, error) {
-	cli, err := h.get(ctx, req)
-	if err != nil {
-		return nil, AuthorizationResultOut{}, err
-	}
-	res, err := cli.GetAuthorizationResult(ctx, in.RequestID, in.WaitMs)
-	if err != nil {
-		return nil, AuthorizationResultOut{}, err
-	}
-	return nil, AuthorizationResultOut{State: res.State}, nil
 }

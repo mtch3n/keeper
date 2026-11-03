@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"errors"
 	"io"
 	"strings"
@@ -38,6 +39,7 @@ const maxJSONDepth = 64
 // falls back to the column's own policy.
 func (r *Redactor) applyPaths(ctx context.Context, sess *session, pl *columnPlan, v any, now time.Time) (any, bool) {
 	var src []byte
+	decoded := false
 	switch t := v.(type) {
 	case string:
 		src = []byte(t)
@@ -45,6 +47,13 @@ func (r *Redactor) applyPaths(ctx context.Context, sess *session, pl *columnPlan
 		src = t
 	case jsontext.Value:
 		src = t
+	case map[string]any, []any:
+		// The driver decodes json and jsonb into these.
+		encoded, err := json.Marshal(t)
+		if err != nil {
+			return RedactedMarker, true
+		}
+		src, decoded = encoded, true
 	default:
 		return nil, false
 	}
@@ -60,6 +69,13 @@ func (r *Redactor) applyPaths(ctx context.Context, sess *session, pl *columnPlan
 		return RedactedMarker, true
 	}
 	out := strings.TrimRight(buf.String(), "\n")
+	if decoded {
+		var masked any
+		if err := json.Unmarshal([]byte(out), &masked); err != nil {
+			return RedactedMarker, true
+		}
+		return masked, true
+	}
 	if _, isString := v.(string); isString {
 		return out, true
 	}
@@ -84,12 +100,6 @@ func (r *Redactor) walkJSON(ctx context.Context, sess *session, pl *columnPlan, 
 				return err
 			}
 			child := path + "." + name.String()
-			if p, ok := pl.paths[child]; ok && p.Policy == types.PolicyDrop {
-				if err := dec.SkipValue(); err != nil {
-					return err
-				}
-				continue
-			}
 			if err := enc.WriteToken(jsontext.String(name.String())); err != nil {
 				return err
 			}
@@ -142,7 +152,10 @@ func (r *Redactor) applyLeaf(ctx context.Context, sess *session, pl *columnPlan,
 		return quoteJSON(RedactedMarker)
 	}
 	policy := p.Policy
-	if pl.floor != types.PolicyAllow && policy != types.PolicyDrop {
+	if !policy.Valid() {
+		policy = types.PolicyRedact
+	}
+	if pl.floor != types.PolicyAllow {
 		if raised := types.Strictest(policy, pl.floor); raised != policy {
 			policy = raised
 		}
@@ -150,29 +163,22 @@ func (r *Redactor) applyLeaf(ctx context.Context, sess *session, pl *columnPlan,
 	if policy == types.PolicyToken && p.Namespace == "" {
 		policy = types.PolicyRedact
 	}
-	if policy == types.PolicyPartial && !p.Form.Valid() {
-		policy = types.PolicyRedact
-	}
 	if raw.Kind() == jsontext.KindNull {
 		return raw
 	}
 	if pl.scan != nil && pl.scan.collecting {
-		if policy == types.PolicyScan && raw.Kind() == jsontext.KindString {
+		if pl.examinesText(policy) && raw.Kind() == jsontext.KindString {
 			r.redactSpans(pl, jsonScalarString(raw))
 		}
 		return raw
 	}
 	switch policy {
-	case types.PolicyAllow:
-		return raw
 	case types.PolicyToken:
 		sub := *pl
 		sub.namespace = p.Namespace
 		return quoteJSON(r.tokenizeLeaf(sess, pl, &sub, jsonScalarString(raw), now))
-	case types.PolicyPartial:
-		return quoteJSON(Partial(p.Form, jsonScalarString(raw)))
-	case types.PolicyScan:
-		if raw.Kind() != jsontext.KindString {
+	case types.PolicyAllow, types.PolicyScan:
+		if raw.Kind() != jsontext.KindString || !pl.examinesText(policy) {
 			return raw
 		}
 		out, n := r.redactSpans(pl, jsonScalarString(raw))

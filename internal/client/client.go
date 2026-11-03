@@ -76,7 +76,7 @@ func Dial(ctx context.Context, socketPath string, info types.ClientInfo) (*Clien
 //
 // The daemon tells an agent from a human by whether the socket connection
 // carries a session, and that is what gates the human surface: registering a
-// connection, accepting a G0 finding, approving, granting, editing the catalog
+// connection, approving, editing the catalog, setting reads and writes
 // and setting limits are CLI and UI actions only (SPEC §6.3, R4.1f). The CLI has
 // no use for a session either — it holds no reverse map and mints no tokens —
 // so not opening one is both the honest signal and the accurate one.

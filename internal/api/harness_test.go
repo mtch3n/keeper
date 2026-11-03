@@ -22,7 +22,7 @@ import (
 // ---------------------------------------------------------------- pipeline
 
 // fakePipeline stands in for internal/pipeline. Its default behaviour is the one
-// the daemon's grant logic depends on: a statement escalates while nothing
+// the daemon's ticket logic depends on: a statement escalates while nothing
 // authorizes it, and runs once something does.
 type fakePipeline struct {
 	mu       sync.Mutex
@@ -35,14 +35,14 @@ type fakePipeline struct {
 }
 
 func (p *fakePipeline) Explain(context.Context, types.Session, string, string, []ports.Param) (*types.ExplainResult, error) {
-	return &types.ExplainResult{StatementType: "SELECT", PredictedTier: types.Tier1Record}, nil
+	return &types.ExplainResult{StatementType: "SELECT", Outcome: types.OutcomeRun}, nil
 }
 
 func (p *fakePipeline) Query(_ context.Context, _ types.Session, _, _ string, params []ports.Param, maxRows int, auth string) (*types.QueryResult, *types.Ticket, error) {
 	p.mu.Lock()
 	p.auths = append(p.auths, auth)
 	p.params = append(p.params, params)
-	escalate, err := p.escalate, p.err
+	escalate, err, preview := p.escalate, p.err, p.preview
 	p.mu.Unlock()
 
 	if err != nil {
@@ -50,13 +50,13 @@ func (p *fakePipeline) Query(_ context.Context, _ types.Session, _, _ string, pa
 	}
 	if escalate && auth == "" {
 		return nil, &types.Ticket{
-			State: types.TicketPending, Tier: types.Tier3Approve,
-			Reason: "needs a human", AuditID: "audit-1",
+			State:  types.TicketPending,
+			Reason: "needs a human", AuditID: "audit-1", Preview: preview,
 		}, nil
 	}
 	return &types.QueryResult{
-		Rows: [][]any{{1}}, RowCount: 1, Tier: types.Tier1Record,
-		AuditID: "audit-1", Authorization: auth, Mode: types.ModeAssisted,
+		Rows: [][]any{{1}}, RowCount: 1,
+		AuditID: "audit-1", Authorization: auth,
 		Columns: []types.ColumnMeta{{Name: "id", Type: "int4", Policy: types.PolicyAllow}},
 	}, nil, nil
 }
@@ -66,12 +66,6 @@ func (p *fakePipeline) Facts(context.Context, types.Session, string, string, []p
 	defer p.mu.Unlock()
 	f := p.facts
 	return &f, nil
-}
-
-func (p *fakePipeline) PreviewWrite(context.Context, types.Session, string, string, []ports.Param) (*types.WritePreview, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.preview, nil
 }
 
 func (p *fakePipeline) CommitWrite(_ context.Context, _ types.Session, _, _ string, _ []ports.Param, auth string) (*types.QueryResult, error) {
@@ -152,7 +146,6 @@ type rig struct {
 	red   *fakeRedactor
 	alog  *fakeAuditLog
 	pipe  *fakePipeline
-	aud   *fakeAuditor
 
 	sockLn  *pipeListener
 	sockSrv *http.Server
@@ -176,7 +169,7 @@ func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 
 	conn := &types.Connection{
 		ID: "c1", Name: "prod", Engine: "postgres", Database: "app", Role: "app_ro",
-		Mode: types.ModeAssisted, Limits: types.DefaultLimits(),
+		Reads: types.ReadsUncertain, Limits: types.DefaultLimits(),
 	}
 	r := &rig{
 		t:     t,
@@ -186,14 +179,12 @@ func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 		red:   newRedactor(),
 		alog:  &fakeAuditLog{},
 		pipe:  &fakePipeline{},
-		aud:   &fakeAuditor{},
 		conn:  conn,
 		open:  map[string]func() error{},
 	}
 
 	d, err := daemon.New(cfg, daemon.Deps{
-		Vault:   r.vault,
-		Auditor: r.aud,
+		Vault: r.vault,
 		Catalogs: func(id string) (ports.Catalog, error) {
 			if f := r.open[id]; f != nil {
 				if err := f(); err != nil {
@@ -260,8 +251,8 @@ func (r *rig) socket() *client {
 	return &client{t: r.t, http: &http.Client{Transport: tr}, tr: tr, base: "http://keeper", header: http.Header{}}
 }
 
-// agent opens a socket connection and completes the handshake and the intent.
-func (r *rig) agent(intent string) *client {
+// agent opens a socket connection and completes the handshake.
+func (r *rig) agent() *client {
 	r.t.Helper()
 	c := r.socket()
 	var out struct {
@@ -271,9 +262,6 @@ func (r *rig) agent(intent string) *client {
 		"client": types.ClientInfo{Name: "keeper-mcp", Version: "1", PID: 1, Workspace: "/w"},
 	}, &out)
 	c.header.Set("X-Keeper-Session", out.SessionID)
-	if intent != "" {
-		c.mustJSON("POST", "/v1/session/intent", map[string]any{"intent": intent}, nil)
-	}
 	return c
 }
 

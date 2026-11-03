@@ -79,7 +79,7 @@ export function RegisterDialog({
         host_id: host.id,
         database: f.database.trim(),
         credential: { user: f.user.trim(), password: f.password || undefined },
-        writes: f.writes ? 'approve' : 'off',
+        writes: f.writes ? 'ask' : 'off',
         catalog_path: f.catalogPath.trim() || undefined,
       })
       setF(EMPTY)

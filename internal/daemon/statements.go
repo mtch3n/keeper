@@ -34,36 +34,58 @@ func (d *Daemon) resolveParams(ctx context.Context, sessionID, connID string, pa
 			out = append(out, ports.Param{Value: p.Value})
 			continue
 		}
-		v, _, err := d.deps.Redactor.Resolve(ctx, sessionID, connID, p.Token)
+		v, pol, err := d.deps.Redactor.Resolve(ctx, sessionID, connID, p.Token)
 		if err != nil {
 			// R3.4d: the reverse map is memory only, so an unresolvable token is
 			// not "retry" but "every token you hold is dead, re-run the queries
 			// that minted them".
 			return nil, errStaleToken
 		}
-		out = append(out, ports.Param{Value: v})
+		out = append(out, ports.Param{Value: v, Policy: pol})
 	}
 	return out, nil
 }
 
-// usableConnection is the admission check every statement passes, and all it
-// checks now is that the connection exists. A privilege finding does not gate a
-// statement (R4.1) and the vault cannot be shut while the daemon serves (§4.3),
-// so both of the conditions this used to test are gone.
-func (d *Daemon) usableConnection(ctx context.Context, id string) (*types.Connection, error) {
-	c, err := d.deps.Vault.Connection(ctx, id)
-	if err != nil || c == nil {
+// usableConnection is the admission check every statement passes, and the one
+// place an agent's connection_id is resolved: ref is a connection id or the
+// exact name of one profile. Callers use the returned connection's ID.
+func (d *Daemon) usableConnection(ctx context.Context, ref string) (*types.Connection, error) {
+	if c, err := d.deps.Vault.Connection(ctx, ref); err == nil && c != nil {
+		return c, nil
+	}
+	all, err := d.deps.Vault.Connections(ctx)
+	if err != nil {
 		return nil, errUnknownConnection
 	}
-	return c, nil
+	var named []*types.Connection
+	for _, c := range all {
+		if c.Name == ref {
+			named = append(named, c)
+		}
+	}
+	switch len(named) {
+	case 0:
+		return nil, errUnknownConnection
+	case 1:
+		return named[0], nil
+	}
+	ids := make([]string, len(named))
+	for i, c := range named {
+		ids[i] = c.ID
+	}
+	return nil, keeperErr(types.CodeUnknownConnection,
+		"more than one connection is named "+ref+": "+strings.Join(ids, ", "),
+		"call again with one of these ids")
 }
 
 // Explain is §6.1's dry run: what would be masked and whether the statement
 // would escalate, without spending an approval.
 func (d *Daemon) Explain(ctx context.Context, s *Session, connID, sql string, params []Param) (*types.ExplainResult, error) {
-	if _, err := d.usableConnection(ctx, connID); err != nil {
+	conn, err := d.usableConnection(ctx, connID)
+	if err != nil {
 		return nil, err
 	}
+	connID = conn.ID
 	bound, err := d.resolveParams(ctx, s.ID(), connID, params)
 	if err != nil {
 		return nil, err
@@ -73,19 +95,13 @@ func (d *Daemon) Explain(ctx context.Context, s *Session, connID, sql string, pa
 
 // Query runs a statement or escalates it. Exactly one of the results is non-nil
 // on success.
-//
-// The escalation path is where grants act. §9.3 says an allow rule "lowers the
-// tier of matching future statements", so the daemon does not pre-authorize:
-// it lets the pipeline decide the tier, and only when the pipeline escalates
-// does it ask whether every relation the plan touched already has its own grant
-// (R9.3c). If it does, the statement runs again with the grant named as its
-// authorization basis. If one relation is unlisted, the statement goes to the
-// queue at its normal tier.
 func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, params []Param, maxRows int) (*types.QueryResult, *types.Ticket, error) {
 	info := s.Info()
-	if _, err := d.usableConnection(ctx, connID); err != nil {
+	conn, err := d.usableConnection(ctx, connID)
+	if err != nil {
 		return nil, nil, err
 	}
+	connID = conn.ID
 	bound, err := d.resolveParams(ctx, info.ID, connID, params)
 	if err != nil {
 		return nil, nil, err
@@ -110,37 +126,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	}
 	write := isWrite(facts.StatementType)
 
-	if !write {
-		if m, ok := d.matchGrants(info.ID, connID, facts.Relations, facts.EstimatedRows); ok {
-			capped := m.RowCeiling
-			if maxRows > 0 {
-				capped = min(maxRows, m.RowCeiling)
-			}
-			granted, _, gerr := d.deps.Pipeline.Query(ctx, info, connID, sql, bound, capped, m.Authorization)
-			// §9.4: estimated rows are advisory, so the ceiling is checked again
-			// against what actually came back. A result that overruns the rule a
-			// human set is not covered by it, and goes to the queue instead.
-			if gerr == nil && granted != nil && granted.RowCount <= m.RowCeiling {
-				d.noteGrantUse(m.IDs)
-				d.results.keep(granted)
-				return granted, nil, nil
-			}
-			// A grant that did not lower the tier is not an error. The statement
-			// falls through to the queue, where a human sees it.
-		}
-	}
-
-	var preview *types.WritePreview
-	if write {
-		// R4.2d: the preview is a second execution that rolls back, run before a
-		// human is asked, so the approval screen carries a count.
-		preview, err = d.deps.Pipeline.PreviewWrite(ctx, info, connID, sql, bound)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	facts.Intent = info.Intent
-	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, preview)
+	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, conn.Name, tmpl, facts, tmpl.Preview)
 	return nil, tk, nil
 }
 
@@ -162,7 +148,7 @@ func (d *Daemon) withWriters(ctx context.Context, connID string, err error) erro
 	}
 	var names []string
 	for _, o := range cs {
-		if o.ID != c.ID && o.HostID == c.HostID && o.Database == c.Database && o.Writes == types.WritesApprove {
+		if o.ID != c.ID && o.HostID == c.HostID && o.Database == c.Database && (o.Writes == types.WritesAsk || o.Writes == types.WritesAllow) {
 			names = append(names, o.Name)
 		}
 	}
@@ -171,6 +157,8 @@ func (d *Daemon) withWriters(ctx context.Context, connID string, err error) erro
 	}
 	slices.Sort(names)
 	out := *kerr
-	out.Action = "resubmit on a profile for this database that allows writes: " + strings.Join(names, ", ")
+	list := strings.Join(names, ", ")
+	out.Summary += "; profiles on this database that allow writes: " + list
+	out.Action = "resubmit on a profile for this database that allows writes: " + list
 	return &out
 }

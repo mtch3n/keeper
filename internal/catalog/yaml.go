@@ -13,17 +13,12 @@ import (
 // catalogVersion is the only version this package writes and accepts.
 const catalogVersion = 1
 
-// yamlColumnPolicy is the on-disk shape of types.ColumnPolicy. It exists
-// because types.ColumnPolicy carries only `json` struct tags, and this
-// package's on-disk keys are snake_case ("hide_name"); yaml.v3's default for
-// an untagged field is the whole field name lower-cased ("hidename"), which
-// would not match SPEC §5.2's sample file. types.ColumnPolicy is frozen
-// (internal/types), so the mapping lives here instead of there.
+// yamlColumnPolicy is the on-disk shape of types.ColumnPolicy, which carries
+// only `json` struct tags. Keys an earlier version wrote, such as form and
+// hide_name, are not read.
 type yamlColumnPolicy struct {
 	Policy    string                      `yaml:"policy"`
 	Namespace string                      `yaml:"namespace,omitempty"`
-	Form      string                      `yaml:"form,omitempty"`
-	HideName  bool                        `yaml:"hide_name,omitempty"`
 	Paths     map[string]yamlColumnPolicy `yaml:"paths,omitempty"`
 }
 
@@ -31,8 +26,6 @@ func toYAML(p types.ColumnPolicy) yamlColumnPolicy {
 	y := yamlColumnPolicy{
 		Policy:    string(p.Policy),
 		Namespace: p.Namespace,
-		Form:      string(p.Form),
-		HideName:  p.HideName,
 	}
 	if len(p.Paths) > 0 {
 		y.Paths = make(map[string]yamlColumnPolicy, len(p.Paths))
@@ -47,8 +40,6 @@ func fromYAML(y yamlColumnPolicy) types.ColumnPolicy {
 	p := types.ColumnPolicy{
 		Policy:    types.Policy(y.Policy),
 		Namespace: y.Namespace,
-		Form:      types.PartialForm(y.Form),
-		HideName:  y.HideName,
 	}
 	if len(y.Paths) > 0 {
 		p.Paths = make(map[string]types.ColumnPolicy, len(y.Paths))
@@ -90,7 +81,7 @@ func loadYAMLFile(path string) (map[columnKey]types.ColumnPolicy, error) {
 	for schema, tables := range file.Schemas {
 		for table, columns := range tables {
 			for column, y := range columns {
-				p := fromYAML(y)
+				p := fromYAML(y).Known()
 				if err := p.Validate(); err != nil {
 					return nil, fmt.Errorf("catalog: %s: %s.%s.%s: %w", path, schema, table, column, err)
 				}

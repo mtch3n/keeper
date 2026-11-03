@@ -1,220 +1,36 @@
 import { useState } from 'react'
-import { ArrowDownIcon, ArrowUpIcon, XIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Textarea } from '@/components/ui/textarea'
-import {
-  auditConnection,
-  setDenylist,
-  setTerms,
-  updateConnection,
-  type ConnectionDetail,
-  type Pattern,
-} from '@/lib/api'
-import { auditedAge } from '@/lib/render'
+import { updateConnection, type ConnectionDetail } from '@/lib/api'
 import { positiveInt, useSave } from '@/lib/save'
-import { IconButton } from '@/components/wrappers/IconButton'
 import { ConfirmWiden, SettingSection } from '@/components/wrappers/SettingSection'
-import type { Finding, Mode, RelationRef, Stage, StageKind, Writes } from '@/lib/types'
+import type { Detection, Reads, Writes } from '@/lib/types'
 
-/**
- * What this connection's role can do beyond reading (SPEC R4.1), read where
- * the connection's other controls are set. None of it stops the connection:
- * each finding carries the statement that would narrow it, and keeper never
- * runs that statement — it holds the credential the report is about, and a
- * tool that can narrow its own grants is a tool that can widen them.
- */
-export function Privileges({
-  detail,
-  onChanged,
-  onError,
-}: {
-  detail: ConnectionDetail
-  onChanged: () => Promise<void>
-  onError: (e: string) => void
-}) {
-  const [busy, setBusy] = useState(false)
-  const audited = detail.audited_privileges
-  const findings = audited.findings ?? []
-  const never = auditedAge(audited.audited_at) === 'never'
+type Option<T extends string> = { value: T; title: string; consequence: string }
 
-  const rerun = async () => {
-    setBusy(true)
-    try {
-      await auditConnection(detail.id)
-      await onChanged()
-    } catch (e) {
-      onError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <section aria-labelledby="privileges-heading" className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 id="privileges-heading" className="text-heading">
-            Privileges
-          </h2>
-          <span className="text-meta text-muted-foreground">
-            {detail.username} on {detail.database} · audited {auditedAge(audited.audited_at)}
-          </span>
-        </div>
-        <Button variant="outline" disabled={busy} onClick={() => void rerun()}>
-          {busy ? 'Re-auditing…' : 'Re-audit'}
-        </Button>
-      </div>
-      {never ? (
-        <p className="text-sm">
-          No report yet: the audit has not run against this role. That says nothing about what it can do.
-        </p>
-      ) : findings.length === 0 ? (
-        <p className="text-sm">This role holds nothing keeper would report.</p>
-      ) : (
-        <FindingGroups findings={findings} />
-      )}
-    </section>
-  )
-}
-
-/** What each kind of finding means, said once for its group. */
-const KIND_MEANING: Record<string, string> = {
-  attribute: 'Role attributes beyond reading, such as superuser.',
-  membership: 'Membership in built-in roles that read files or other roles\' data.',
-  'relation-write': 'Tables and views this role can change.',
-  'schema-create': 'Schemas this role can create objects in.',
-  'function-exec': 'Functions that read or write files, or run programs.',
-  'security-definer': 'Functions that run with their owner\'s rights.',
-}
-
-type FindingGroup = { key: string; title: string; meaning?: string; findings: Finding[]; script: string }
-
-/**
- * Findings grouped by kind, rarest first, because the one unusual grant is the
- * one to read and forty identical REVOKEs are one decision, not forty. Each
- * group's statements are shown in full as one block — a statement you have to
- * click to see is one you will not paste — and Copy all fixes joins every
- * group into one transaction. keeper never runs any of it: it holds the
- * credential the report is about, and a tool that can narrow its own grants is
- * a tool that can widen them.
- */
-function groupFindings(findings: Finding[]): FindingGroup[] {
-  const byKind = new Map<string, Finding[]>()
-  const loose: Finding[] = []
-  for (const f of findings) {
-    if (!f.narrower) {
-      loose.push(f)
-      continue
-    }
-    byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f])
-  }
-  const groups: FindingGroup[] = [...byKind.entries()]
-    .sort(([a, x], [b, y]) => x.length - y.length || a.localeCompare(b))
-    .map(([kind, fs]) => ({
-      key: kind,
-      title: `${kind} · ${fs.length}`,
-      meaning: KIND_MEANING[kind],
-      findings: fs,
-      script: fs.map((f) => f.narrower).join('\n'),
-    }))
-  if (loose.length > 0) {
-    groups.push({ key: 'loose', title: `No single statement removes these · ${loose.length}`, findings: loose, script: '' })
-  }
-  return groups
-}
-
-function FindingGroups({ findings }: { findings: Finding[] }) {
-  const groups = groupFindings(findings)
-  const all = groups.filter((g) => g.script !== '')
-  const [copied, setCopied] = useState<string | null>(null)
-  const copy = async (key: string, text: string) => {
-    await navigator.clipboard.writeText(text)
-    setCopied(key)
-  }
-
-  return (
-    <div className="flex flex-col gap-8">
-      {all.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={() => void copy('all', `BEGIN;\n${all.map((g) => g.script).join('\n')}\nCOMMIT;\n`)}>
-            Copy all fixes
-          </Button>
-          <span className="text-meta text-muted-foreground" aria-live="polite">
-            {copied === 'all' ? 'Copied — run it as an owner of these objects; keeper never runs it.' : ''}
-          </span>
-        </div>
-      ) : null}
-      {groups.map((g) => (
-        <section key={g.key} className="flex min-w-0 flex-col gap-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <h3 className="text-label">{g.title}</h3>
-            {g.script ? (
-              <Button variant="outline" size="sm" onClick={() => void copy(g.key, g.script)}>
-                {copied === g.key ? 'Copied' : 'Copy'}
-              </Button>
-            ) : null}
-          </div>
-          {g.meaning ? <p className="text-sm text-muted-foreground">{g.meaning}</p> : null}
-          {g.key === 'loose' ? (
-            <p className="text-sm text-muted-foreground">
-              They may be vendor-owned objects you cannot revoke on. Read each and decide.
-            </p>
-          ) : null}
-          <ul className="flex flex-col gap-1">
-            {g.findings.map((f) => (
-              <li key={f.id} className="text-sm">
-                {f.detail}
-              </li>
-            ))}
-          </ul>
-          {g.script ? (
-            <pre aria-label={`${g.key} statements`} className="overflow-x-auto text-meta whitespace-pre-wrap">
-              {g.findings.map((f) => (
-                <span key={f.id} className="block">
-                  {f.narrower}
-                </span>
-              ))}
-            </pre>
-          ) : null}
-        </section>
-      ))}
-    </div>
-  )
-}
-
-const MODES: { value: Mode; title: string; consequence: string }[] = [
+const READS: Option<Reads>[] = [
+  { value: 'always', title: 'Always', consequence: 'Ask you before every read.' },
+  { value: 'uncertain', title: 'Uncertain', consequence: 'Ask only when a read may change data, such as calling a function that writes.' },
   {
-    value: 'strict',
-    title: 'Strict',
-    consequence:
-      'Known-safe reads run. A read near the row ceiling, or through a view whose definition changed, waits for you to approve it.',
-  },
-  {
-    value: 'assisted',
-    title: 'Assisted',
-    consequence:
-      'Ordinary reads run, and so do those uncertain ones, under the same masking. Values keeper cannot resolve are masked, never released.',
+    value: 'never',
+    title: 'Never',
+    consequence: 'Skips the question. The transaction still blocks database writes.',
   },
 ]
 
-const WRITES: { value: Writes; title: string; consequence: string }[] = [
-  {
-    value: 'off',
-    title: 'Read-only',
-    consequence: 'Its sessions are read-only at the server. A write is refused at once.',
-  },
-  {
-    value: 'approve',
-    title: 'Writes with approval',
-    consequence: 'An agent may send INSERT, UPDATE and DELETE. Each waits in the Inbox showing the rows it changes.',
-  },
+const WRITES: Option<Writes>[] = [
+  { value: 'off', title: 'Off', consequence: 'Refuse every write.' },
+  { value: 'ask', title: 'Ask', consequence: 'Each write waits for you to accept it.' },
+  { value: 'allow', title: 'Allow', consequence: 'Commits with no question.' },
+]
+
+const DETECTION: Option<Detection>[] = [
+  { value: 'off', title: 'Off', consequence: 'Do not scan text. Scan columns are redacted whole.' },
+  { value: 'scan', title: 'Scan columns', consequence: 'Redact personal data found in the text of scan columns.' },
+  { value: 'all', title: 'All columns', consequence: 'Also scan the text of allow columns. Token columns stay tokens.' },
 ]
 
 /** A choice rendered as text with its consequence under it. */
@@ -225,7 +41,7 @@ function Choices<T extends string>({
   onChoose,
 }: {
   value: T
-  options: { value: T; title: string; consequence: string }[]
+  options: Option<T>[]
   disabled: boolean
   onChoose: (v: T) => void
 }) {
@@ -245,107 +61,119 @@ function Choices<T extends string>({
 }
 
 /**
- * Mode is text with a sentence of consequence under each option, never a
- * coloured pill or a slider. The two differ in who decides an uncertain read —
- * keeper's masking or a human — and a control that rendered that as a position
- * on a scale would be lying about what it does.
+ * One choice that saves at once. A choice that widens what an agent may do
+ * asks first; one that narrows does not.
  */
-export function ModeSelector({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
+function ChoiceSetting<T extends string>({
+  title,
+  why,
+  value,
+  options,
+  field,
+  detail,
+  onChanged,
+  widens,
+  confirm,
+}: {
+  title: string
+  why: string
+  value: T
+  options: Option<T>[]
+  field: 'reads' | 'writes' | 'detection'
+  detail: ConnectionDetail
+  onChanged: () => void
+  widens?: (next: T) => boolean
+  confirm?: (next: T) => { title: string; description: string; action: string }
+}) {
   const save = useSave()
+  const [pending, setPending] = useState<T | null>(null)
+  const apply = (next: T) =>
+    void save.run(() => updateConnection(detail.id, { [field]: next })).then((ok) => ok && onChanged())
+  const ask = pending !== null && confirm ? confirm(pending) : null
+
   return (
-    <SettingSection
-      title="Mode"
-      save={save}
-      why="A mode never allows a write and never authorizes a disclosure. Executing a query, disclosing cleartext and modifying the database are three separate grants."
-    >
+    <SettingSection title={title} save={save} why={why}>
       <Choices
-        value={detail.mode}
-        options={MODES}
+        value={value}
+        options={options}
         disabled={save.busy}
-        onChoose={(mode) => void save.run(() => updateConnection(detail.id, { mode })).then((ok) => ok && onChanged())}
+        onChoose={(next) => (next !== value && widens?.(next) ? setPending(next) : apply(next))}
+      />
+      <ConfirmWiden
+        open={ask !== null}
+        title={ask?.title ?? ''}
+        description={ask?.description}
+        action={ask?.action ?? ''}
+        onConfirm={() => {
+          const next = pending!
+          setPending(null)
+          apply(next)
+        }}
+        onCancel={() => setPending(null)}
       />
     </SettingSection>
   )
 }
 
-/**
- * Whether this profile's sessions may write. Allowing writes never approves
- * one: each still waits in the Inbox. Widening asks first; narrowing does not.
- */
-export function WritesSelector({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
-  const save = useSave()
-  const [confirming, setConfirming] = useState(false)
-  const apply = (writes: Writes) =>
-    void save.run(() => updateConnection(detail.id, { writes })).then((ok) => ok && onChanged())
-
+export function ReadsSetting({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
   return (
-    <SettingSection
+    <ChoiceSetting
+      title="Reads"
+      why="Reads never change data under any choice: each runs in a read-only transaction. This only decides whether a read waits for you."
+      value={detail.reads}
+      options={READS}
+      field="reads"
+      detail={detail}
+      onChanged={onChanged}
+      widens={(next) => next === 'never'}
+      confirm={() => ({
+        title: 'Never ask about reads?',
+        description: 'Agents on this profile may then run every read with no question. The database still blocks any write.',
+        action: 'Never ask',
+      })}
+    />
+  )
+}
+
+export function WritesSetting({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
+  return (
+    <ChoiceSetting
       title="Writes"
-      save={save}
-      why="keeper never switches profiles. A write sent on a read-only profile is refused, naming the profiles on this database that allow writes, and the agent resubmits on one of them."
-    >
-      <Choices
-        value={detail.writes}
-        options={WRITES}
-        disabled={save.busy}
-        onChoose={(w) => (w === 'approve' && detail.writes !== 'approve' ? setConfirming(true) : apply(w))}
-      />
-      <ConfirmWiden
-        open={confirming}
-        title={`Allow writes as ${detail.username}?`}
-        description="Agents on this profile may then send INSERT, UPDATE and DELETE. Each still waits in the Inbox for you, showing the rows it changes."
-        action="Allow writes"
-        onConfirm={() => {
-          setConfirming(false)
-          apply('approve')
-        }}
-        onCancel={() => setConfirming(false)}
-      />
-    </SettingSection>
+      why="keeper never switches profiles. A write sent on a profile with writes off is refused, naming the profiles on this database that allow writes."
+      value={detail.writes}
+      options={WRITES}
+      field="writes"
+      detail={detail}
+      onChanged={onChanged}
+      widens={(next) => next === 'allow' || (next === 'ask' && detail.writes === 'off')}
+      confirm={(next) =>
+        next === 'allow'
+          ? {
+              title: `Allow writes as ${detail.username}?`,
+              description: 'Agents on this profile may then send INSERT, UPDATE and DELETE, and each commits with no question.',
+              action: 'Allow writes',
+            }
+          : {
+              title: `Ask about writes as ${detail.username}?`,
+              description: 'Agents on this profile may then send INSERT, UPDATE and DELETE. Each waits for you in the Inbox.',
+              action: 'Ask about writes',
+            }
+      }
+    />
   )
 }
 
-/**
- * Whether an agent that declares persistent token scope gets tokens that
- * outlive its session. Off by default: a pseudonym that lives for months links
- * records across all of them, so turning it on asks first.
- */
-export function TokensSetting({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
-  const save = useSave()
-  const [confirming, setConfirming] = useState(false)
-  const apply = (on: boolean) =>
-    void save.run(() => updateConnection(detail.id, { persistent_tokens: on })).then((ok) => ok && onChanged())
-
+export function DetectionSetting({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
   return (
-    <SettingSection title="Tokens" save={save}>
-      <Field orientation="horizontal">
-        <Switch
-          id="persistent-tokens"
-          checked={detail.persistent_tokens}
-          disabled={save.busy}
-          onCheckedChange={(on) => (on ? setConfirming(true) : apply(false))}
-        />
-        <FieldContent>
-          <FieldLabel htmlFor="persistent-tokens">Allow persistent tokens</FieldLabel>
-          <FieldDescription>
-            Off, every agent gets session tokens, which resolve only in the session that saw them. On, an agent that
-            declares persistent scope gets tokens that mean the same value in every session and on every machine
-            holding this vault.
-          </FieldDescription>
-        </FieldContent>
-      </Field>
-      <ConfirmWiden
-        open={confirming}
-        title="Allow persistent tokens?"
-        description="A persistent token means the same value for as long as this connection's key lives, so records an agent sees months apart can be linked."
-        action="Allow persistent tokens"
-        onConfirm={() => {
-          setConfirming(false)
-          apply(true)
-        }}
-        onCancel={() => setConfirming(false)}
-      />
-    </SettingSection>
+    <ChoiceSetting
+      title="Detection"
+      why="Detection only removes more. It never loosens a column's policy: the catalog does."
+      value={detail.detection}
+      options={DETECTION}
+      field="detection"
+      detail={detail}
+      onChanged={onChanged}
+    />
   )
 }
 
@@ -421,315 +249,6 @@ export function LimitsForm({ detail, onChanged }: { detail: ConnectionDetail; on
           }
         >
           Save
-        </Button>
-      </div>
-    </SettingSection>
-  )
-}
-
-const KINDS: { value: StageKind; title: string; finds: string }[] = [
-  {
-    value: 'patterns',
-    title: 'Patterns',
-    finds: 'Emails, cards, IBANs, SSNs, phones, IPs, national IDs. Checksum-validated, in process. Not names.',
-  },
-  {
-    value: 'list',
-    title: 'Your list',
-    finds: 'Your deny terms and expressions below.',
-  },
-]
-
-/** "label = expr" or a bare expression, one per line. */
-function parsePatterns(text: string): Pattern[] {
-  return text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l !== '')
-    .map((l) => {
-      const m = /^([a-z0-9_]+)\s*=\s*(.+)$/.exec(l)
-      return m ? { label: m[1], expr: m[2] } : { expr: l }
-    })
-}
-
-/** A stage as edited: its entity filter kept as the typed text until saved. */
-interface DraftStage {
-  kind: StageKind
-  entities: string
-  raw: boolean
-}
-
-const toDraft = (st: Stage): DraftStage => ({ kind: st.kind, entities: (st.entities ?? []).join(', '), raw: !!st.raw })
-
-function fromDraft(d: DraftStage): Stage {
-  const entities = d.entities
-    .split(',')
-    .map((e) => e.trim())
-    .filter((e) => e !== '')
-  return { kind: d.kind, ...(entities.length > 0 ? { entities } : {}), ...(d.raw ? { raw: true } : {}) }
-}
-
-/**
- * The pipeline a `scan` column's free text runs through, in order, edited as a
- * draft and saved whole. Each stage gets the text with earlier stages' hits
- * masked unless it is set raw, and a text earlier hits cover entirely is not
- * sent on. Detection never sets a column's policy: the catalog does. With no
- * stage, every scan cell is redacted whole.
- */
-export function DetectionEditor({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
-  const save = useSave()
-  const saved = (detail.detection ?? []).map(toDraft)
-  const [draft, setDraft] = useState<DraftStage[]>(saved)
-  const changed = JSON.stringify(draft.map(fromDraft)) !== JSON.stringify(saved.map(fromDraft))
-  const unused = KINDS.filter((k) => !draft.some((d) => d.kind === k.value))
-
-  const edit = (i: number, change: Partial<DraftStage>) =>
-    setDraft((ds) => ds.map((d, j) => (j === i ? { ...d, ...change } : d)))
-  const move = (i: number, by: number) =>
-    setDraft((ds) => {
-      const next = [...ds]
-      ;[next[i], next[i + by]] = [next[i + by], next[i]]
-      return next
-    })
-
-  return (
-    <>
-      <SettingSection
-        title="Detection"
-        save={save}
-        why="Each stage gets the text with earlier stages' hits masked, and a text earlier hits cover entirely is not sent on. Detection never sets a column's policy: the catalog does."
-      >
-        {draft.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No stages. Every scan cell is redacted whole.</p>
-        ) : (
-          <FieldGroup>
-            {draft.map((d, i) => {
-              const kind = KINDS.find((k) => k.value === d.kind)
-              return (
-                <Field key={d.kind} className="gap-3 border border-border p-4">
-                  <div className="flex items-start gap-3">
-                    <span className="text-meta text-muted-foreground">{i + 1}</span>
-                    <FieldContent>
-                      <FieldLabel>{kind?.title ?? d.kind}</FieldLabel>
-                      <FieldDescription>{kind?.finds}</FieldDescription>
-                    </FieldContent>
-                    <div className="ml-auto flex">
-                      <IconButton label="Move up" disabled={i === 0} onClick={() => move(i, -1)}>
-                        <ArrowUpIcon />
-                      </IconButton>
-                      <IconButton label="Move down" disabled={i === draft.length - 1} onClick={() => move(i, 1)}>
-                        <ArrowDownIcon />
-                      </IconButton>
-                      <IconButton
-                        label={`Remove ${kind?.title ?? d.kind}`}
-                        onClick={() => setDraft((ds) => ds.filter((_, j) => j !== i))}
-                      >
-                        <XIcon />
-                      </IconButton>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-6 pl-6">
-                    <Field className="w-full max-w-sm">
-                      <FieldLabel htmlFor={`entities-${d.kind}`}>Only these entities</FieldLabel>
-                      <Input
-                        id={`entities-${d.kind}`}
-                        value={d.entities}
-                        onChange={(e) => edit(i, { entities: e.target.value })}
-                        placeholder="all"
-                      />
-                    </Field>
-                    <Field orientation="horizontal" className="w-auto">
-                      <Switch id={`raw-${d.kind}`} checked={d.raw} onCheckedChange={(v) => edit(i, { raw: v })} />
-                      <FieldLabel htmlFor={`raw-${d.kind}`}>Unmasked input</FieldLabel>
-                    </Field>
-                  </div>
-                </Field>
-              )
-            })}
-          </FieldGroup>
-        )}
-        <div className="flex flex-wrap items-center gap-3">
-          {unused.length > 0 ? (
-            <Select
-              value={null}
-              onValueChange={(v) => v && setDraft((ds) => [...ds, { kind: v as StageKind, entities: '', raw: false }])}
-            >
-              <SelectTrigger aria-label="Add stage" className="w-48">
-                <SelectValue>{() => 'Add stage'}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {unused.map((k) => (
-                  <SelectItem key={k.value} value={k.value}>
-                    {k.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
-          <Button
-            disabled={save.busy || !changed}
-            onClick={() =>
-              void save
-                .run(() => updateConnection(detail.id, { detection: draft.map(fromDraft) }))
-                .then((ok) => ok && onChanged())
-            }
-          >
-            Save
-          </Button>
-          <Button variant="outline" disabled={save.busy || !changed} onClick={() => setDraft(saved)}>
-            Reset
-          </Button>
-        </div>
-      </SettingSection>
-      <TermsEditor connId={detail.id} />
-    </>
-  )
-}
-
-/**
- * The list stage's terms and expressions. They are write-only: the daemon
- * answers a save with counts and never sends one back, so the boxes start
- * empty and a save states the whole set. Saving nothing is not how the set is
- * cleared — that is its own action, and it asks first.
- */
-function TermsEditor({ connId }: { connId: string }) {
-  const save = useSave()
-  const [deny, setDeny] = useState('')
-  const [allow, setAllow] = useState('')
-  const [patterns, setPatterns] = useState('')
-  const [stored, setStored] = useState<{ deny: number; allow: number; patterns: number } | null>(null)
-  const [clearing, setClearing] = useState(false)
-
-  const lines = (s: string) =>
-    s
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l !== '')
-  const empty = [deny, allow, patterns].every((t) => t.trim() === '')
-  const store = (terms: { deny: string[]; allow: string[]; patterns: Pattern[] }) =>
-    void save.run(async () => {
-      setStored(await setTerms(connId, terms))
-      setDeny('')
-      setAllow('')
-      setPatterns('')
-    })
-
-  return (
-    <SettingSection
-      title="Your terms"
-      save={save}
-      why="Terms are as sensitive as the data they describe, so keeper never shows them again. A save replaces the whole set."
-    >
-      <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor="terms-deny">Deny terms, one per line</FieldLabel>
-          <Textarea id="terms-deny" value={deny} onChange={(e) => setDeny(e.target.value)} disabled={save.busy} />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="terms-patterns">Expressions, one per line as label = expression</FieldLabel>
-          <Textarea
-            id="terms-patterns"
-            value={patterns}
-            onChange={(e) => setPatterns(e.target.value)}
-            disabled={save.busy}
-            placeholder="employee_id = EMP-\d{6}"
-          />
-          <FieldDescription>Go RE2 syntax.</FieldDescription>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="terms-allow">Allow terms, one per line</FieldLabel>
-          <Textarea id="terms-allow" value={allow} onChange={(e) => setAllow(e.target.value)} disabled={save.busy} />
-          <FieldDescription>Left visible when a hit equals one exactly, ignoring case.</FieldDescription>
-        </Field>
-      </FieldGroup>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          disabled={save.busy || empty}
-          onClick={() => store({ deny: lines(deny), allow: lines(allow), patterns: parsePatterns(patterns) })}
-        >
-          Save terms
-        </Button>
-        <Button variant="outline" disabled={save.busy} onClick={() => setClearing(true)}>
-          Clear all terms
-        </Button>
-        {stored ? (
-          <span className="text-meta text-muted-foreground">
-            stored {stored.deny} deny term(s), {stored.patterns} expression(s), {stored.allow} allow term(s)
-          </span>
-        ) : null}
-      </div>
-      <ConfirmWiden
-        open={clearing}
-        title="Clear all terms?"
-        description="The deny terms, expressions and allow terms stored for this connection are deleted. The list stage then finds nothing until you save new ones."
-        action="Clear all terms"
-        onConfirm={() => {
-          setClearing(false)
-          store({ deny: [], allow: [], patterns: [] })
-        }}
-        onCancel={() => setClearing(false)}
-      />
-    </SettingSection>
-  )
-}
-
-export function DenylistEditor({ detail, onChanged }: { detail: ConnectionDetail; onChanged: () => void }) {
-  const [entry, setEntry] = useState('')
-  const save = useSave()
-  const current = detail.denylist ?? []
-  const apply = (next: RelationRef[]) =>
-    void save.run(() => setDenylist(detail.id, next)).then((ok) => ok && onChanged())
-
-  return (
-    <SettingSection
-      title="Denylist"
-      save={save}
-      why="Evaluated against the plan, so a denied base table is caught even when the statement only names a view over it. No approval overrides it — remove the entry instead, which is a visible edit rather than a click inside a prompt. It is a convenience, not a boundary: the boundary is a grant the role never had."
-    >
-      {current.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing denied.</p>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Relation</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {current.map((r) => (
-              <TableRow key={`${r.schema}.${r.relation}`}>
-                <TableCell className="text-meta">
-                  {r.schema}.{r.relation}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    variant="outline"
-                    disabled={save.busy}
-                    onClick={() => apply(current.filter((x) => !(x.schema === r.schema && x.relation === r.relation)))}
-                  >
-                    Remove
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-      <div className="flex flex-wrap items-end gap-3">
-        <Field className="w-64">
-          <FieldLabel htmlFor="deny-entry">schema.relation</FieldLabel>
-          <Input id="deny-entry" value={entry} onChange={(e) => setEntry(e.target.value)} />
-        </Field>
-        <Button
-          disabled={save.busy || !entry.includes('.')}
-          onClick={() => {
-            const [schema, ...rest] = entry.split('.')
-            apply([...current, { schema, relation: rest.join('.') }])
-            setEntry('')
-          }}
-        >
-          Deny
         </Button>
       </div>
     </SettingSection>

@@ -68,17 +68,6 @@ func (s *Server) removeHost(ctx context.Context, _ *reqInfo, _ http.ResponseWrit
 	return map[string]string{"state": "removed"}, nil
 }
 
-func (s *Server) auditConnection(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
-	return s.d.Audit(ctx, r.PathValue("id"))
-}
-
-// listAudits is the privilege-audit report for every connection. It is read
-// on the human surface as its own page, separately from the connection it
-// describes: SPEC R4.1.
-func (s *Server) listAudits(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
-	return s.d.Audits(ctx)
-}
-
 // defaultVia names the surface a human action arrived on. It is never "mcp":
 // R4.1f and §6.3.
 func defaultVia(sf surface) string {
@@ -89,11 +78,10 @@ func defaultVia(sf surface) string {
 }
 
 type patchRequest struct {
-	Mode             *types.Mode    `json:"mode,omitzero"`
-	Limits           *types.Limits  `json:"limits,omitzero"`
-	Detection        *[]types.Stage `json:"detection,omitzero"`
-	Writes           *types.Writes  `json:"writes,omitzero"`
-	PersistentTokens *bool          `json:"persistent_tokens,omitzero"`
+	Reads     *types.Reads     `json:"reads,omitzero"`
+	Limits    *types.Limits    `json:"limits,omitzero"`
+	Detection *types.Detection `json:"detection,omitzero"`
+	Writes    *types.Writes    `json:"writes,omitzero"`
 }
 
 func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
@@ -101,35 +89,7 @@ func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.Respons
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Mode: req.Mode, Limits: req.Limits, Detection: req.Detection, Writes: req.Writes, PersistentTokens: req.PersistentTokens})
-}
-
-type termsRequest struct {
-	Deny     []string        `json:"deny"`
-	Allow    []string        `json:"allow"`
-	Patterns []ports.Pattern `json:"patterns"`
-}
-
-// putTerms replaces a connection's list-pass terms and answers with counts:
-// the terms are never sent back out.
-func (s *Server) putTerms(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
-	var req termsRequest
-	if err := s.readJSON(w, r, &req); err != nil {
-		return nil, err
-	}
-	return s.d.SetTerms(ctx, r.PathValue("id"), ports.Terms(req))
-}
-
-type denylistRequest struct {
-	Relations []types.RelationRef `json:"relations"`
-}
-
-func (s *Server) putDenylist(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
-	var req denylistRequest
-	if err := s.readJSON(w, r, &req); err != nil {
-		return nil, err
-	}
-	return s.d.SetDenylist(ctx, r.PathValue("id"), req.Relations)
+	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Reads: req.Reads, Limits: req.Limits, Detection: req.Detection, Writes: req.Writes})
 }
 
 // listApprovals is the shared queue, oldest first, always (R9.1).
@@ -137,15 +97,15 @@ func (s *Server) listApprovals(_ context.Context, _ *reqInfo, _ http.ResponseWri
 	return s.d.Approvals(), nil
 }
 
-type grantSpec struct {
-	Lifetime   types.GrantLifetime `json:"lifetime,omitzero"`
-	RowCeiling int                 `json:"row_ceiling,omitzero"`
+// getApproval is one waiting ticket for its local page. A ticket that is settled
+// or unknown is not in the queue, and both are reported as unknown.
+func (s *Server) getApproval(_ context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
+	return s.d.Approval(r.PathValue("ticket"))
 }
 
 type decideRequest struct {
-	Decision string     `json:"decision"`
-	Actor    string     `json:"actor,omitzero"`
-	Grant    *grantSpec `json:"grant,omitzero"`
+	Decision string `json:"decision"`
+	Actor    string `json:"actor,omitzero"`
 }
 
 func (s *Server) decide(ctx context.Context, rq *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
@@ -154,9 +114,6 @@ func (s *Server) decide(ctx context.Context, rq *reqInfo, w http.ResponseWriter,
 		return nil, err
 	}
 	dec := daemon.Decision{Decide: req.Decision, Actor: actorOr(req.Actor, rq.surface)}
-	if req.Grant != nil {
-		dec.Grant = &daemon.GrantRequest{Lifetime: req.Grant.Lifetime, RowCeiling: req.Grant.RowCeiling}
-	}
 	if err := s.d.Decide(ctx, r.PathValue("ticket"), dec); err != nil {
 		return nil, err
 	}
@@ -168,36 +125,6 @@ func actorOr(actor string, sf surface) string {
 		return actor
 	}
 	return defaultVia(sf)
-}
-
-// listGrants is the permission list. Session grants sort first (R9.3d).
-func (s *Server) listGrants(_ context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
-	return s.d.Grants(), nil
-}
-
-type grantRequest struct {
-	Path       types.PathRef       `json:"path"`
-	Lifetime   types.GrantLifetime `json:"lifetime,omitzero"`
-	RowCeiling int                 `json:"row_ceiling"`
-	SessionID  string              `json:"session_id,omitzero"`
-	Actor      string              `json:"actor,omitzero"`
-}
-
-func (s *Server) createGrant(_ context.Context, rq *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
-	var req grantRequest
-	if err := s.readJSON(w, r, &req); err != nil {
-		return nil, err
-	}
-	return s.d.CreateGrant(req.SessionID, req.Path,
-		daemon.GrantRequest{Lifetime: req.Lifetime, RowCeiling: req.RowCeiling},
-		actorOr(req.Actor, rq.surface))
-}
-
-func (s *Server) revokeGrant(_ context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
-	if err := s.d.RevokeGrant(r.PathValue("id")); err != nil {
-		return nil, err
-	}
-	return okResponse{OK: true}, nil
 }
 
 func (s *Server) getCatalog(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
@@ -231,29 +158,9 @@ func (s *Server) initCatalog(ctx context.Context, _ *reqInfo, w http.ResponseWri
 	return s.d.InitCatalog(ctx, r.PathValue("connection"), req.Sample)
 }
 
-type suggestedGrants struct {
-	Statements []string `json:"statements"`
-}
-
-func (s *Server) suggestGrants(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
-	stmts, err := s.d.SuggestGrants(ctx, r.PathValue("connection"))
-	if err != nil {
-		return nil, err
-	}
-	return suggestedGrants{Statements: stmts}, nil
-}
-
 func (s *Server) activity(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
 	q := r.URL.Query()
 	f := ports.AuditFilter{SessionID: q.Get("session"), ConnectionID: q.Get("connection"), Before: q.Get("before")}
-	if v := q.Get("tier"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 || n > 4 {
-			return nil, &types.ValidationError{Field: "tier", Reason: "must be 0 to 4"}
-		}
-		t := types.Tier(n)
-		f.Tier = &t
-	}
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
@@ -313,14 +220,6 @@ func (s *Server) importVault(ctx context.Context, _ *reqInfo, w http.ResponseWri
 		return nil, err
 	}
 	if err := s.d.ImportVault(ctx, req.Data, req.Passphrase); err != nil {
-		return nil, err
-	}
-	return okResponse{OK: true}, nil
-}
-
-// rotateMaster re-encrypts the vault under a fresh master key.
-func (s *Server) rotateMaster(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
-	if err := s.d.RotateMaster(ctx); err != nil {
 		return nil, err
 	}
 	return okResponse{OK: true}, nil

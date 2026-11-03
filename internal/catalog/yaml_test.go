@@ -16,10 +16,9 @@ func TestYAMLRoundTripIncludingNestedJSONPaths(t *testing.T) {
 	entries := map[columnKey]types.ColumnPolicy{
 		{Schema: "public", Table: "users", Column: "id"}:    {Policy: types.PolicyAllow},
 		{Schema: "public", Table: "users", Column: "email"}: {Policy: types.PolicyToken, Namespace: "email"},
-		{Schema: "public", Table: "users", Column: "ssn"}:   {Policy: types.PolicyDrop},
+		{Schema: "public", Table: "users", Column: "ssn"}:   {Policy: types.PolicyRedact},
 		{Schema: "public", Table: "users", Column: "notes"}: {Policy: types.PolicyScan},
-		{Schema: "public", Table: "users", Column: "dob"}:   {Policy: types.PolicyRedact, HideName: true},
-		{Schema: "public", Table: "users", Column: "card"}:  {Policy: types.PolicyPartial, Form: types.FormCardBINLast4},
+		{Schema: "public", Table: "users", Column: "card"}:  {Policy: types.PolicyToken, Namespace: "card"},
 		{Schema: "public", Table: "users", Column: "metadata"}: {
 			Policy: types.PolicyScan,
 			Paths: map[string]types.ColumnPolicy{
@@ -39,7 +38,7 @@ func TestYAMLRoundTripIncludingNestedJSONPaths(t *testing.T) {
 		t.Fatalf("reading saved file: %v", err)
 	}
 	// SPEC §5.2: nested, snake_case, never dotted.
-	for _, want := range []string{"hide_name: true", "$.customer.email", "schemas:"} {
+	for _, want := range []string{"$.customer.email", "schemas:"} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("saved file missing %q:\n%s", want, raw)
 		}
@@ -78,20 +77,8 @@ func TestYAMLValidationRejections(t *testing.T) {
 			yaml: "version: 1\nschemas:\n  public:\n    users:\n      email: {policy: token}\n",
 		},
 		{
-			name: "partial without form",
-			yaml: "version: 1\nschemas:\n  public:\n    users:\n      card: {policy: partial}\n",
-		},
-		{
 			name: "namespace on a non-token policy",
 			yaml: "version: 1\nschemas:\n  public:\n    users:\n      id: {policy: allow, namespace: email}\n",
-		},
-		{
-			name: "form on a non-partial policy",
-			yaml: "version: 1\nschemas:\n  public:\n    users:\n      id: {policy: allow, form: card_bin_last4}\n",
-		},
-		{
-			name: "unknown policy",
-			yaml: "version: 1\nschemas:\n  public:\n    users:\n      id: {policy: obfuscate}\n",
 		},
 		{
 			name: "invalid nested json path policy",
@@ -139,5 +126,31 @@ func TestSaveYAMLFileIsAtomic(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Errorf("temp file left behind: %v", matches)
+	}
+}
+
+func TestRemovedAndUnknownPoliciesLoadAsRedact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.yaml")
+	legacy := "version: 1\nschemas:\n  public:\n    users:\n" +
+		"      ssn: {policy: drop}\n" +
+		"      card: {policy: partial, form: card_bin_last4}\n" +
+		"      dob: {policy: redact, hide_name: true}\n" +
+		"      id: {policy: obfuscate}\n" +
+		"      metadata:\n        policy: scan\n        paths:\n          \"$.x\": {policy: drop}\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadYAMLFile(path)
+	if err != nil {
+		t.Fatalf("an old catalog must still load: %v", err)
+	}
+	for _, col := range []string{"ssn", "card", "dob", "id"} {
+		if p := got[columnKey{Schema: "public", Table: "users", Column: col}]; p.Policy != types.PolicyRedact {
+			t.Errorf("%s = %+v, want redact", col, p)
+		}
+	}
+	meta := got[columnKey{Schema: "public", Table: "users", Column: "metadata"}]
+	if meta.Policy != types.PolicyScan || meta.Paths["$.x"].Policy != types.PolicyRedact {
+		t.Errorf("metadata = %+v, want scan with a redact path", meta)
 	}
 }

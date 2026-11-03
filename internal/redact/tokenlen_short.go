@@ -7,7 +7,7 @@ package redact
 //
 // R8.3c says what happens when two distinct values in one session hash to the
 // same token: the first binding stands, the second value is emitted as redact,
-// the statement completes at tier 1 and the collision is counted. That path
+// the statement completes and the collision is counted. That path
 // cannot be reached by ordinary means against a 64-bit tag, so an end-to-end
 // test of it needs a build where collisions are producible. 16 bits collide at
 // roughly 300 distinct values.

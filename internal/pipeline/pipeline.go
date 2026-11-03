@@ -1,19 +1,16 @@
 // Package pipeline orchestrates one statement through G1–G9.
 //
-// Every decision it makes comes from the extended protocol, the plan and the
-// catalog. Nothing in this package reads statement text: admission is Parse over
-// the extended protocol, routing is the plan's ModifyTable node, the denylist
-// and the grants are evaluated against the plan's relation list, and output
-// columns are matched by (TableOID, AttNum). SPEC R7.2, R7.4c and R7.5a are the
-// same rule stated three times, and together they are why this package holds no
-// SQL lexer.
+// Every decision it makes comes from the extended protocol, the plan, the
+// profile's settings and the catalog. Nothing in this package reads statement
+// text: admission is Parse over the extended protocol, routing is the plan's
+// ModifyTable node, and output columns are matched by (TableOID, AttNum). That
+// is why this package holds no SQL lexer.
 //
 // It has no globals and touches no database: every dependency arrives through
 // New, which is what lets the whole of G1–G9 be tested with fakes.
 package pipeline
 
 import (
-	"cmp"
 	"context"
 	json "encoding/json/v2"
 	"errors"
@@ -27,25 +24,12 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// Authority is the daemon state the pipeline reads on every statement: what an
-// operator configured for a connection, and what a human has already agreed to.
+// Authority is the daemon state the pipeline reads on every statement.
 // internal/daemon satisfies it. It is declared here because it is consumed here.
 type Authority interface {
-	// Connection returns the registered connection. Mode, Limits, Denylist and
-	// the writes setting all come from it, so each has exactly one source.
+	// Connection returns the registered connection. Reads, Writes and Limits
+	// all come from it, so each has exactly one source.
 	Connection(ctx context.Context, connID string) (*types.Connection, error)
-
-	// Grant returns the live grant covering exactly path, or false. SPEC R9.3c:
-	// a grant covers exactly the path it names — no prefix matching, no
-	// wildcards, a view is its own path. The pipeline therefore asks once per
-	// relation in the plan, and one miss sends the statement back to its normal
-	// tier. A suspended or expired grant must report false.
-	Grant(ctx context.Context, sessionID string, path types.PathRef) (*types.Grant, bool)
-
-	// SuspendGrants suspends every allow rule on a connection, for a statement
-	// that found the connection's catalog no longer matches its database
-	// (R9.3b). The rules stay listed for a person to re-authorize.
-	SuspendGrants(connID, reason string)
 }
 
 // Deps are the pipeline's collaborators. Every field but Now is required.
@@ -113,14 +97,8 @@ type Request struct {
 	ConnID  string
 	SQL     string
 	Params  []ports.Param
-	// ParamPolicies is the source policy of each parameter resolved from a token
-	// (SPEC R6.2), parallel to Params, PolicyAllow for a plain value. The
-	// Redactor resolves a token before the pipeline runs — the Executor never
-	// sees one — so the policy travels here. R7.6's no-relation case and R8.4b
-	// both read it.
-	ParamPolicies []types.Policy
-	// MaxRows is the agent's request. The operator ceiling and any grant ceiling
-	// bound it; the agent cannot raise it (SPEC §4.5).
+	// MaxRows is the agent's request. The operator ceiling bounds it; the agent
+	// cannot raise it.
 	MaxRows int
 	// Approval is set when a human has approved this statement.
 	Approval *Approval
@@ -141,7 +119,6 @@ type Escalation struct {
 // Error is set.
 type Decision struct {
 	AuditID    string
-	Tier       types.Tier
 	Result     *types.QueryResult
 	Escalation *Escalation
 	Error      *types.Error
@@ -157,7 +134,6 @@ type state struct {
 	plan *ports.PlanFacts
 	cols []column
 
-	tier          types.Tier
 	reasons       []string
 	degradations  []types.Degradation
 	transforms    map[string]types.Transform
@@ -183,12 +159,6 @@ func (s *state) degrade(layer, why string) {
 	s.degradations = append(s.degradations, types.Degradation{Layer: layer, Reason: why})
 }
 
-func (s *state) raise(t types.Tier) {
-	if t > s.tier {
-		s.tier = t
-	}
-}
-
 // Query runs a statement through G1–G9. The returned error is non-nil only when
 // the pipeline itself could not complete — a refusal, an escalation and a result
 // all arrive in the Decision. G9 is never skipped: if the audit record cannot be
@@ -198,7 +168,6 @@ func (p *Pipeline) Query(ctx context.Context, req Request) (*Decision, error) {
 
 	dec := p.query(ctx, req, st)
 	dec.AuditID = st.auditID
-	dec.Tier = st.tier
 	if dec.Error != nil {
 		dec.Error.AuditID = st.auditID
 		st.errCode = dec.Error.Code
@@ -214,7 +183,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	// --- connection ------------------------------------------------------
 	conn, err := p.authority.Connection(ctx, req.ConnID)
 	if err != nil || conn == nil {
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeInternal, "this connection is not registered", "register the connection, or check its id"))
+		return refuse(keeperError(types.CodeInternal, "this connection is not registered", "register the connection, or check its id"))
 	}
 	st.conn = conn
 	// The catalog is per connection: a (tableOID, attnum) pair means nothing
@@ -222,8 +191,11 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	// freely. Resolving here rather than holding one is what keeps a statement
 	// against staging from being masked by production's classifications.
 	cat, err := p.catalogs(req.ConnID)
-	if err != nil || cat == nil {
-		return refuse(st, types.Tier4Refuse,
+	if err != nil {
+		return refuse(asKeeperError(err))
+	}
+	if cat == nil {
+		return refuse(
 			keeperError(types.CodeInternal, "this connection has no catalog",
 				"run keeper catalog init for this connection"))
 	}
@@ -242,7 +214,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		default:
 			st.reason(ReasonSyntax)
 		}
-		return refuse(st, types.Tier4Refuse, ke)
+		return refuse(ke)
 	}
 
 	// --- G4 plan ---------------------------------------------------------
@@ -250,75 +222,45 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	if err != nil {
 		ke := asKeeperError(err)
 		if ke.Code == types.CodeTimeout {
-			// §7.7: an EXPLAIN timeout is tier 4, refused with a safe error.
+			// An EXPLAIN timeout is refused with a safe error.
 			st.reason(ReasonPlanTimeout)
-			return refuse(st, types.Tier4Refuse, ke)
+			return refuse(ke)
 		}
 		if ke.Code == types.CodePermissionDenied {
 			// G3 — Invariant A working. Composed by keeper from the catalog, so
 			// the agent learns what it may name (SPEC R5.5).
 			st.reason(ReasonPermission)
-			return refuse(st, types.Tier4Refuse, p.permissionError(ctx, st.cat, nil))
+			return refuse(p.permissionError(ctx, st.cat, nil))
 		}
-		return refuse(st, types.Tier4Refuse, ke)
+		return refuse(ke)
 	}
 	st.plan = plan
 
-	// DDL is refused at every tier, in every mode, with any approval (R4.2c).
-	if plan.StatementType == pgdb.StmtDDL {
-		st.reason(ReasonDDL)
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeDDLRefused,
-			"keeper does not run schema changes",
-			"apply schema changes through the project's migration tooling, then run keeper catalog edit"))
-	}
-
-	// The denylist is evaluated against the plan's relation list, never
-	// statement text, because EXPLAIN expands views (R4.5, R7.4c). No approval
-	// overrides it and no mode relaxes it.
-	if rel, ok := denylisted(conn, plan); ok {
-		st.reason(ReasonDenylisted)
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeDenylisted,
-			"this statement reads "+rel.String()+", which an operator placed on this connection's denylist",
-			"ask an operator to remove the entry if the relation should be readable"))
-	}
-
 	// --- G2 routing ------------------------------------------------------
-	// A statement is a write because the plan says so, not because the agent
-	// said so.
-	if plan.Writes {
-		if dec := p.checkWrite(st, conn); dec != nil {
-			return dec
-		}
+	// The statement is a write because the plan says so, not because the agent
+	// said so. Explain reaches the same outcome through the same function.
+	outcome, refusal := decide(st, conn, plan)
+	if refusal != nil {
+		return refuse(refusal)
 	}
 
 	// --- G5 output identity ----------------------------------------------
 	st.cols = p.resolveColumns(st.cat, described, plan, req)
+	p.noteColumns(ctx, st)
 
-	// --- G6 tiers --------------------------------------------------------
-	p.assignTier(ctx, st)
-	grants := p.applyGrants(ctx, req, st)
-
-	// Uncertainty is decided by mode alone. Assisted runs it under
-	// deterministic masking; strict, and any mode keeper does not know, puts it
-	// in front of a human.
-	if st.tier == types.Tier2Uncertain && st.conn.Mode != types.ModeAssisted {
-		st.raise(types.Tier3Approve)
-		st.reason(ReasonStrictUncertainty)
-	}
-
-	if st.tier >= types.Tier3Approve && req.Approval == nil {
+	if outcome == types.OutcomeAsk && req.Approval == nil {
 		return p.escalate(ctx, req, st)
 	}
 	if req.Approval != nil {
 		st.authorization = "ticket:" + req.Approval.TicketID
 		st.approver = req.Approval.Approver
 		st.decision = types.DecisionApproved
-	} else if st.authorization == "" {
-		st.authorization = "tier" + fmt.Sprint(int(st.tier))
+	} else {
+		st.authorization = "profile"
 	}
 
 	// --- G8 execution ----------------------------------------------------
-	maxRows := p.rowCeiling(req, conn, grants)
+	maxRows := p.rowCeiling(req, conn)
 	var raw *ports.RawResult
 	if plan.Writes {
 		raw, err = p.exec.CommitWrite(ctx, req.ConnID, req.SQL, req.Params)
@@ -330,26 +272,19 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		if ke.Code == types.CodePermissionDenied {
 			// G3. A permission error here is the system working (R7.3).
 			st.reason(ReasonPermission)
-			return refuse(st, st.tier, p.permissionError(ctx, st.cat, plan))
+			return refuse(p.permissionError(ctx, st.cat, plan))
 		}
-		return refuse(st, st.tier, ke)
+		return refuse(ke)
 	}
 
 	// The executed RowDescription is the authoritative answer for which column
-	// each output came from, so G5 is redone against it and the denylist is
-	// rechecked against the relations that actually produced output.
+	// each output came from, so G5 is redone against it.
 	st.cols = p.resolveColumns(st.cat, raw.Columns, plan, req)
-	if rel, ok := p.denylistedOutput(st.cat, conn, st.cols); ok {
-		st.reason(ReasonDenylisted)
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeDenylisted,
-			"this statement reads "+rel.String()+", which an operator placed on this connection's denylist",
-			"ask an operator to remove the entry if the relation should be readable"))
-	}
 
 	// --- G7 redaction ----------------------------------------------------
 	cols, rows, err := p.applyRedaction(ctx, req, st, raw.Rows)
 	if err != nil {
-		return refuse(st, st.tier, asKeeperError(err))
+		return refuse(asKeeperError(err))
 	}
 
 	var cut types.Cut
@@ -370,9 +305,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		Truncated:     cut != "",
 		TruncatedBy:   cut,
 		Transforms:    st.transforms,
-		Tier:          st.tier,
 		AuditID:       st.auditID,
-		Mode:          conn.Mode,
 		Authorization: st.authorization,
 		Degradations:  st.degradations,
 	}
@@ -385,48 +318,67 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	return &Decision{Result: result}
 }
 
-// checkWrite is R4.2a–f. It returns a Decision when the write is refused. A
-// write is bounded by the profile's writes setting, its approval and the
-// database's own grants; keeper never runs it as another profile.
-func (p *Pipeline) checkWrite(st *state, conn *types.Connection) *Decision {
-	st.reason(ReasonWrite)
-
-	if conn.Writes != types.WritesApprove {
-		st.reason(ReasonWritesOff)
-		return refuse(st, types.Tier4Refuse, keeperError(types.CodeWritesOff,
-			"writes are off for this profile, so its sessions are read-only",
-			"use a profile on this database that allows writes, or ask an operator to allow them on this one"))
+// decide is the one rule query and explain share: what keeper does with a
+// planned statement under the profile's settings. A value of either setting
+// that keeper does not know fails closed.
+func decide(st *state, conn *types.Connection, plan *ports.PlanFacts) (types.Outcome, *types.Error) {
+	if plan.StatementType == pgdb.StmtDDL {
+		st.reason(ReasonDDL)
+		return types.OutcomeRefuse, keeperError(types.CodeDDLRefused,
+			"keeper does not run schema changes",
+			"apply schema changes through the project's migration tooling, then run keeper catalog edit")
 	}
-
-	// R4.2f: no mode and no allow rule authorizes a write. Tier 3, always.
-	st.raise(types.Tier3Approve)
-	return nil
+	if plan.Writes {
+		st.reason(ReasonWrite)
+		switch conn.Writes {
+		case types.WritesAsk:
+			return types.OutcomeAsk, nil
+		case types.WritesAllow:
+			return types.OutcomeRun, nil
+		}
+		st.reason(ReasonWritesOff)
+		return types.OutcomeRefuse, keeperError(types.CodeWritesOff,
+			"writes are off for this profile, so its sessions are read-only",
+			"use a profile on this database that allows writes, or ask an operator to allow them on this one")
+	}
+	switch conn.Reads {
+	case types.ReadsNever:
+		return types.OutcomeRun, nil
+	case types.ReadsUncertain:
+		if !plan.Uncertain {
+			return types.OutcomeRun, nil
+		}
+		st.reason(ReasonVolatileCall)
+		return types.OutcomeAsk, nil
+	}
+	st.reason(ReasonReadsAsk)
+	return types.OutcomeAsk, nil
 }
 
 // escalate produces the approval facts, and for a write the preview of R4.2d.
 func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decision {
 	esc := &Escalation{SQL: req.SQL}
 	st.outputColumns = publicColumns(st.cols)
-	facts := p.approvalFacts(req, st, false)
+	facts := p.approvalFacts(req, st)
 
 	if st.plan.Writes {
-		// R4.2d step 1: the statement runs and the transaction rolls back. The
+		// The statement runs and the transaction rolls back. The
 		// count is exact as of now and is not a lock.
 		raw, err := p.exec.PreviewWrite(ctx, req.ConnID, req.SQL, req.Params)
 		if err != nil {
 			ke := asKeeperError(err)
 			if ke.Code == types.CodePermissionDenied {
 				st.reason(ReasonPermission)
-				return refuse(st, st.tier, p.permissionError(ctx, st.cat, st.plan))
+				return refuse(p.permissionError(ctx, st.cat, st.plan))
 			}
-			return refuse(st, st.tier, ke)
+			return refuse(ke)
 		}
 		// R4.2e: RETURNING rows are output in exactly the sense §8 means, so
 		// they pass through G7. The approval screen shows the transform summary
 		// rather than the rows, and the rows stop here.
 		st.cols = p.resolveColumns(st.cat, raw.Columns, st.plan, req)
 		if _, _, err := p.applyRedaction(ctx, req, st, raw.Rows); err != nil {
-			return refuse(st, st.tier, asKeeperError(err))
+			return refuse(asKeeperError(err))
 		}
 		esc.Write = &types.WritePreview{
 			Operation:   st.plan.StatementType,
@@ -439,7 +391,6 @@ func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decisi
 			// the agent.
 			Changes: shownChanges(raw.Changes, raw.CommandTag),
 		}
-		facts.Protection = protection(st.conn, true)
 	}
 
 	esc.Facts = facts
@@ -479,7 +430,10 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 	// freely. Resolving here rather than holding one is what keeps a statement
 	// against staging from being masked by production's classifications.
 	cat, err := p.catalogs(req.ConnID)
-	if err != nil || cat == nil {
+	if err != nil {
+		return nil, asKeeperError(err)
+	}
+	if cat == nil {
 		return nil, keeperError(types.CodeInternal, "this connection has no catalog",
 			"run keeper catalog init for this connection")
 	}
@@ -487,12 +441,10 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 
 	described, err := p.exec.Describe(ctx, req.ConnID, req.SQL, req.Params)
 	if err != nil {
-		st.tier = types.Tier4Refuse
 		return nil, asKeeperError(err)
 	}
 	plan, err := p.exec.Plan(ctx, req.ConnID, req.SQL, req.Params)
 	if err != nil {
-		st.tier = types.Tier4Refuse
 		return nil, asKeeperError(err)
 	}
 	st.plan = plan
@@ -503,40 +455,15 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 		EstimatedRows: plan.EstimatedRows,
 		EstimatedCost: plan.EstimatedCost,
 	}
-
-	if plan.StatementType == pgdb.StmtDDL {
-		st.tier = types.Tier4Refuse
-		st.reason(ReasonDDL)
-		out.PredictedTier = types.Tier4Refuse
-		out.Reasons = st.reasons
-		return out, nil
+	outcome, refusal := decide(st, conn, plan)
+	out.Outcome = outcome
+	if refusal == nil {
+		st.cols = p.resolveColumns(st.cat, described, plan, req)
+		p.noteColumns(ctx, st)
+		out.OutputColumns = publicColumns(st.cols)
+		st.outputColumns = out.OutputColumns
 	}
-	if _, ok := denylisted(conn, plan); ok {
-		st.tier = types.Tier4Refuse
-		st.reason(ReasonDenylisted)
-		out.PredictedTier = types.Tier4Refuse
-		out.Reasons = st.reasons
-		return out, nil
-	}
-	if plan.Writes {
-		st.reason(ReasonWrite)
-		st.raise(types.Tier3Approve)
-		if conn.Writes != types.WritesApprove {
-			st.tier = types.Tier4Refuse
-			st.reason(ReasonWritesOff)
-		}
-	}
-
-	st.cols = p.resolveColumns(st.cat, described, plan, req)
-	if st.tier < types.Tier4Refuse {
-		p.assignTier(ctx, st)
-		p.applyGrants(ctx, req, st)
-	}
-
-	out.OutputColumns = publicColumns(st.cols)
-	out.PredictedTier = st.tier
 	out.Reasons = st.reasons
-	st.outputColumns = out.OutputColumns
 	return out, nil
 }
 
@@ -548,11 +475,9 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		At:            st.started,
 		SessionID:     req.Session.ID,
 		Client:        req.Session.Client,
-		Intent:        req.Session.Intent,
 		Connection:    req.ConnID,
 		Statement:     p.audit.Normalize(req.SQL, p.knownIdentifier(st)),
 		OutputColumns: st.outputColumns,
-		Tier:          st.tier,
 		Transforms:    st.transforms,
 		RowCount:      st.rowCount,
 		Authorization: st.authorization,
@@ -562,7 +487,6 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		Collisions:    st.collisions,
 		Duration:      p.now().Sub(st.started),
 		ErrorCode:     st.errCode,
-		TokenScope:    req.Session.TokenScope,
 	}
 	if st.plan != nil {
 		rec.StatementType = st.plan.StatementType
@@ -594,8 +518,7 @@ func (p *Pipeline) knownIdentifier(st *state) func(string) bool {
 	}
 }
 
-func refuse(st *state, tier types.Tier, ke *types.Error) *Decision {
-	st.raise(tier)
+func refuse(ke *types.Error) *Decision {
 	return &Decision{Error: ke}
 }
 
@@ -641,18 +564,15 @@ func (p *Pipeline) Facts(ctx context.Context, req Request) (*types.ApprovalFacts
 	if ke != nil {
 		return nil, ke, nil
 	}
-	f := p.approvalFacts(req, st, false)
+	f := p.approvalFacts(req, st)
 	return &f, nil, nil
 }
 
-// approvalFacts describes the statement st planned. previewed is set once a
-// write's preview ran, which the server only allows a role that can write.
-func (p *Pipeline) approvalFacts(req Request, st *state, previewed bool) types.ApprovalFacts {
+// approvalFacts describes the statement st planned.
+func (p *Pipeline) approvalFacts(req Request, st *state) types.ApprovalFacts {
 	f := types.ApprovalFacts{
-		Intent:     req.Session.Intent,
-		Egress:     egressSummary(st.cols),
-		Reasons:    st.reasons,
-		Protection: protection(st.conn, previewed),
+		Egress:  egressSummary(st.cols),
+		Reasons: st.reasons,
 	}
 	if st.plan != nil {
 		f.StatementType = st.plan.StatementType
@@ -686,26 +606,6 @@ func riskOf(stmt string) (types.Risk, bool) {
 		return types.RiskDestructive, false
 	}
 	return types.RiskDestructive, true
-}
-
-// protection is what would stop a write on c. A role that holds a write grant
-// shows it in a read-only profile's audit; a writer's audit does not report its
-// own write grants, so there only a preview that ran can say.
-func protection(c *types.Connection, previewed bool) types.Protection {
-	pr := types.Protection{Writes: cmp.Or(c.Writes, types.WritesOff), RoleWrites: "unknown"}
-	switch {
-	case previewed:
-		pr.RoleWrites = "yes"
-	case c.AuditedAt.IsZero() || c.Writes == types.WritesApprove:
-	default:
-		pr.RoleWrites = "no"
-		for _, f := range c.Findings {
-			if f.Kind == types.FindingRelationWrite || f.ID == "rolsuper" {
-				pr.RoleWrites = "yes"
-			}
-		}
-	}
-	return pr
 }
 
 // flaggedFilters is the filter columns an approver should notice: catalogued

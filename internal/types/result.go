@@ -2,25 +2,13 @@ package types
 
 import "time"
 
-// Tier is the routing decision of SPEC §7.7. It describes routing, not disclosure
-// permission: the mode and the explicit policies govern the final action.
-type Tier int
-
-const (
-	Tier0Run       Tier = 0 // read, under caps, all output allow
-	Tier1Record    Tier = 1 // runs, recorded prominently: anything was masked
-	Tier2Uncertain Tier = 2 // near a cap, or a changed view: runs in assisted, waits in strict
-	Tier3Approve   Tier = 3 // any write, or mode-dependent uncertainty
-	Tier4Refuse    Tier = 4 // denylisted, DDL, writes off, multi-statement
-)
-
 // Basis says which layer decided a transform, so the agent can tell what it may
 // conclude from what it received. SPEC R8.5b.
 type Basis string
 
 const (
 	BasisCatalog   Basis = "catalog"   // a human or catalog init classified it
-	BasisRules     Basis = "rules"     // the connection's detection stages, over every row
+	BasisRules     Basis = "rules"     // the connection's detector, over every row
 	BasisInherited Basis = "inherited" // a computed column, from R7.6
 	BasisParameter Basis = "parameter" // from a token-resolved parameter, R8.4b
 	BasisUnknown   Basis = "unknown"   // an unresolved column redacted under R5.4a
@@ -31,10 +19,9 @@ const (
 
 // Transform is what happened to one output column, declared in every response.
 type Transform struct {
-	Policy    Policy      `json:"policy"`
-	Namespace string      `json:"namespace,omitzero"`
-	Form      PartialForm `json:"form,omitzero"`
-	Basis     Basis       `json:"basis"`
+	Policy    Policy `json:"policy"`
+	Namespace string `json:"namespace,omitzero"`
+	Basis     Basis  `json:"basis"`
 	// SpansRedacted counts rule hits replaced inside text values. SPEC R8.5a.
 	SpansRedacted int `json:"spans_redacted,omitzero"`
 	// Collisions counts cells redacted because a token was already bound to a
@@ -70,11 +57,11 @@ type QueryResult struct {
 	// TruncatedBy says which limit: the row ceiling or the size cap.
 	TruncatedBy Cut                  `json:"truncated_by,omitzero"`
 	Transforms  map[string]Transform `json:"transforms"`
-	Tier        Tier                 `json:"tier"`
 	AuditID     string               `json:"audit_id"`
-	Mode        Mode                 `json:"mode"`
-	// Authorization names what let this run: "tier0", "grant:<id>", "ticket:<id>",
-	// SPEC §9.4 requires the basis to be reported.
+	// Authorization names what let this run: "run", "writes:allow" or "ticket:<id>".
+	// Hint names the command that changes what keeper classified by itself.
+	// It is set after the statement is audited and is not part of the audit record.
+	Hint          string        `json:"hint,omitzero"`
 	Authorization string        `json:"authorization,omitzero"`
 	Degradations  []Degradation `json:"degradations,omitzero"`
 	// ExecutedRows is set for a write: the count the commit actually reported,
@@ -91,6 +78,15 @@ const (
 	CutBySize Cut = "size"
 )
 
+// Outcome is what keeper does with a statement.
+type Outcome string
+
+const (
+	OutcomeRun    Outcome = "run"
+	OutcomeAsk    Outcome = "ask"
+	OutcomeRefuse Outcome = "refuse"
+)
+
 // ExplainResult is the dry run of SPEC §6.1: what would be masked and whether the
 // statement would escalate, without spending an approval.
 type ExplainResult struct {
@@ -99,7 +95,7 @@ type ExplainResult struct {
 	EstimatedRows int64         `json:"estimated_rows"`
 	EstimatedCost float64       `json:"estimated_cost"`
 	OutputColumns []ColumnMeta  `json:"output_columns"`
-	PredictedTier Tier          `json:"predicted_tier"`
+	Outcome       Outcome       `json:"outcome"`
 	Reasons       []string      `json:"reasons,omitzero"`
 }
 
@@ -109,21 +105,21 @@ type ExplainResult struct {
 type Code string
 
 const (
-	CodeSyntax           Code = "syntax"            // the agent's statement did not parse
-	CodeMultiStatement   Code = "multi_statement"   // more than one statement
-	CodePermissionDenied Code = "permission_denied" // G3 refused; Invariant A working
-	CodeUnclassified     Code = "unclassified"      // a column needs a catalog entry
-	CodeDenylisted       Code = "denylisted"        // SPEC R4.5
-	CodeDDLRefused       Code = "ddl_refused"       // SPEC R4.2c
-	CodeWritesOff        Code = "writes_off"        // the profile's sessions are read-only
-	CodeApprovalRequired Code = "approval_required"
-	CodeApprovalRefused  Code = "approval_refused"
-	CodeTicketUnknown    Code = "ticket_unknown"
-	CodeTimeout          Code = "timeout"
-	CodeRowCap           Code = "row_cap"
-	CodeStaleToken       Code = "stale_token" // the daemon restarted; SPEC R3.4d
-	CodeUnreachable      Code = "unreachable" // keeper could not connect to the database
-	CodeInternal         Code = "internal"
+	CodeSyntax            Code = "syntax"            // the agent's statement did not parse
+	CodeMultiStatement    Code = "multi_statement"   // more than one statement
+	CodePermissionDenied  Code = "permission_denied" // G3 refused; Invariant A working
+	CodeUnclassified      Code = "unclassified"      // a column needs a catalog entry
+	CodeDDLRefused        Code = "ddl_refused"       // SPEC R4.2c
+	CodeWritesOff         Code = "writes_off"        // the profile's sessions are read-only
+	CodeApprovalRequired  Code = "approval_required"
+	CodeApprovalRefused   Code = "approval_refused"
+	CodeTicketUnknown     Code = "ticket_unknown"
+	CodeUnknownConnection Code = "unknown_connection" // no connection has that id or profile name, or the name is ambiguous
+	CodeTimeout           Code = "timeout"
+	CodeRowCap            Code = "row_cap"
+	CodeStaleToken        Code = "stale_token" // the daemon restarted; SPEC R3.4d
+	CodeUnreachable       Code = "unreachable" // keeper could not connect to the database
+	CodeInternal          Code = "internal"
 )
 
 // Error is the only error shape that reaches an agent. Every field PostgreSQL
@@ -150,7 +146,6 @@ type AuditRecord struct {
 	At         time.Time  `json:"at"`
 	SessionID  string     `json:"session_id"`
 	Client     ClientInfo `json:"client"`
-	Intent     string     `json:"intent,omitzero"`
 	Connection string     `json:"connection"`
 	// Statement is normalized with literals stripped and comments discarded.
 	// Quoted identifiers survive only when they match a catalogued relation or
@@ -159,7 +154,6 @@ type AuditRecord struct {
 	StatementType string               `json:"statement_type"`
 	Relations     []RelationRef        `json:"relations,omitzero"`
 	OutputColumns []ColumnMeta         `json:"output_columns,omitzero"`
-	Tier          Tier                 `json:"tier"`
 	Transforms    map[string]Transform `json:"transforms,omitzero"`
 	RowCount      int                  `json:"row_count"`
 	Authorization string               `json:"authorization,omitzero"`
@@ -171,8 +165,6 @@ type AuditRecord struct {
 	// Decision is how a human, or the clock, settled an escalated statement.
 	// Empty for a statement that never waited.
 	Decision Decision `json:"decision,omitzero"`
-	// TokenScope is how long the session declared its tokens live.
-	TokenScope TokenScope `json:"token_scope,omitzero"`
 }
 
 // Decision is how an escalated statement was settled.

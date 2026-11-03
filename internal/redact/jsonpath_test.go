@@ -16,7 +16,7 @@ func TestJSONKeyPaths(t *testing.T) {
 			"$.customer.name":  {Policy: types.PolicyRedact},
 			"$.order_id":       {Policy: types.PolicyAllow},
 			"$.internal.notes": {Policy: types.PolicyScan},
-			"$.secret":         {Policy: types.PolicyDrop},
+			"$.secret":         {Policy: types.PolicyToken, Namespace: "secret"},
 			"$.tags[*]":        {Policy: types.PolicyAllow},
 		},
 	}}
@@ -38,8 +38,8 @@ func TestJSONKeyPaths(t *testing.T) {
 	if strings.Contains(out, "Jane Doe") {
 		t.Errorf("a redact path survived: %s", out)
 	}
-	if strings.Contains(out, `"secret"`) {
-		t.Errorf("a drop path survived: %s", out)
+	if strings.Contains(out, `"secret":"x"`) {
+		t.Errorf("a token path survived: %s", out)
 	}
 	if !strings.Contains(out, `"order_id":1004`) {
 		t.Errorf("an allow path was masked, or the number was reformatted: %s", out)

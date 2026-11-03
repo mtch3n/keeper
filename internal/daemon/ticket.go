@@ -54,9 +54,9 @@ func (d *Daemon) setTicketStateLocked(tk *ticket, state types.TicketState, res *
 }
 
 // issueTicket registers the pipeline's escalation and puts it on the shared
-// queue. tmpl carries Tier, Reason and AuditID; the id, the session binding and
+// queue. tmpl carries Reason and AuditID; the id, the session binding and
 // the connection binding are the daemon's.
-func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Param, maxRows int, write bool, tmpl *types.Ticket, facts *types.ApprovalFacts, preview *types.WritePreview) *types.Ticket {
+func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Param, maxRows int, write bool, profile string, tmpl *types.Ticket, facts *types.ApprovalFacts, preview *types.WritePreview) *types.Ticket {
 	now := d.now()
 	tk := &ticket{
 		t: types.Ticket{
@@ -65,7 +65,6 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 			ConnectionID: connID,
 			State:        types.TicketPending,
 			Reason:       tmpl.Reason,
-			Tier:         tmpl.Tier,
 			AuditID:      tmpl.AuditID,
 			CreatedAt:    now,
 		},
@@ -80,7 +79,6 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 		TicketID:   tk.t.ID,
 		Session:    s.Info(),
 		Connection: connID,
-		Tier:       tmpl.Tier,
 		SQL:        forDisplay(sql),
 		CreatedAt:  now,
 		Write:      preview,
@@ -89,10 +87,18 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 		item.Facts = *facts
 	}
 
+	tk.t.URL = d.cfg.UIBase + "/r/" + tk.t.ID
+	tk.t.Write = write
+	tk.t.Prompt = dialogMessage(item, profile, tk.t.URL)
+
 	d.mu.Lock()
 	d.tickets[tk.t.ID] = tk
 	d.queue = append(d.queue, &queueItem{item: item})
 	d.mu.Unlock()
+
+	if d.deps.Notifier != nil {
+		d.wg.Go(func() { d.deps.Notifier.Notify(d.ctx, "keeper: a statement is waiting for you", tk.t.URL) })
+	}
 
 	d.hub.Publish(Event{Type: EventApproval, Data: ApprovalEvent{
 		Action: "queued", TicketID: tk.t.ID, State: types.TicketPending, Item: &item,

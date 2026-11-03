@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"iter"
 	"maps"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/mtchen/keeper/internal/client"
 	"github.com/mtchen/keeper/internal/daemonapp"
+	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -27,7 +29,7 @@ import (
 
 func runCatalog(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("catalog: expected a subcommand (init, ls, edit, grants)")
+		return fmt.Errorf("catalog: expected a subcommand (init, ls, edit)")
 	}
 	ctx := context.Background()
 	sub, rest := args[0], args[1:]
@@ -38,8 +40,6 @@ func runCatalog(args []string) error {
 		return catalogLs(ctx, rest)
 	case "edit":
 		return catalogEdit(ctx, rest)
-	case "grants":
-		return catalogGrants(ctx, rest)
 	default:
 		return fmt.Errorf("catalog: unknown subcommand %q", sub)
 	}
@@ -74,33 +74,39 @@ func catalogInit(ctx context.Context, args []string) error {
 		return printJSON(prop)
 	}
 
+	printProposal(os.Stdout, fs.Arg(0), prop)
+	return nil
+}
+
+// printProposal prints what catalog init proposed. Init writes nothing: the
+// only way to apply a proposal is keeper catalog edit.
+func printProposal(w io.Writer, name string, prop *ports.InitProposal) {
 	// The grouping is the point. "Typed scalars → allow" and a column whose
-	// samples the stages found PII in at the threshold rate are safe to accept
+	// samples the detector found PII in at the threshold rate are safe to accept
 	// without reading; other text is the review task, because that is where
-	// name and address columns live and no rule-based stage can find them.
+	// name and address columns live and pattern detection cannot find them.
 	if len(prop.SafeToBulkAccept)+len(prop.NeedsReview) == 0 {
-		fmt.Println("no proposals: this connection runs no detection stages, or none could examine its samples.")
-		fmt.Println("classify columns with `keeper catalog edit`, or add stages with `keeper connection set --detection`.")
+		fmt.Fprintln(w, "no proposals: this connection has detection off, or the detector could not examine its samples.")
+		fmt.Fprintln(w, "classify columns with `keeper catalog edit`, or turn detection on with `keeper connection set --detection scan`.")
 	}
 	for _, d := range prop.Degradations {
-		fmt.Printf("degraded: %s — %s\n", d.Layer, d.Reason)
+		fmt.Fprintf(w, "degraded: %s — %s\n", d.Layer, d.Reason)
 	}
-	fmt.Printf("safe to accept in bulk: %d column(s)\n", len(prop.SafeToBulkAccept))
+	fmt.Fprintf(w, "safe to accept in bulk: %d column(s)\n", len(prop.SafeToBulkAccept))
 	for key, p := range sortedEntries(prop.SafeToBulkAccept) {
-		fmt.Printf("  %-50s %s%s\n", key, p.Policy, policyArgs(p))
+		fmt.Fprintf(w, "  %-50s %s%s\n", key, p.Policy, policyArgs(p))
 	}
-	fmt.Printf("\nneeds review: %d column(s)\n", len(prop.NeedsReview))
-	fmt.Println("  these are free-text columns no stage matched at the threshold rate. A name or")
-	fmt.Println("  an address here is invisible to rule-based stages, so a human decides each one.")
+	fmt.Fprintf(w, "\nneeds review: %d column(s)\n", len(prop.NeedsReview))
+	fmt.Fprintln(w, "  these are free-text columns the detector did not match at the threshold rate. A name or")
+	fmt.Fprintln(w, "  an address here is invisible to pattern detection, so a human decides each one.")
 	for key, p := range sortedEntries(prop.NeedsReview) {
 		rate := ""
 		if r, ok := prop.SampleRates[key]; ok && r > 0 {
 			rate = fmt.Sprintf("  (%.0f%% of sampled rows matched a rule)", r*100)
 		}
-		fmt.Printf("  %-50s %s%s%s\n", key, p.Policy, policyArgs(p), rate)
+		fmt.Fprintf(w, "  %-50s %s%s%s\n", key, p.Policy, policyArgs(p), rate)
 	}
-	fmt.Println("\nreview and commit .keeper/catalog.yaml, then `keeper catalog edit` to change one.")
-	return nil
+	fmt.Fprintf(w, "\nthis only proposed: nothing is changed yet. To apply one, run `keeper catalog edit %s <schema.table.column> --policy <policy>`.\n", name)
 }
 
 func catalogLs(ctx context.Context, args []string) error {
@@ -150,10 +156,8 @@ func catalogLs(ctx context.Context, args []string) error {
 
 func catalogEdit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("catalog edit", flag.ContinueOnError)
-	policy := fs.String("policy", "", "allow, scan, partial, token, redact or drop")
-	namespace := fs.String("namespace", "", "token namespace; mandatory for token (R5.2b)")
-	form := fs.String("form", "", "partial form; mandatory for partial (R5.2d)")
-	hideName := fs.Bool("hide-name", false, "suppress the column name on every response surface")
+	policy := fs.String("policy", "", "allow, scan, token or redact")
+	namespace := fs.String("namespace", "", "token namespace; mandatory for token")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -166,8 +170,6 @@ func catalogEdit(ctx context.Context, args []string) error {
 	entry := types.ColumnPolicy{
 		Policy:    types.Policy(*policy),
 		Namespace: *namespace,
-		Form:      types.PartialForm(*form),
-		HideName:  *hideName,
 	}
 	// Validate before the round trip so the error names the field rather than
 	// arriving as a 400 from the other end.
@@ -195,49 +197,11 @@ func catalogEdit(ctx context.Context, args []string) error {
 	return nil
 }
 
-func catalogGrants(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("catalog grants", flag.ContinueOnError)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("catalog grants: expected a connection name")
-	}
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	// The catalog routes are keyed by id; the command line takes a name.
-	id, err := resolveConnectionID(ctx, cli, fs.Arg(0))
-	if err != nil {
-		return err
-	}
-	stmts, err := cli.CatalogGrants(ctx, id)
-	if err != nil {
-		return err
-	}
-	// §2.4: for a column the agent never needs, the correct control is not
-	// keeper. These statements move those columns out of keeper's reach
-	// entirely, and survive keeper being wrong about everything else.
-	fmt.Println("-- applying these revokes every `drop` column from the role's reach.")
-	fmt.Println("-- `SELECT *` then fails for the whole statement rather than omitting the column;")
-	fmt.Println("-- get_schema already reports only what the role may read (SPEC R5.5).")
-	for _, s := range stmts {
-		fmt.Println(s)
-	}
-	return nil
-}
-
 // --------------------------------------------------------------- approve ---
 
 func runApprove(args []string) error {
 	fs := flag.NewFlagSet("approve", flag.ContinueOnError)
 	refuse := fs.Bool("refuse", false, "refuse instead of approving")
-	standing := fs.Bool("standing", false, "also create a standing allow rule for the paths")
-	session := fs.Bool("session", false, "also create a session allow rule for the paths")
-	ceiling := fs.Int("row-ceiling", 0, "row ceiling for the allow rule")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -289,27 +253,10 @@ func runApprove(args []string) error {
 		return nil
 	}
 
-	var grant *client.GrantParams
-	if *standing || *session {
-		if *ceiling <= 0 {
-			// §9.3: identical relations with a different WHERE can return three
-			// orders of magnitude more rows, so the ceiling is not optional.
-			return fmt.Errorf("approve: --row-ceiling is required with --standing or --session")
-		}
-		life := types.GrantSession
-		if *standing {
-			life = types.GrantStanding
-		}
-		grant = &client.GrantParams{Lifetime: life, RowCeiling: *ceiling}
-	}
-
-	if err := cli.DecideApproval(ctx, ticket, decision, grant); err != nil {
+	if err := cli.DecideApproval(ctx, ticket, decision); err != nil {
 		return err
 	}
 	fmt.Printf("%sd %s\n", strings.ToLower(verb), ticket)
-	if grant != nil {
-		fmt.Printf("allow rule created: %s, ceiling %d rows\n", grant.Lifetime, grant.RowCeiling)
-	}
 	return nil
 }
 
@@ -322,11 +269,11 @@ func printQueue(queue []types.ApprovalItem) error {
 	// database with similar SQL are otherwise indistinguishable, which is the
 	// normal case with three windows open.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tINTENT\tCONNECTION\tTIER\tAGE")
+	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tCONNECTION\tAGE")
 	for _, it := range queue {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			it.TicketID, it.Session.Client.Name, it.Session.Client.Workspace,
-			truncate(it.Session.Intent, 40), it.Connection, it.Tier, age(it.CreatedAt))
+			it.Connection, age(it.CreatedAt))
 	}
 	w.Flush()
 	fmt.Println("\nkeeper approve <ticket> to decide one.")
@@ -337,7 +284,6 @@ func printQueue(queue []types.ApprovalItem) error {
 // from the SQL alone what the result contains.
 func printApproval(it types.ApprovalItem) {
 	f := it.Facts
-	fmt.Printf("intent    %s\n", f.Intent)
 	fmt.Printf("agent     %s · %s\n", it.Session.Client.Name, it.Session.Client.Workspace)
 	if it.Write != nil {
 		fmt.Printf("impact    %s · %d rows as of the preview, %s ago · %s\n",
@@ -363,81 +309,12 @@ func printApproval(it types.ApprovalItem) {
 	fmt.Println()
 }
 
-// ----------------------------------------------------------------- allow ---
-
-func runAllow(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("allow: expected a subcommand (ls, revoke)")
-	}
-	ctx := context.Background()
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	switch args[0] {
-	case "ls":
-		fs := flag.NewFlagSet("allow ls", flag.ContinueOnError)
-		asJSON := fs.Bool("json", false, "emit JSON")
-		if err := parseFlags(fs, args[1:]); err != nil {
-			return err
-		}
-		grants, err := cli.ListGrants(ctx)
-		if err != nil {
-			return err
-		}
-		if *asJSON {
-			return printJSON(grants)
-		}
-		if len(grants) == 0 {
-			fmt.Println("no allow rules")
-			return nil
-		}
-		// last used and uses are the point of the listing: an entry granted in
-		// March and never used since is the one to revoke, and nothing else in
-		// the product can tell you that.
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tPATH\tLIFETIME\tCEILING\tGRANTED\tLAST USED\tUSES")
-		for _, g := range grants {
-			last := "never"
-			if !g.LastUsedAt.IsZero() {
-				last = age(g.LastUsedAt) + " ago"
-			}
-			life := string(g.Lifetime)
-			if g.Suspended {
-				life += " (suspended)"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s ago\t%s\t%d\n",
-				g.ID, g.Path, life, g.RowCeiling, age(g.CreatedAt), last, g.Uses)
-		}
-		w.Flush()
-		fmt.Println("\nA rule covers exactly the path it names: no wildcards, and a view is")
-		fmt.Println("its own path (SPEC R9.3c).")
-		return nil
-
-	case "revoke":
-		if len(args) != 2 {
-			return fmt.Errorf("allow revoke: expected one rule id")
-		}
-		if err := cli.RevokeGrant(ctx, args[1]); err != nil {
-			return err
-		}
-		fmt.Printf("revoked %s\n", args[1])
-		return nil
-
-	default:
-		return fmt.Errorf("allow: unknown subcommand %q", args[0])
-	}
-}
-
 // -------------------------------------------------------------- activity ---
 
 func runActivity(args []string) error {
 	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
 	session := fs.String("session", "", "filter by session id")
 	conn := fs.String("connection", "", "filter by connection")
-	tier := fs.Int("tier", -1, "filter by tier")
 	since := fs.Duration("since", 0, "how far back to look, e.g. 24h")
 	limit := fs.Int("limit", 50, "maximum records")
 	asJSON := fs.Bool("json", false, "emit JSON")
@@ -467,10 +344,6 @@ func runActivity(args []string) error {
 			return err
 		}
 	}
-	if *tier >= 0 {
-		t := types.Tier(*tier)
-		f.Tier = &t
-	}
 	if *since > 0 {
 		f.Since = time.Now().Add(-*since)
 	}
@@ -486,10 +359,10 @@ func runActivity(args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "WHEN\tCONNECTION\tTIER\tROWS\tPOLICIES APPLIED\tSTATEMENT")
+	fmt.Fprintln(w, "WHEN\tCONNECTION\tROWS\tPOLICIES APPLIED\tSTATEMENT")
 	for _, r := range recs {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n",
-			r.At.Format(time.RFC3339), r.Connection, r.Tier, r.RowCount,
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
+			r.At.Format(time.RFC3339), r.Connection, r.RowCount,
 			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
 	}
 	w.Flush()
@@ -615,13 +488,7 @@ func runDoctor(args []string) error {
 		fmt.Printf("detector      %s %s, network %s\n", rep.Detector.Name, rep.Detector.Version, rep.Detector.NetworkPosture)
 	}
 	for _, c := range rep.Connections {
-		fmt.Printf("connection    %s\n", c.Name)
-		if c.Findings > 0 {
-			// A pointer, not a verdict: the findings do not stop this
-			// connection, and doctor reporting them as a fault would be
-			// the acceptance gate wearing a different hat (SPEC R4.1).
-			fmt.Printf("              %d privilege finding(s) — `keeper audit %s`\n", c.Findings, c.Name)
-		}
+		fmt.Printf("connection    %s: reads %s, writes %s\n", c.Name, c.Reads, c.Writes)
 	}
 	return nil
 }
@@ -674,7 +541,7 @@ func daemonlessDoctor(sock string, dialErr error, asJSON bool) error {
 
 func runVault(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("vault: expected a subcommand (export, import, rotate-master)")
+		return fmt.Errorf("vault: expected a subcommand (export, import)")
 	}
 	ctx := context.Background()
 	cli, err := connectDaemon(ctx)
@@ -733,13 +600,6 @@ func runVault(args []string) error {
 			return err
 		}
 		fmt.Println("vault imported")
-		return nil
-
-	case "rotate-master":
-		if err := cli.RotateMaster(ctx); err != nil {
-			return err
-		}
-		fmt.Println("master key rotated")
 		return nil
 
 	default:
@@ -858,12 +718,6 @@ func policyArgs(p types.ColumnPolicy) string {
 	if p.Namespace != "" {
 		parts = append(parts, "namespace="+p.Namespace)
 	}
-	if p.Form != "" {
-		parts = append(parts, "form="+string(p.Form))
-	}
-	if p.HideName {
-		parts = append(parts, "hide_name")
-	}
 	if len(parts) == 0 {
 		return ""
 	}
@@ -884,7 +738,7 @@ func transformSummary(m map[string]types.Transform) string {
 		return "-"
 	}
 	var parts []string
-	for _, p := range []types.Policy{types.PolicyToken, types.PolicyPartial, types.PolicyRedact, types.PolicyDrop, types.PolicyScan} {
+	for _, p := range []types.Policy{types.PolicyToken, types.PolicyRedact, types.PolicyScan} {
 		if n := counts[p]; n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", n, p))
 		}

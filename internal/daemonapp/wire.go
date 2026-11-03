@@ -2,13 +2,13 @@ package daemonapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -17,7 +17,6 @@ import (
 	"github.com/mtchen/keeper/internal/catalog"
 	"github.com/mtchen/keeper/internal/daemon"
 	"github.com/mtchen/keeper/internal/detect"
-	"github.com/mtchen/keeper/internal/pgaudit"
 	"github.com/mtchen/keeper/internal/pgdb"
 	"github.com/mtchen/keeper/internal/pipeline"
 	"github.com/mtchen/keeper/internal/ports"
@@ -32,15 +31,15 @@ import (
 // The daemon starts locked, so nothing here opens a database or reads the master
 // key: the vault resolves its key source chain on Unlock (§4.3), and the pools
 // and catalogs below are all lazy for the same reason.
-func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuthority, func(), error) {
+func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, func(), error) {
 	dir, err := configDir()
 	if err != nil {
-		return daemon.Deps{}, nil, nil, err
+		return daemon.Deps{}, nil, err
 	}
 
 	v := vault.New(dir)
 
-	// One patterns engine, shared: it screens every session intent and is the
+	// One patterns engine, shared: it screens task text and is the
 	// patterns pass of every connection that lists it. Each connection's chain
 	// is built from its own passes and terms when a statement needs it.
 	patterns := detect.NewPatterns()
@@ -55,7 +54,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		Detector: patterns,
 	})
 	if err != nil {
-		return daemon.Deps{}, nil, nil, fmt.Errorf("audit log: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("audit log: %w", err)
 	}
 
 	exec, err := pgdb.New(pgdb.Config{
@@ -65,7 +64,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	})
 	if err != nil {
 		alog.Close()
-		return daemon.Deps{}, nil, nil, fmt.Errorf("database: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("database: %w", err)
 	}
 
 	cats := newCatalogs(v, exec, detectors.For, dir)
@@ -77,16 +76,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	})
 	if err != nil {
 		alog.Close()
-		return daemon.Deps{}, nil, nil, fmt.Errorf("redaction: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("redaction: %w", err)
 	}
 
-	// The pipeline asks the daemon for connections and grants, and the daemon
-	// asks the pipeline to run statements. Neither can be constructed first, so
-	// the authority is a box the daemon drops itself into once it exists. It is
-	// read on every statement and written exactly once, which is what the atomic
-	// is for; a statement arriving before the daemon is wired gets a refusal
-	// rather than a nil dereference.
-	auth := &lateAuthority{vault: v}
+	auth := vaultAuthority{vault: v}
 
 	pipe, err := pipeline.New(pipeline.Deps{
 		Catalogs:  cats.For,
@@ -97,19 +90,19 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	})
 	if err != nil {
 		alog.Close()
-		return daemon.Deps{}, nil, nil, fmt.Errorf("pipeline: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("pipeline: %w", err)
 	}
 
 	deps := daemon.Deps{
 		Vault:        v,
-		Auditor:      pgaudit.New(),
 		Catalogs:     cats.For,
 		CatalogStore: openingStore{cats},
 		Executor:     exec,
 		Redactor:     red,
 		Audit:        alog,
 		Detector:     patterns,
-		Pipeline:     &pipelineAdapter{p: pipe},
+		Pipeline:     &pipelineAdapter{p: pipe, catalogs: cats},
+		Notifier:     daemon.DesktopNotifier(),
 	}
 
 	cleanup := func() {
@@ -117,7 +110,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		exec.Shutdown()
 		alog.Close()
 	}
-	return deps, auth, cleanup, nil
+	return deps, cleanup, nil
 }
 
 // limitsFrom reads §4.5's per-connection settings out of the vault for the pool
@@ -230,15 +223,48 @@ func (c *catalogs) openOne(connID string) (*catalog.Catalog, error) {
 		return nil, fmt.Errorf("catalog: no connection %q", connID)
 	}
 
-	committed := conn.CatalogPath
-	if committed == "" {
-		committed = filepath.Join(".keeper", "catalog.yaml")
-	}
-	return c.store.Open(ctx, connID, catalog.Paths{
-		Committed: committed,
-		Overlay:   filepath.Join(filepath.Dir(committed), "catalog.local.yaml"),
+	paths := catalog.Paths{
+		Committed: conn.CatalogPath,
 		Cache:     filepath.Join(c.dir, "catalog-"+safeFileName(connID)+".db"),
-	})
+	}
+	if paths.Committed == "" {
+		paths.Committed = filepath.Join(c.dir, "catalogs", safeFileName(connID), "catalog.yaml")
+	}
+	paths.Overlay = filepath.Join(filepath.Dir(paths.Committed), "catalog.local.yaml")
+	cat, err := c.store.Open(ctx, connID, paths)
+	if err != nil {
+		return nil, openError(err)
+	}
+	return cat, nil
+}
+
+// openError says what failed to open in the one error shape that reaches an
+// agent. An unreachable database keeps its own code; a catalog file that cannot
+// be read stops every statement, because no column may be treated as allowed.
+func openError(err error) error {
+	if ke, ok := errors.AsType[*types.Error](err); ok {
+		return ke
+	}
+	return &types.Error{
+		Code:    types.CodeInternal,
+		Summary: "keeper cannot read this connection's catalog file, so it treats no column as allowed",
+		Action:  "fix the file or its permissions, or register the connection without an explicit catalog path",
+	}
+}
+
+// hint tells an agent where to change what keeper classified by itself. It is
+// set on the result after the pipeline has audited the statement, so it never
+// reaches the audit log.
+func (c *catalogs) hint(ctx context.Context, connID string, cols []types.ColumnMeta) string {
+	cat := c.cached(connID)
+	if cat == nil || !cat.AutoMasked(cols) {
+		return ""
+	}
+	conn, err := c.vault.Connection(ctx, connID)
+	if err != nil || conn == nil {
+		return ""
+	}
+	return "keeper masked some columns by its own classification; to change it, run: keeper catalog edit " + conn.Name
 }
 
 // openingStore is the CatalogStore the daemon is given. catalog.Store answers
@@ -278,13 +304,6 @@ func (s openingStore) Init(ctx context.Context, connID string, sample int) (*por
 	return s.c.store.Init(ctx, connID, sample)
 }
 
-func (s openingStore) SuggestGrants(ctx context.Context, connID string) ([]string, error) {
-	if _, err := s.c.For(connID); err != nil {
-		return nil, err
-	}
-	return s.c.store.SuggestGrants(ctx, connID)
-}
-
 func (s openingStore) Unclassified(ctx context.Context, connID string) ([]string, error) {
 	if _, err := s.c.For(connID); err != nil {
 		return nil, err
@@ -293,7 +312,7 @@ func (s openingStore) Unclassified(ctx context.Context, connID string) ([]string
 }
 
 // Lookup satisfies redact.PolicyLookup. The Redactor needs a column's namespace
-// and partial form, and it knows which connection it is masking for because the
+// and JSON paths, and it knows which connection it is masking for because the
 // pipeline attached it to the context (ports.Statement).
 func (c *catalogs) Lookup(connID string, tableOID uint32, attNum uint16) (types.ColumnPolicy, bool) {
 	cat, err := c.For(connID)
@@ -325,21 +344,16 @@ func safeFileName(s string) string {
 	}, s)
 }
 
-// lateAuthority is the box the daemon drops itself into. It exists because the
-// pipeline and the daemon each need the other.
-type lateAuthority struct {
+// vaultAuthority is the pipeline's view of the vault.
+type vaultAuthority struct {
 	vault *vault.Vault
-	d     atomic.Pointer[daemon.Daemon]
 }
 
-// Bind completes the cycle, once the daemon exists.
-func (l *lateAuthority) Bind(d *daemon.Daemon) { l.d.Store(d) }
-
-// Connection comes straight from the vault rather than through the daemon. It is
-// the single source R4.5's denylist, the writes setting, §4.5's limits and
-// §9.4's mode all read, which is what stops them drifting apart.
-func (l *lateAuthority) Connection(ctx context.Context, connID string) (*types.Connection, error) {
-	c, err := l.vault.Connection(ctx, connID)
+// Connection comes straight from the vault. It is the single source the
+// profile's settings and the limits are read from, which is what stops them
+// drifting apart.
+func (a vaultAuthority) Connection(ctx context.Context, connID string) (*types.Connection, error) {
+	c, err := a.vault.Connection(ctx, connID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,22 +361,6 @@ func (l *lateAuthority) Connection(ctx context.Context, connID string) (*types.C
 		return nil, fmt.Errorf("no connection %q", connID)
 	}
 	return c, nil
-}
-
-// SuspendGrants is R9.3b, asked for by a statement that found its connection's
-// catalog stale.
-func (l *lateAuthority) SuspendGrants(connID, reason string) {
-	if d := l.d.Load(); d != nil {
-		d.SuspendGrantsForConnection(connID, reason)
-	}
-}
-
-func (l *lateAuthority) Grant(ctx context.Context, sessionID string, path types.PathRef) (*types.Grant, bool) {
-	d := l.d.Load()
-	if d == nil {
-		return nil, false
-	}
-	return d.GrantFor(ctx, sessionID, path)
 }
 
 // pipelineAdapter fits *pipeline.Pipeline to daemon.Pipeline.
@@ -373,7 +371,8 @@ func (l *lateAuthority) Grant(ctx context.Context, sessionID string, path types.
 // needs to enqueue before it executes. Nothing is reinterpreted here — the
 // adapter only unpacks the Decision.
 type pipelineAdapter struct {
-	p *pipeline.Pipeline
+	p        *pipeline.Pipeline
+	catalogs *catalogs
 }
 
 func (a *pipelineAdapter) request(sess types.Session, connID, sql string, params []ports.Param) pipeline.Request {
@@ -395,13 +394,17 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 	req := a.request(sess, connID, sql, params)
 	req.MaxRows = maxRows
 	if id, ok := strings.CutPrefix(authorization, "ticket:"); ok {
-		req.Approval = &pipeline.Approval{TicketID: id, Approver: sess.Client.Name}
+		req.Approval = &pipeline.Approval{TicketID: id, Approver: daemon.ApproverFrom(ctx)}
 	}
 	dec, err := a.p.Query(ctx, req)
 	if err != nil {
 		return nil, nil, err
 	}
-	return queryOutcome(dec)
+	res, tk, err := queryOutcome(dec)
+	if res != nil {
+		res.Hint = a.catalogs.hint(ctx, connID, res.Columns)
+	}
+	return res, tk, err
 }
 
 // queryOutcome unpacks a Decision into what the daemon acts on. An escalation
@@ -414,9 +417,9 @@ func queryOutcome(dec *pipeline.Decision) (*types.QueryResult, *types.Ticket, er
 	case dec.Escalation != nil:
 		return nil, &types.Ticket{
 			State:   types.TicketPending,
-			Tier:    dec.Tier,
 			Reason:  strings.Join(dec.Escalation.Facts.Reasons, ", "),
 			AuditID: dec.AuditID,
+			Preview: dec.Escalation.Write,
 		}, nil
 	case dec.Error != nil:
 		return nil, nil, dec.Error
@@ -437,20 +440,6 @@ func (a *pipelineAdapter) Facts(ctx context.Context, sess types.Session, connID,
 		return nil, kerr
 	}
 	return f, nil
-}
-
-func (a *pipelineAdapter) PreviewWrite(ctx context.Context, sess types.Session, connID, sql string, params []ports.Param) (*types.WritePreview, error) {
-	dec, err := a.p.Query(ctx, a.request(sess, connID, sql, params))
-	if err != nil {
-		return nil, err
-	}
-	if dec.Escalation != nil && dec.Escalation.Write != nil {
-		return dec.Escalation.Write, nil
-	}
-	if dec.Error != nil {
-		return nil, dec.Error
-	}
-	return nil, fmt.Errorf("keeperd: no write preview for this statement")
 }
 
 func (a *pipelineAdapter) CommitWrite(ctx context.Context, sess types.Session, connID, sql string, params []ports.Param, authorization string) (*types.QueryResult, error) {

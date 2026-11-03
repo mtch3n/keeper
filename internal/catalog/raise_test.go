@@ -81,26 +81,6 @@ func TestRaiseAllowsAStrictIncrease(t *testing.T) {
 	}
 }
 
-func TestRaiseNeverTouchesDrop(t *testing.T) {
-	s, _ := openTestStore(t, Dependencies{}, map[columnKey]types.ColumnPolicy{
-		{Schema: "public", Table: "users", Column: "ssn"}: {Policy: types.PolicyDrop},
-	})
-	ctx := t.Context()
-
-	// ssn is human-authored (committed) drop; Raise must be a no-op regardless
-	// of the target policy's rank.
-	if err := s.Raise(ctx, "conn1", "public.users.ssn", types.ColumnPolicy{Policy: types.PolicyRedact}); err != nil {
-		t.Fatalf("Raise: %v", err)
-	}
-	entries, err := s.Entries(ctx, "conn1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := entries["public.users.ssn"]; got.Policy != types.PolicyDrop {
-		t.Errorf("Raise touched a drop column: got %+v", got)
-	}
-}
-
 func TestRaiseWritesOverlayNotCommitted(t *testing.T) {
 	s, paths := openTestStore(t, Dependencies{}, nil)
 	ctx := t.Context()

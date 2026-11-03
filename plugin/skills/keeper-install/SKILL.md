@@ -1,178 +1,113 @@
 ---
 name: keeper-install
-description: Install keeper, or work out why it is not working. Use when keeper's MCP server fails to start, when a keeper tool reports the vault is locked or the daemon is unreachable, when a connection is registered but unusable, or when the user asks to install, update, or set up keeper. Do every part the environment allows, then hand over a precise list of what only a person can do.
-version: 1.0.0
+description: Install keeper, or work out why it is not working. Use when keeper's MCP server fails to start, when a keeper tool reports the daemon is unreachable, when no connection is registered or a connection is unusable, or when the user asks to install, update, or set up keeper. Do every part the environment allows, then hand over a precise list of what only a person can do.
+version: 1.1.0
 ---
 
 # Installing keeper, and getting it working
 
-Installing is not the hard part; **install has state in it**, and that is why this
-is a skill rather than a paragraph in a README. Is the binary there, is it the
-right version, is the daemon running, is a connection registered, is the catalog
-classified. Any of those can be the reason nothing
-works, and they have different fixes.
-
-Work down the list. Stop at the first thing that is wrong, fix it, then carry on
-from there rather than starting again.
+Install has state in it: is the binary there, is it on PATH, is the daemon
+running, is a connection registered. Any of those can be the reason nothing
+works, and they have different fixes. Work down the list. Stop at the first thing
+that is wrong, fix it, then carry on.
 
 ## 1. Is it installed
+
+The plugin's launcher installs keeper itself. When the MCP server starts and
+keeper is missing, the launcher downloads the latest release, checks it against
+the release's `SHA256SUMS`, and installs it in `~/.local/bin/keeper`. If the
+launcher printed an error on stderr, read it: it names the cause (no network, an
+unsupported platform, a checksum mismatch).
 
 ```sh
 keeper version
 ```
 
-Two numbers come back — the client's and the daemon's — because they refuse each
-other on a mismatch and one number would be the wrong answer.
+Two numbers come back, the client's and the daemon's, because they refuse each
+other on a mismatch.
 
-**If keeper is already installed, it updates itself** — the manual download
-below is only for a first install, or for a version too old to have the command:
+`command not found` has two causes. Either keeper is not installed, or it is
+installed in `~/.local/bin` and that folder is not on PATH. Check:
+
+```sh
+ls -l ~/.local/bin/keeper
+echo $PATH
+```
+
+If the file exists, the person adds the folder to PATH in their shell profile:
+`export PATH="$HOME/.local/bin:$PATH"`. The plugin's hooks and launcher already
+look in `~/.local/bin`; only the person's own terminal needs the PATH line. If the
+file does not exist, start the MCP server again (reconnect it) so the launcher
+installs it, or take a release archive by hand and verify it against
+`SHA256SUMS`.
+
+An installed keeper updates itself:
 
 ```sh
 keeper update --check    # what is published, against what is running
 keeper update            # verify, replace, restart onto it
 ```
 
-It stops without touching anything when the restart would cost something —
-sessions connected, an approval waiting — and names what it found, so `--force`
-is a decision rather than a surprise. **You may run `keeper update`**; the cost
-it guards is the same one that makes `daemon restart` yours to ask for, and the
-command asks on your behalf. It refuses outright when the binary belongs to a
-package manager, and says so.
-
-`command not found` means install it. **Prefer a release over building**: it is
-faster, and it comes with checksums you can actually verify.
-
-```sh
-# Work out the platform first
-uname -s   # Linux | Darwin
-uname -m   # x86_64 → amd64,  aarch64/arm64 → arm64
-```
-
-Then, filling in version and platform:
-
-```sh
-cd "$(mktemp -d)"
-curl -fsSLO https://github.com/mtch3n/keeper/releases/latest/download/SHA256SUMS
-curl -fsSLO "https://github.com/mtch3n/keeper/releases/latest/download/keeper_<version>_<os>_<arch>.tar.gz"
-sha256sum -c SHA256SUMS --ignore-missing     # shasum -a 256 -c on macOS
-tar xzf keeper_<version>_<os>_<arch>.tar.gz
-install -m755 keeper_<version>_<os>_<arch>/keeper ~/.local/bin/
-```
-
-**Verify the checksum and say that you did.** This binary is about to hold a
-database credential; skipping the one step that checks what you downloaded would
-be an odd way to start.
-
-`~/.local/bin` is the right destination when it is on PATH — check with
-`echo $PATH`. If it is not, either say so and let the user add it, or use
-`/usr/local/bin`, which needs `sudo` and is therefore theirs to run, not yours.
-
-Building from source needs Go 1.27 and pnpm:
-
-```sh
-git clone https://github.com/mtch3n/keeper && cd keeper
-make build && install -m755 bin/keeper ~/.local/bin/
-```
-
-One binary, three entry points: `keeper` is the CLI, `keeper daemon` runs the
-daemon, `keeper mcp` is the MCP server a harness talks to.
+It stops when the restart would cost something (sessions connected, a ticket
+waiting) and names what it found. Tell the user what that cost is before you use
+`--force`.
 
 ## 2. Is the daemon running
 
 ```sh
 keeper daemon status
-keeper daemon start      # starts it if not
+keeper daemon start
 ```
 
-`keeper doctor` is the fuller answer and it **works without the daemon** — that
-is the point of it, since the daemon not starting is exactly when you need it.
-It reports the socket, the lockfile, the key source and each connection's state.
+`keeper doctor` is the fuller answer and works without the daemon. It reports the
+socket, the key source and each connection's state.
 
 If `version` reports two different numbers, an old daemon is still running from
 before an upgrade. `keeper daemon restart` replaces it. **Tell the user what that
-costs before doing it**: it cancels every pending approval and permanently
-invalidates every token any agent session is holding, because the reverse map is
-memory and the tokens cannot be resolved again. Never restart it on your own
-initiative.
+costs first**: it cancels every waiting ticket and invalidates every token that
+any agent session holds. Never restart it on your own initiative.
 
 ## 3. Is there a connection
-
-There is no unlock step and no passphrase. keeperd opens the vault itself before
-it serves — from the OS keychain, `KEEPER_MASTER_KEY` or `key.age`, minting a key
-on a first run — and exits if it cannot, so a daemon that answers `keeper doctor`
-has an open vault. What doctor reports is the key *source* in use, which is worth
-reading: a silent fall back to a weaker one would be a defect, so it is named.
-
-Its one consequence: the master key lives in the keychain and nowhere else. If
-the user reinstalls the OS or resets their login keyring, every registered
-connection is unrecoverable without `keeper vault export`. Say so once, early.
 
 ```sh
 keeper connection ls
 ```
 
-Registering one needs a password, which means it needs the user. A host (the
-server) is added once; each database and role on it is its own connection.
-Offer them both paths and let them pick:
-
-- `keeper ui` prints a local URL; adding the host and its databases there is the
-  flow that was designed for it.
-- In the terminal, `keeper host add --name <host> --address <addr> [--sslmode require]`,
-  then `keeper connection add --name <name> --host <host> --database <db> --user <role>`,
-  which prompts for the password. They run it, not you: the prompt needs their
-  terminal.
-
-**Never ask them to paste a password or connection string into the
-conversation**, and if they do it anyway, do not repeat it back and do not put
-it in a command you echo.
-
-## 4. What did the privilege audit find
-
-A new connection works straight away. keeper audits the credential and reports
-what it found; nothing there blocks anything, and a connection whose audit could
-not run at all — a managed server that hides `pg_authid`, a role without the
-introspection grants — is registered and usable with no report yet.
+If the list is empty, the person has to register one. **An agent never asks for a
+connection string, and never handles one.** Tell the person to run this in their
+own terminal:
 
 ```sh
-keeper audit              # every connection
-keeper audit <name>       # one of them
+keeper connect
 ```
 
-This step is worth doing even though nothing is broken. Read the findings out to
-the user. Each one comes with the statement that would narrow the grant, and
-running it is usually the better answer: a privilege the role does not hold is
-one keeper cannot get wrong.
+It reads the connection string at a hidden prompt and makes one profile. The
+profile reads and masks, and it cannot write. The person can also use `keeper ui`
+to open the dashboard.
 
-Say plainly what the broad ones cost. On a `rolsuper` role, keeper's
-database-level protection does not apply, and keeper is doing one job —
-reducing what reaches your context — with nothing underneath it. That is a
-real trade, not a formality.
+If the person pastes a password or connection string into the conversation
+anyway, do not repeat it and do not put it in a command.
 
-**Do not run the narrowing statements yourself.** They are `GRANT`/`REVOKE`
-against the user's database, they are not on keeper's MCP surface, and an agent
-that could edit the privileges of the credential supervising it would be
-removing its own supervision. Hand them over for the user to run.
+Prefer a database role that is not a superuser. keeper's transaction stops
+database writes on reads, but it cannot stop what a superuser does outside the
+transaction.
 
-## 5. Is the catalog classified
+The vault opens itself from the OS keychain. If the person resets their login
+keyring, the registered connections are lost unless they made a copy with
+`keeper vault export`. Say so once.
 
-```sh
-keeper catalog init <name> --sample 200
-```
+## 4. Check the first query
 
-Every unclassified column comes back redacted, which is safe and not useful, so
-this is what turns a working install into a usable one. It proposes a policy for
-each column and groups the proposals: typed scalars and name matches are safe to
-accept in bulk, and free text that no rule matched is the review task — that is
-where unnamed name and address columns live, and the pattern pass cannot find
-them.
+Run a small `query` on the new profile. An email column should come back as a
+token like `⟨email1:…⟩`. The result's `hint` names the one command that changes a
+column: `keeper catalog edit <profile> <schema.table.column> --policy <policy>`.
+The person runs it. Settings such as `reads`, `writes` and `detection` are
+changed with `keeper connection set`, also by the person.
 
-`keeper ui` is the better place to work through that, because it is a table of
-hundreds of rows and the terminal is not.
+## 5. Connect the harness
 
-## 6. Connect the harness
-
-The Claude Code plugin registers the MCP server itself. Elsewhere, point the
-client at `keeper mcp` over stdio:
+The plugin registers the MCP server itself. For another client, point it at
+`keeper mcp` over stdio:
 
 ```json
 { "mcpServers": { "keeper": { "command": "keeper", "args": ["mcp"] } } }
@@ -180,12 +115,17 @@ client at `keeper mcp` over stdio:
 
 Then reconnect the server and check that keeper's tools are listed.
 
+Codex needs two things from the person. It runs a plugin hook only after the
+person trusts it (`/hooks`). To skip a second tool-approval question, the person
+sets `default_tools_approval_mode` for the keeper server in the Codex config. The
+README has the exact lines.
+
 ## What to hand back rather than do
 
 - `sudo` anything.
-- Running any `GRANT` or `REVOKE` the audit suggests.
+- `keeper connect`, `keeper catalog edit`, `keeper connection set`, `keeper approve`
+  and `keeper vault export`. They are the person's.
 - Supplying a connection string.
 
-Finish by telling them plainly what is done, what is left, and the exact command
-for each remaining step. A half-finished install that reports success is worse
-than one that says which step it stopped at.
+Finish by telling the person what is done, what is left, and the exact command for
+each remaining step.

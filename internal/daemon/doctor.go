@@ -21,8 +21,6 @@ type DoctorReport struct {
 	PendingApprovals int             `json:"pending_approvals"`
 	OpenTickets      int             `json:"open_tickets"`
 	OpenRequests     int             `json:"open_requests"`
-	Grants           int             `json:"grants"`
-	SuspendedGrants  int             `json:"suspended_grants"`
 
 	Connections []ConnectionHealth `json:"connections,omitzero"`
 
@@ -42,13 +40,11 @@ type DoctorReport struct {
 // operator who wants to know whether an account connects presses Test
 // connection.
 type ConnectionHealth struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	// Findings is how many the last privilege audit reported. It is a pointer
-	// at `keeper audit`, not a state: none of them stop this connection.
-	Findings int          `json:"findings"`
-	Mode     types.Mode   `json:"mode"`
-	Limits   types.Limits `json:"limits"`
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Reads  types.Reads  `json:"reads"`
+	Writes types.Writes `json:"writes"`
+	Limits types.Limits `json:"limits"`
 }
 
 // Doctor assembles the report.
@@ -71,12 +67,6 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 			rep.OpenRequests++
 		}
 	}
-	rep.Grants = len(d.grants)
-	for _, g := range d.grants {
-		if g.Suspended {
-			rep.SuspendedGrants++
-		}
-	}
 	d.mu.Unlock()
 
 	if d.deps.Detector != nil {
@@ -95,7 +85,7 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 	}
 	rep.Connections = make([]ConnectionHealth, len(cs))
 	for i, c := range cs {
-		rep.Connections[i] = ConnectionHealth{ID: c.ID, Name: c.Name, Findings: len(c.Findings), Mode: c.Mode, Limits: c.Limits}
+		rep.Connections[i] = ConnectionHealth{ID: c.ID, Name: c.Name, Reads: c.Reads, Writes: c.Writes, Limits: c.Limits}
 	}
 	return rep
 }

@@ -17,23 +17,10 @@ type ClientInfo struct {
 // connection, one session. Ticket binding and the reverse map both scope to it,
 // and a reconnect is a new session with an empty map.
 type Session struct {
-	ID     string     `json:"id"`
-	Client ClientInfo `json:"client"`
-	Intent string     `json:"intent,omitzero"` // set_session_intent, optional
-	// TokenScope is how long this session's tokens live, as its agent declared.
-	TokenScope  TokenScope `json:"token_scope,omitzero"`
+	ID          string     `json:"id"`
+	Client      ClientInfo `json:"client"`
 	ConnectedAt time.Time  `json:"connected_at"`
 }
-
-// TokenScope is a session's declared token lifetime. Session tokens resolve only
-// inside the session that minted them; persistent tokens mean the same value
-// on every machine holding the vault, where the connection allows them.
-type TokenScope string
-
-const (
-	ScopeSession    TokenScope = "session"
-	ScopePersistent TokenScope = "persistent"
-)
 
 // TicketState is where an escalated statement has got to.
 type TicketState string
@@ -67,20 +54,23 @@ type Ticket struct {
 	ConnectionID string      `json:"-"`
 	State        TicketState `json:"state"`
 	Reason       string      `json:"reason,omitzero"`
-	Tier         Tier        `json:"tier"`
 	AuditID      string      `json:"audit_id"`
 	CreatedAt    time.Time   `json:"created_at"`
+	// URL is the ticket's local page, and Prompt the text of its approval dialog:
+	// facts and SQL, never a row or a resolved value. Write says which dialog.
+	URL    string `json:"url,omitzero"`
+	Prompt string `json:"prompt,omitzero"`
+	Write  bool   `json:"write,omitzero"`
+	// Preview is the one rollback run of a write; it stays on the daemon's side.
+	Preview *WritePreview `json:"-"`
 }
 
-// RequestKind distinguishes the two things the local page serves. SPEC R8.7g:
-// one mechanism, one set of security rules, two outcomes.
+// RequestKind names what the local page serves.
 type RequestKind string
 
 const (
 	// RequestInput takes a value the agent must never see and returns a token.
 	RequestInput RequestKind = "input"
-	// RequestAuthorization grants a path and returns nothing to the session.
-	RequestAuthorization RequestKind = "authorization"
 )
 
 // LocalRequest is one pending decision waiting on a human at the local page.
@@ -93,53 +83,11 @@ type LocalRequest struct {
 	ConnectionID string      `json:"connection_id"`
 	// Namespace is the token namespace for an input request.
 	Namespace string `json:"namespace,omitzero"`
-	// Path is what an authorization request would grant.
-	Path *PathRef `json:"path,omitzero"`
 	// Purpose is screened user-visible task text. It never carries a value.
 	Purpose   string    `json:"purpose,omitzero"`
 	URL       string    `json:"url"`
 	State     string    `json:"state"` // pending_input, ready, cancelled, expired
 	ExpiresAt time.Time `json:"expires_at"`
-}
-
-// PathRef is one grantable path. Paths do not inherit: a schema does not cover
-// its relations, a view does not cover its base tables, and a different
-// connection is a different path. SPEC R9.3c.
-type PathRef struct {
-	ConnectionID string      `json:"connection_id"`
-	Relation     RelationRef `json:"relation"`
-}
-
-func (p PathRef) String() string { return "read(" + p.ConnectionID + ":" + p.Relation.String() + ")" }
-
-// GrantLifetime is how long an allow rule lives. The session grant is the
-// default, because "stop asking me for the rest of this task" and "stop asking me
-// on this machine" are different requests. SPEC R9.3d.
-type GrantLifetime string
-
-const (
-	GrantSession  GrantLifetime = "session"
-	GrantStanding GrantLifetime = "standing"
-)
-
-// Grant is a standing approval for exactly one path.
-type Grant struct {
-	ID       string        `json:"id"`
-	Path     PathRef       `json:"path"`
-	Lifetime GrantLifetime `json:"lifetime"`
-	// SessionID is set for a session-scoped grant and empty for a standing one.
-	SessionID string `json:"-"`
-	// RowCeiling bounds what the grant covers; identical relations with a
-	// different WHERE can return three orders of magnitude more rows. SPEC §9.3.
-	RowCeiling int       `json:"row_ceiling"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at,omitzero"`
-	LastUsedAt time.Time `json:"last_used_at,omitzero"`
-	Uses       int       `json:"uses"`
-	// Suspended is set when a schema change touched the relation. SPEC R9.3b.
-	Suspended bool   `json:"suspended,omitzero"`
-	Reason    string `json:"reason,omitzero"`
 }
 
 // ApprovalItem is one row of the shared queue. Every field above the statement
@@ -149,7 +97,6 @@ type ApprovalItem struct {
 	TicketID   string  `json:"ticket_id"`
 	Session    Session `json:"session"`
 	Connection string  `json:"connection"`
-	Tier       Tier    `json:"tier"`
 	// Facts is what a human decides on; SQL is evidence and renders below it.
 	Facts     ApprovalFacts `json:"facts"`
 	SQL       string        `json:"sql"`
@@ -160,7 +107,6 @@ type ApprovalItem struct {
 
 // ApprovalFacts is SPEC §9.2's layout as data: facts first, SQL last.
 type ApprovalFacts struct {
-	Intent        string        `json:"intent"`
 	StatementType string        `json:"statement_type"`
 	Relations     []RelationRef `json:"relations"`
 	EstimatedRows int64         `json:"estimated_rows"`
@@ -177,8 +123,6 @@ type ApprovalFacts struct {
 	Unreadable bool `json:"unreadable,omitzero"`
 	// Targets are the relations a write changes.
 	Targets []RelationRef `json:"targets,omitzero"`
-	// Protection is what would stop a write on this profile.
-	Protection Protection `json:"protection"`
 	// Columns are the output columns by name, with SELECT * expanded.
 	Columns []string `json:"columns,omitzero"`
 	// Filters are the sensitive or uncatalogued columns the statement filters
@@ -195,14 +139,6 @@ const (
 	RiskWrite       Risk = "write"
 	RiskDestructive Risk = "destructive"
 )
-
-// Protection is the profile's writes setting and whether its role can change
-// data at all.
-type Protection struct {
-	Writes Writes `json:"writes"`
-	// RoleWrites is yes, no, or unknown when the audit cannot say.
-	RoleWrites string `json:"role_writes"`
-}
 
 // FilterColumn is one column a statement filters or joins on that an
 // approver should notice.

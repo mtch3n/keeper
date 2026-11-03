@@ -1,11 +1,11 @@
 // Package daemon owns every piece of keeper's mutable state: sessions bound to
-// socket connections, escalation tickets, the shared approval queue, grants and
-// local input/authorization requests.
+// socket connections, escalation tickets, the shared approval queue and
+// local input requests.
 //
 // SPEC §3.1 makes keeperd the only stateful process, so this package is where
 // concurrency lives. One mutex guards the whole state map. That is deliberate:
-// closing a connection has to drop a session, its tickets, its queue items, its
-// session-scoped grants and its pending local requests atomically, and finer
+// closing a connection has to drop a session, its tickets, its queue items and
+// its pending local requests atomically, and finer
 // locking buys nothing at this scale but a chance to get that wrong. No port is
 // ever called while the mutex is held.
 //
@@ -30,7 +30,6 @@ import (
 // interface so the daemon is testable without a database, a vault or a model.
 type Deps struct {
 	Vault        ports.Vault
-	Auditor      ports.Auditor
 	Catalogs     ports.CatalogFor
 	CatalogStore ports.CatalogStore
 	Executor     ports.Executor
@@ -41,6 +40,9 @@ type Deps struct {
 	// the daemon holds it only so doctor can report what examined the data and
 	// whether it could reach the network (SPEC R8.5g).
 	Detector ports.Detector
+	// Notifier is optional: when set it is told, off the statement's path, that
+	// a ticket opened.
+	Notifier Notifier
 }
 
 // Config is the daemon's tuning. Everything has a default; New fills the zeroes.
@@ -59,16 +61,10 @@ type Config struct {
 	TicketTTL time.Duration
 	// MaxWait caps wait_ms on every polling endpoint. SPEC §3.2: 25000 ms.
 	MaxWait time.Duration
-	// StandingGrantTTL and WriteGrantTTL are R9.3d's 30 days and R4.2f's 7.
-	StandingGrantTTL time.Duration
-	WriteGrantTTL    time.Duration
 	// ExecuteTimeout bounds the background execution of an approved ticket.
 	ExecuteTimeout time.Duration
 	// Sweep is how often expired tickets and requests are reaped.
 	Sweep time.Duration
-	// StateDir is where the daemon keeps what must outlive it — currently the
-	// standing grants. Empty disables persistence, which is what tests want.
-	StateDir string
 	// IdleExit is how long the daemon runs with nothing attached before it
 	// stops. Zero uses the default; negative disables it.
 	//
@@ -99,12 +95,6 @@ func (c *Config) withDefaults() {
 	if c.MaxWait <= 0 {
 		c.MaxWait = 25 * time.Second
 	}
-	if c.StandingGrantTTL <= 0 {
-		c.StandingGrantTTL = 30 * 24 * time.Hour
-	}
-	if c.WriteGrantTTL <= 0 {
-		c.WriteGrantTTL = 7 * 24 * time.Hour
-	}
 	if c.ExecuteTimeout <= 0 {
 		c.ExecuteTimeout = 5 * time.Minute
 	}
@@ -124,7 +114,6 @@ func (c *Config) withDefaults() {
 
 // Daemon is keeper's state. It is safe for concurrent use.
 type Daemon struct {
-	grantsDirty  atomic.Bool
 	lastActivity atomic.Int64
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
@@ -141,7 +130,6 @@ type Daemon struct {
 	byConn   map[net.Conn]*Session
 	tickets  map[string]*ticket
 	queue    []*queueItem
-	grants   map[string]*types.Grant
 	requests map[string]*localRequest
 
 	results results
@@ -153,8 +141,6 @@ func New(cfg Config, deps Deps) (*Daemon, error) {
 	switch {
 	case deps.Vault == nil:
 		return nil, errors.New("daemon: Vault is required")
-	case deps.Auditor == nil:
-		return nil, errors.New("daemon: Auditor is required")
 	case deps.Catalogs == nil:
 		return nil, errors.New("daemon: Catalog is required")
 	case deps.CatalogStore == nil:
@@ -180,7 +166,6 @@ func New(cfg Config, deps Deps) (*Daemon, error) {
 		sessions: map[string]*Session{},
 		byConn:   map[net.Conn]*Session{},
 		tickets:  map[string]*ticket{},
-		grants:   map[string]*types.Grant{},
 		requests: map[string]*localRequest{},
 	}
 
@@ -189,8 +174,6 @@ func New(cfg Config, deps Deps) (*Daemon, error) {
 	// "never touched" as "not idle" had it running forever.
 	d.lastActivity.Store(d.now().UnixNano())
 
-	// Standing grants outlive the process that issued them (R9.3d).
-	d.loadGrants()
 	d.wg.Go(d.sweep)
 	return d, nil
 }
@@ -240,7 +223,6 @@ func (d *Daemon) sweep() {
 				pruned = d.now()
 			}
 			d.expire()
-			d.flushGrants()
 			d.deps.Executor.CloseIdle()
 			d.exitIfIdle()
 		}
@@ -274,12 +256,6 @@ func (d *Daemon) expire() {
 		}
 		if r.r.State != statePending && now.Sub(r.settledAt) > d.cfg.RequestTTL {
 			delete(d.requests, id)
-		}
-	}
-	for id, g := range d.grants {
-		if !g.ExpiresAt.IsZero() && now.After(g.ExpiresAt) {
-			delete(d.grants, id)
-			events = append(events, Event{Type: EventApproval, Data: GrantEvent{Action: "expired", GrantID: id}})
 		}
 	}
 	d.mu.Unlock()
@@ -335,8 +311,8 @@ func (d *Daemon) attached() bool {
 // Stopping is better than idling for the case it covers: the pools close, the
 // memory goes back, the socket is removed, and there is nothing left to reach —
 // including the decrypted credentials, which is the only bound keeper puts on
-// how long they sit in memory. It is safe because the standing grants are on
-// disk; everything else the daemon holds is scoped to a session that is gone.
+// how long they sit in memory. It is safe because everything the daemon holds
+// is scoped to a session that is gone.
 func (d *Daemon) exitIfIdle() {
 	if d.cfg.IdleExit < 0 || d.attached() {
 		return

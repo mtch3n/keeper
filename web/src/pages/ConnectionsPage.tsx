@@ -8,30 +8,26 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { HostDialog } from '@/components/wrappers/HostDialog'
 import { RegisterDialog } from '@/components/wrappers/RegisterDialog'
-import { getDoctor, listConnections, listHosts, removeHost, type DoctorReport } from '@/lib/api'
+import { listConnections, listHosts, removeHost } from '@/lib/api'
 import type { ConnectionSummary, HostView } from '@/lib/types'
 
-type Health = NonNullable<DoctorReport['connections']>[number]
-
-const COLUMNS = 6
+const COLUMNS = 5
 
 /**
- * Every connection keeper holds, in one table (SPEC R4.1, UI.md §2.7).
+ * Every connection keeper holds, in one table .
  *
  * A host is entered once; each database and role on it is its own connection,
- * which is what an agent queries and what owns a catalog, token keys and an
- * audit. So each host is a row that heads its connections, and a database is
+ * which is what an agent queries and what owns a catalog and token keys. So each host is a row that heads its connections, and a database is
  * added from that row rather than by retyping an address. One table keeps the
  * columns aligned across hosts, so a filter and a glance both work.
  *
  * Nothing here connects to a database: keeper connects only when a database is
  * needed, and whether an account logs in is asked on its page with Test
- * connection. Findings come from the vault, the same answer as General.
+
  */
 export function ConnectionsPage() {
   const [hosts, setHosts] = useState<HostView[] | null>(null)
   const [list, setList] = useState<ConnectionSummary[]>([])
-  const [health, setHealth] = useState<Map<string, Health>>(new Map())
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
@@ -49,10 +45,6 @@ export function ConnectionsPage() {
 
   useEffect(() => {
     void load()
-    // doctor reads only the vault, so the findings arrive with the list.
-    getDoctor()
-      .then((r) => setHealth(new Map((r.connections ?? []).map((c) => [c.id, c]))))
-      .catch(() => setHealth(new Map()))
   }, [load])
 
   if (hosts === null) {
@@ -85,8 +77,7 @@ export function ConnectionsPage() {
           <EmptyHeader>
             <EmptyTitle>No hosts</EmptyTitle>
             <EmptyDescription>
-              Add the database server first, then each database and role on it. A connection works straight away;
-              keeper audits the credential and reports what the role can do on its page.
+              Add the database server first, then each database and role on it. A connection works straight away.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -107,8 +98,7 @@ export function ConnectionsPage() {
                 <TableHead>Database</TableHead>
                 <TableHead>User</TableHead>
                 <TableHead>Writes</TableHead>
-                <TableHead>Mode</TableHead>
-                <TableHead className="text-right">Findings</TableHead>
+                <TableHead>Reads</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -124,7 +114,6 @@ export function ConnectionsPage() {
                     key={host.id}
                     host={host}
                     rows={rows}
-                    health={health}
                     onOpen={(id) => navigate(`/connections/${id}`)}
                     onChanged={load}
                     onError={setError}
@@ -143,14 +132,12 @@ export function ConnectionsPage() {
 function HostRows({
   host,
   rows,
-  health,
   onOpen,
   onChanged,
   onError,
 }: {
   host: HostView
   rows: ConnectionSummary[]
-  health: Map<string, Health>
   onOpen: (id: string) => void
   onChanged: () => Promise<void>
   onError: (e: string) => void
@@ -198,7 +185,6 @@ function HostRows({
         </TableRow>
       ) : null}
       {rows.map((c) => {
-        const h = health.get(c.id)
         return (
           <TableRow key={c.id} className="cursor-pointer" onClick={() => onOpen(c.id)}>
             <TableCell className="text-meta">
@@ -208,9 +194,8 @@ function HostRows({
             </TableCell>
             <TableCell className="text-meta">{c.database}</TableCell>
             <TableCell className="text-meta">{c.username}</TableCell>
-            <TableCell className="text-meta">{c.writes === 'approve' ? 'with approval' : 'off'}</TableCell>
-            <TableCell className="text-meta">{c.mode}</TableCell>
-            <TableCell className="text-right text-meta">{h && h.findings > 0 ? h.findings : '—'}</TableCell>
+            <TableCell className="text-meta">{c.writes}</TableCell>
+            <TableCell className="text-meta">{c.reads}</TableCell>
           </TableRow>
         )
       })}

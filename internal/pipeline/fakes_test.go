@@ -259,7 +259,7 @@ func (a *fakeAudit) Get(context.Context, string) (*types.AuditRecord, error) { r
 
 func (a *fakeAudit) Normalize(sql string, _ func(string) bool) string { return "NORMALIZED:" + sql }
 
-func (a *fakeAudit) ScreenIntent(context.Context, string) error { return nil }
+func (a *fakeAudit) ScreenText(context.Context, string) error { return nil }
 
 func (a *fakeAudit) last(t *testing.T) *types.AuditRecord {
 	t.Helper()
@@ -272,22 +272,12 @@ func (a *fakeAudit) last(t *testing.T) *types.AuditRecord {
 // --- authority -------------------------------------------------------------
 
 type fakeAuthority struct {
-	conn   *types.Connection
-	grants map[types.PathRef]*types.Grant
-	err    error
-	// suspended names the connections whose grants were suspended.
-	suspended []string
+	conn *types.Connection
+	err  error
 }
-
-func (a *fakeAuthority) SuspendGrants(connID, _ string) { a.suspended = append(a.suspended, connID) }
 
 func (a *fakeAuthority) Connection(context.Context, string) (*types.Connection, error) {
 	return a.conn, a.err
-}
-
-func (a *fakeAuthority) Grant(_ context.Context, _ string, path types.PathRef) (*types.Grant, bool) {
-	g, ok := a.grants[path]
-	return g, ok
 }
 
 // --- the schema every test shares ------------------------------------------
@@ -314,10 +304,10 @@ func testSchema() *fakeCatalog {
 		testRelation{ref: usersRef, oid: usersOID, cols: []testColumn{
 			{name: "id", attnum: 1, family: ports.FamilyNumeric, policy: types.ColumnPolicy{Policy: types.PolicyAllow}},
 			{name: "email", attnum: 2, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "email"}},
-			{name: "ssn", attnum: 3, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyDrop}},
+			{name: "ssn", attnum: 3, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyRedact}},
 			{name: "salary", attnum: 4, family: ports.FamilyNumeric, policy: types.ColumnPolicy{Policy: types.PolicyRedact}},
 			{name: "status", attnum: 5, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyScan}},
-			{name: "internal_flag", attnum: 6, family: ports.FamilyBoolean, policy: types.ColumnPolicy{Policy: types.PolicyRedact, HideName: true}},
+			{name: "internal_flag", attnum: 6, family: ports.FamilyBoolean, policy: types.ColumnPolicy{Policy: types.PolicyRedact}},
 		}},
 		testRelation{ref: ordersRef, oid: ordersOID, cols: []testColumn{
 			{name: "id", attnum: 1, family: ports.FamilyNumeric, policy: types.ColumnPolicy{Policy: types.PolicyAllow}},
@@ -338,7 +328,7 @@ func testConnection() *types.Connection {
 		Engine:   "postgres",
 		Database: "acme",
 		Role:     "acme_prod_app_ro",
-		Mode:     types.ModeAssisted,
+		Reads:    types.ReadsUncertain,
 		Limits:   types.DefaultLimits(),
 	}
 }
@@ -347,7 +337,6 @@ func testSession() types.Session {
 	return types.Session{
 		ID:     "sess-1",
 		Client: types.ClientInfo{Name: "keeper-mcp", Version: "0.1.0"},
-		Intent: "reconcile last week's orders",
 	}
 }
 
@@ -369,7 +358,7 @@ func newHarness(t *testing.T, mutate ...func(*harness)) *harness {
 		redactor:  &fakeRedactor{},
 		exec:      &fakeExecutor{},
 		audit:     &fakeAudit{},
-		authority: &fakeAuthority{conn: testConnection(), grants: map[types.PathRef]*types.Grant{}},
+		authority: &fakeAuthority{conn: testConnection()},
 	}
 	for _, m := range mutate {
 		m(h)

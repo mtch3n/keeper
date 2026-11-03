@@ -10,9 +10,9 @@ func keeperErr(code types.Code, summary, action string) *types.Error {
 }
 
 var (
-	errUnknownConnection = keeperErr(types.CodeTicketUnknown,
-		"no connection with that id is registered",
-		"run `keeper connection list`")
+	errUnknownConnection = keeperErr(types.CodeUnknownConnection,
+		"no connection has that id or profile name",
+		"call list_connections")
 
 	errUnknownHost = keeperErr(types.CodeTicketUnknown,
 		"no host with that id is registered",
@@ -26,9 +26,9 @@ var (
 		"no local request with that id belongs to this session",
 		"open a new request")
 
-	errIntentScreened = keeperErr(types.CodePermissionDenied,
-		"the intent text matched a sensitive-data rule and was not recorded",
-		"restate the intent without identifying values")
+	errTextScreened = keeperErr(types.CodePermissionDenied,
+		"the text matched a sensitive-data rule and was not recorded",
+		"restate it without identifying values")
 
 	errSessionRequired = keeperErr(types.CodePermissionDenied,
 		"this route requires an agent session established on this connection",
@@ -41,10 +41,6 @@ var (
 	errNoDecision = keeperErr(types.CodeApprovalRefused,
 		"that ticket is no longer waiting for a decision",
 		"re-run the query")
-
-	errWriteGrant = keeperErr(types.CodePermissionDenied,
-		"no grant authorizes a write: a write needs its own approval every time",
-		"approve the ticket")
 
 	// A local request is one-use (R8.7c). A replay is reported as a conflict
 	// with the state the daemon already holds rather than as a refusal, because

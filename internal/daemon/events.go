@@ -34,16 +34,6 @@ type ApprovalEvent struct {
 	Item     *types.ApprovalItem `json:"item,omitzero"`
 }
 
-// GrantEvent narrates the permission list. An allow rule is a standing approval
-// (§9.3), so it travels on the approval topic.
-type GrantEvent struct {
-	Action   string              `json:"action"` // granted, revoked, suspended, expired
-	GrantID  string              `json:"grant_id"`
-	Path     types.PathRef       `json:"path,omitzero"`
-	Lifetime types.GrantLifetime `json:"lifetime,omitzero"`
-	Reason   string              `json:"reason,omitzero"`
-}
-
 // RequestEvent narrates a local request. It deliberately carries no request id:
 // the id is a capability (R8.7c) and the page that needs it already has it in
 // its URL.
@@ -55,7 +45,7 @@ type RequestEvent struct {
 
 // SessionEvent narrates the session list the approval screen attributes to.
 type SessionEvent struct {
-	Action  string        `json:"action"` // opened, intent, closed
+	Action  string        `json:"action"` // opened, closed
 	Session types.Session `json:"session"`
 }
 
