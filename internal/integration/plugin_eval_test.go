@@ -373,10 +373,32 @@ func (s seeded) leaks(text string) map[string]int {
 	out := map[string]int{}
 	for kind, values := range s {
 		for v := range values {
-			if v != "" && strings.Contains(low, v) {
+			if v != "" && containsValue(low, v) {
 				out[kind]++
 			}
 		}
 	}
 	return out
+}
+
+// containsValue finds v in text. A number must stand alone, because a token's hex
+// and a timestamp's digits can hold the same digits by chance.
+func containsValue(text, v string) bool {
+	if strings.IndexFunc(v, func(r rune) bool { return (r < '0' || r > '9') && r != '.' }) >= 0 {
+		return strings.Contains(text, v)
+	}
+	isWord := func(c byte) bool {
+		return c == '.' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z'
+	}
+	for from := 0; ; {
+		i := strings.Index(text[from:], v)
+		if i < 0 {
+			return false
+		}
+		start, end := from+i, from+i+len(v)
+		if (start == 0 || !isWord(text[start-1])) && (end == len(text) || !isWord(text[end])) {
+			return true
+		}
+		from = start + 1
+	}
 }
