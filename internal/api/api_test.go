@@ -674,7 +674,7 @@ func TestHostCarriesSeveralConnections(t *testing.T) {
 
 	var h types.Host
 	b.mustJSON("POST", "/v1/hosts", map[string]any{"name": "prod", "address": "db.internal"}, &h)
-	if h.ID == "" || h.Port != 5432 || h.SSLMode != "prefer" {
+	if h.ID == "" || h.Port != 5432 || h.SSLMode != "require" {
 		t.Fatalf("host defaults not applied: %+v", h)
 	}
 
