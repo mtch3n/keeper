@@ -1,11 +1,17 @@
 package api
 
 import (
+	"context"
+	"crypto/subtle"
 	"embed"
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"github.com/mtchen/keeper/internal/daemon"
 )
+
+const uiCookie = "keeper_ui"
 
 // dist is the built UI. The directory holds a placeholder so this package
 // compiles before web/dist exists; the build copies the real bundle over it.
@@ -52,16 +58,94 @@ func (s *Server) serveApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The UI reads this to fill X-Keeper-CSRF. SameSite=Strict keeps a
-	// cross-site navigation from carrying it, and the Origin check in guard is
-	// what the defence actually rests on: a cookie is the delivery mechanism,
-	// not the boundary.
+	s.setCSRFCookie(w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeFileFS(w, r, sub, "index.html")
+}
+
+// setCSRFCookie hands the page the token to echo in X-Keeper-CSRF.
+// SameSite=Strict keeps a cross-site navigation from carrying it. It is not
+// the login: any process on this machine can fetch it, which is why every human
+// route also needs the keeper_ui cookie.
+func (s *Server) setCSRFCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "keeper_csrf",
 		Value:    s.csrf,
 		Path:     "/",
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+type uiSessionResponse struct {
+	Base   string `json:"base"`
+	Secret string `json:"secret"`
+}
+
+// uiSession is what `keeper ui` prints. It is socket only and refused to an
+// agent session, because the secret opens every human route on loopback.
+func (s *Server) uiSession(context.Context, *reqInfo, http.ResponseWriter, *http.Request) (any, error) {
+	base, secret := s.d.UISession()
+	if base == "" {
+		return nil, daemon.ErrUIOff
+	}
+	return uiSessionResponse{Base: base, Secret: secret}, nil
+}
+
+// claimUISession trades the secret from the link's fragment for the session
+// cookie. The cookie is HttpOnly, so the page's script cannot read it back.
+func (s *Server) claimUISession(_ context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
+	var body struct {
+		Secret string `json:"secret"`
+	}
+	if err := s.readJSON(w, r, &body); err != nil {
+		return nil, err
+	}
+	_, secret := s.d.UISession()
+	if subtle.ConstantTimeCompare([]byte(body.Secret), []byte(secret)) != 1 {
+		return nil, errUISessionNeeded
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     uiCookie,
+		Value:    secret,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	return nil, nil
+}
+
+// authPage reads the secret from the fragment, which no server log and no
+// Referer ever holds, claims the session, and moves on to ?next= when that is a
+// path on this origin.
+const authPage = `<!doctype html>
+<meta charset="utf-8">
+<title>keeper</title>
+<body style="font:16px system-ui;margin:3rem auto;max-width:34rem">
+<p id="m">Opening keeper...</p>
+<script>
+const secret = location.hash.slice(1);
+const next = new URLSearchParams(location.search).get("next") || "/";
+const csrf = (document.cookie.match(/(?:^|;\s*)keeper_csrf=([^;]+)/) || [])[1] || "";
+history.replaceState(null, "", location.pathname);
+fetch("/v1/ui-session/claim", {
+  method: "POST",
+  headers: {"Content-Type": "application/json", "X-Keeper-CSRF": decodeURIComponent(csrf)},
+  body: JSON.stringify({secret}),
+}).then((r) => {
+  if (!r.ok) throw new Error();
+  location.replace(/^\/(?![\/\\])/.test(next) ? next : "/");
+}).catch(() => {
+  document.getElementById("m").textContent = "This link no longer opens keeper. Run keeper ui in your terminal for a new one.";
+});
+</script>
+`
+
+func (s *Server) serveAuth(w http.ResponseWriter, r *http.Request) {
+	if infoOf(r.Context()).surface != surfaceLoopback {
+		s.fail(w, r, errUIOnly)
+		return
+	}
+	s.setCSRFCookie(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	http.ServeFileFS(w, r, sub, "index.html")
+	_, _ = w.Write([]byte(authPage))
 }

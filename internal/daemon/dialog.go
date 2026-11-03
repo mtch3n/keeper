@@ -41,6 +41,9 @@ func dialogMessage(item types.ApprovalItem, profile, link string) string {
 		rows = fmt.Sprintf("rows: about %d", f.EstimatedRows)
 	}
 	lines := []string{sql, head}
+	if link == "" {
+		link = "run `keeper approve` in a terminal"
+	}
 	switch {
 	case item.Write != nil && cut:
 		lines = append(lines, "SQL cut, changed rows: "+link, relations, rows)

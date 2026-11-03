@@ -40,7 +40,7 @@ never goes through the chat.
 **The `keeper-install` skill** gets keeper working and hands back what only a
 person can do: `keeper connect`, `sudo`, and the PATH line.
 
-**The `/keeper:ui` command** prints the dashboard's address.
+**The `/keeper:ui` command** tells you to run `keeper ui` in a terminal, which prints the dashboard link.
 
 **Hooks** run `keeper hook`. At session start they name the profiles. Before a
 tool call they deny raw database clients aimed at a registered host and keeper

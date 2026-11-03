@@ -67,7 +67,16 @@ function query(params?: Record<string, string | number | boolean | undefined>): 
   return '?' + new URLSearchParams(usable.map(([k, v]) => [k, String(v)])).toString()
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** Raised on window when the daemon no longer knows this browser: it restarted,
+ * or the page was opened without `keeper ui`. */
+export const SESSION_NEEDED = 'keeper:session-needed'
+
+/** True for the error that means "run `keeper ui`". */
+export function isSessionNeeded(e: unknown): boolean {
+  return e instanceof KeeperApiError && e.error.code === 'ui_session_needed'
+}
+
+async function request<T>(method: string, path: string, body?: unknown, quiet = false): Promise<T> {
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (MUTATING.has(method)) {
@@ -90,6 +99,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const data = text ? JSON.parse(text) : undefined
 
   if (!response.ok) {
+    if (!quiet && (data as KeeperError | undefined)?.code === 'ui_session_needed') {
+      window.dispatchEvent(new Event(SESSION_NEEDED))
+    }
     // SPEC R6.4a: the only error shape that reaches the UI. If the daemon
     // ever fails to compose one, refuse to fabricate a friendlier message.
     throw new KeeperApiError(
@@ -240,6 +252,8 @@ export interface Settings {
   log_retention_days: number
   /** How long a database's connections stay open with nobody using them. */
   connection_idle_minutes: number
+  /** Absent means the dashboard is on. */
+  ui_off?: boolean
 }
 
 export function getSettings() {
@@ -268,8 +282,10 @@ export function listApprovals() {
   return get<ApprovalItem[]>('/v1/approvals')
 }
 
+/** Quiet: the ticket page probes this before it knows whether the id is a
+ * ticket, and handles a missing session itself. */
 export function getApproval(ticket: string) {
-  return get<ApprovalItem>(`/v1/approvals/${ticket}`)
+  return request<ApprovalItem>('GET', `/v1/approvals/${ticket}`, undefined, true)
 }
 
 export function decideApproval(ticket: string, body: { decision: 'approve' | 'refuse' }) {

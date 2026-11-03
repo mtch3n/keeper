@@ -15,7 +15,7 @@ func (s *Server) routes() {
 	s.handle("POST /v1/tickets/{id}/cancel", accessAgent, s.cancelTicket)
 	s.handle("POST /v1/tickets/{id}/answer", accessAgent, s.answerTicket)
 	s.handle("POST /v1/requests", accessAgent, s.openRequest)
-	s.handle("GET /v1/requests/{id}", accessShared, s.requestState)
+	s.handle("GET /v1/requests/{id}", accessLocalPage, s.requestState)
 
 	// --- description, read-only, either surface --------------------------
 	s.handle("GET /v1/connections", accessShared, s.listConnections)
@@ -50,11 +50,14 @@ func (s *Server) routes() {
 	s.handle("POST /v1/daemon/shutdown", accessHuman, s.shutdown)
 
 	// The vault opens itself and never locks, so these two are all that is left
-	// of its surface: take a copy, restore one, and change the key it is under. All are
+	// of its surface, and both are socket only, because the loopback port is open to every process on the machine: take a copy, restore one, and change the key it is under. All are
 	// human-only — an agent that could export the vault would be carrying off
 	// every connection keeper exists to stand in front of.
-	s.handle("POST /v1/vault/export", accessHuman, s.exportVault)
-	s.handle("POST /v1/vault/import", accessHuman, s.importVault)
+	s.handle("POST /v1/vault/export", accessCLI, s.exportVault)
+	s.handle("POST /v1/vault/import", accessCLI, s.importVault)
+
+	s.handle("GET /v1/ui-session", accessCLI, s.uiSession)
+	s.handle("POST /v1/ui-session/claim", accessLoopback, s.claimUISession)
 
 	s.raw("GET /v1/events", accessHuman, s.events)
 
@@ -71,6 +74,7 @@ func (s *Server) routes() {
 	}
 
 	// --- the embedded UI, loopback ---------------------------------------
+	s.raw("GET /auth", accessPublic, s.serveAuth)
 	s.raw("GET /r/{request_id}", accessPublic, s.serveApp)
 	s.raw("GET /", accessPublic, s.serveApp)
 }

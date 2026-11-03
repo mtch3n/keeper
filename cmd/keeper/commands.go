@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -477,6 +478,11 @@ func runDoctor(args []string) error {
 	// keeperd opens the vault before it serves and exits if it cannot, so a
 	// daemon that answered this call has an open vault by construction.
 	fmt.Printf("vault         open, key source %s\n", rep.KeySource)
+	if rep.UIBase == "" {
+		fmt.Printf("ui            off; run `keeper settings set ui on` to turn it on\n")
+	} else {
+		fmt.Printf("ui            on, %s\n", rep.UIBase)
+	}
 	fmt.Printf("activity log  encrypted with the vault's key, kept %d day(s)\n", rep.LogRetentionDays)
 	fmt.Printf("databases     connected only when needed; closed after %d idle minute(s)\n", rep.ConnectionIdleMinutes)
 	if rep.LegacyAuditLog != "" {
@@ -683,15 +689,69 @@ func runUI(args []string) error {
 	}
 	defer cli.Close()
 
-	rep, err := cli.GetDoctor(ctx)
+	sess, err := cli.GetUISession(ctx)
 	if err != nil {
 		return err
 	}
-	if rep.UIBase == "" {
-		return fmt.Errorf("ui: the daemon is not serving a UI")
-	}
-	fmt.Println(rep.UIBase)
+	fmt.Println(uiURL(sess, fs.Arg(0)))
 	return nil
+}
+
+// uiURL is the link that opens the dashboard for the person who runs the
+// command. The secret rides in the fragment, which no server log and no Referer
+// ever holds; next, when given, is the page to land on.
+func uiURL(s *client.UISession, next string) string {
+	q := ""
+	if strings.HasPrefix(next, "/") {
+		q = "?next=" + url.QueryEscape(next)
+	}
+	return s.Base + "/auth" + q + "#" + s.Secret
+}
+
+// ---------------------------------------------------------------- settings ---
+
+func runSettings(args []string) error {
+	fs := flag.NewFlagSet("settings", flag.ContinueOnError)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	cli, err := connectDaemon(ctx)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	rest := fs.Args()
+	if len(rest) == 0 {
+		st, err := cli.GetSettings(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("ui            %s\n", onOff(!st.UIOff))
+		fmt.Printf("log retention %d day(s)\n", st.LogRetentionDays)
+		fmt.Printf("idle          %d minute(s)\n", st.ConnectionIdleMinutes)
+		return nil
+	}
+	if len(rest) != 3 || rest[0] != "set" || rest[1] != "ui" || (rest[2] != "on" && rest[2] != "off") {
+		return fmt.Errorf("settings: usage: keeper settings [set ui on|off]")
+	}
+	if err := cli.SetUIOff(ctx, rest[2] == "off"); err != nil {
+		return err
+	}
+	if rest[2] == "off" {
+		fmt.Println("ui off: the dashboard port is closed, and any open page stopped working. Approve in the terminal with `keeper approve`.")
+	} else {
+		fmt.Println("ui on: run `keeper ui` for the link.")
+	}
+	return nil
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 // ---------------------------------------------------------------- shared ---

@@ -42,3 +42,15 @@ func TestDesktopNotifierIgnoresAFailureAndAnUnknownSystem(t *testing.T) {
 		t.Error("an unknown system ran a command")
 	}
 }
+
+func TestDesktopNotifierWithNoLinkSendsOnlyTheTitle(t *testing.T) {
+	var got recordedRun
+	n := desktopNotifier{goos: "linux", run: func(_ context.Context, name string, args ...string) error {
+		got = recordedRun{name, args}
+		return nil
+	}}
+	n.Notify(t.Context(), "keeper is waiting", "")
+	if got.name != "notify-send" || len(got.args) != 2 {
+		t.Errorf("ran %v", got)
+	}
+}

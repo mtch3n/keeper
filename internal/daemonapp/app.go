@@ -120,24 +120,6 @@ func Run(args []string) int {
 	}
 	defer os.Remove(sock)
 
-	// The preferred port first, then any free one. A fixed port is convenient —
-	// the URL is the same every day — and it must not be a requirement: a second
-	// instance, or anything else already on 7773, would otherwise stop the daemon
-	// starting at all. `keeper ui` reads the address back from doctor, so a
-	// different port costs nothing.
-	uiLn, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(*uiPort)))
-	if err != nil && *uiPort == defaultUIPort {
-		logger.Info("preferred UI port is taken; taking any free one", "port", *uiPort)
-		uiLn, err = net.Listen("tcp", "127.0.0.1:0")
-	}
-	if err != nil {
-		logger.Error("loopback listener", "err", err)
-		socketLn.Close()
-		return 1
-	}
-	port := uiLn.Addr().(*net.TCPAddr).Port
-	base := "http://127.0.0.1:" + strconv.Itoa(port)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -145,39 +127,34 @@ func Run(args []string) int {
 	if err != nil {
 		logger.Error("dependencies", "err", err)
 		socketLn.Close()
-		uiLn.Close()
 		return 1
 	}
 	defer closeDeps()
 
+	errs := make(chan error, 2)
+	ui := &uiControl{want: *uiPort, errs: errs, logger: logger}
+	deps.UI = ui
 	d, err := daemon.New(daemon.Config{
 		Version:  version,
-		UIBase:   base,
 		Logger:   logger,
 		IdleExit: *idleExit,
 	}, deps)
 	if err != nil {
 		logger.Error("daemon", "err", err)
 		socketLn.Close()
-		uiLn.Close()
 		return 1
 	}
 	defer d.Close()
 
-	srv := api.New(d, api.Options{LoopbackPort: port, Logger: logger})
+	srv := api.New(d, api.Options{Logger: logger})
+	ui.api, ui.d = srv, d
+	defer ui.Stop()
 
 	// ConnContext and ConnState are what bind a session to its connection
 	// (R3.4e). Without them a session outlives the client that opened it, and
 	// its tickets, and reverse map outlive it too.
 	socketSrv := &http.Server{
 		Handler:           srv.Socket(),
-		ConnContext:       d.ConnContext,
-		ConnState:         d.ConnState,
-		ReadHeaderTimeout: 10 * time.Second,
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
-	}
-	uiSrv := &http.Server{
-		Handler:           srv.Loopback(),
 		ConnContext:       d.ConnContext,
 		ConnState:         d.ConnState,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -214,18 +191,16 @@ func Run(args []string) int {
 	// R4.3: the source in use is a reported fact, and since it is chosen where
 	// nobody is watching, this line is the only place it is stated at the moment
 	// it is chosen.
-	logger.Info("keeperd listening", "version", version, "socket", sock, "ui", base,
+	if err := d.StartUI(ctx); err != nil {
+		logger.Error("loopback listener", "err", err)
+		return 1
+	}
+	logger.Info("keeperd listening", "version", version, "socket", sock, "ui", d.UIBase(),
 		"key source", keySource)
 
 	var wg sync.WaitGroup
-	errs := make(chan error, 2)
 	wg.Go(func() {
 		if err := socketSrv.Serve(socketLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errs <- err
-		}
-	})
-	wg.Go(func() {
-		if err := uiSrv.Serve(uiLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errs <- err
 		}
 	})
@@ -247,7 +222,6 @@ func Run(args []string) int {
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	_ = socketSrv.Shutdown(shutCtx)
-	_ = uiSrv.Shutdown(shutCtx)
 	wg.Wait()
 	return code
 }

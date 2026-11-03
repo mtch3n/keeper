@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mtchen/keeper/internal/daemon"
@@ -54,6 +55,7 @@ type Server struct {
 	ui   http.Handler
 
 	maxBody int64
+	mu      sync.RWMutex
 	hosts   []string
 	origins []string
 }
@@ -86,6 +88,12 @@ const (
 	accessLoopback
 	// accessPublic is the version handshake and the embedded UI.
 	accessPublic
+	// accessCLI is accessHuman on the socket only. The dashboard secret and the
+	// vault copy are not for a process that merely reaches the loopback port.
+	accessCLI
+	// accessLocalPage is the description a local input page reads by its
+	// capability id. It holds the person's session: it carries no value.
+	accessLocalPage
 )
 
 type ctxKey struct{}
@@ -119,21 +127,31 @@ func New(d *daemon.Daemon, opts Options) *Server {
 	if opts.CSRFToken == "" {
 		opts.CSRFToken = rand.Text()
 	}
-	port := strconv.Itoa(opts.LoopbackPort)
 	s := &Server{
 		d:       d,
 		log:     opts.Logger,
 		csrf:    opts.CSRFToken,
 		mux:     http.NewServeMux(),
 		maxBody: opts.MaxBody,
-		hosts:   []string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port},
 	}
-	for _, h := range s.hosts {
-		s.origins = append(s.origins, "http://"+h)
-	}
+	s.SetLoopbackPort(opts.LoopbackPort)
 	s.ui = s.uiHandler()
 	s.routes()
 	return s
+}
+
+// SetLoopbackPort changes the port Host and Origin must name, for a listener
+// that was stopped and bound again.
+func (s *Server) SetLoopbackPort(p int) {
+	port := strconv.Itoa(p)
+	hosts := []string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port}
+	origins := make([]string, len(hosts))
+	for i, h := range hosts {
+		origins[i] = "http://" + h
+	}
+	s.mu.Lock()
+	s.hosts, s.origins = hosts, origins
+	s.mu.Unlock()
 }
 
 // Socket is the handler for the unix socket: agents and the CLI.
@@ -203,6 +221,8 @@ func (s *Server) allowedHost(host string) bool {
 	if host == "" {
 		return false
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, h := range s.hosts {
 		if strings.EqualFold(host, h) {
 			return true
@@ -219,6 +239,8 @@ func (s *Server) allowedOrigin(origin string) bool {
 	if err != nil || u.Scheme != "http" {
 		return false
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, o := range s.origins {
 		if strings.EqualFold(origin, o) {
 			return true
@@ -304,6 +326,25 @@ func (s *Server) authorize(rq *reqInfo, acc access, r *http.Request) error {
 		if agentConn || claimsSession {
 			return errHumanOnly
 		}
+		return s.needSession(rq, r)
+
+	case accessCLI:
+		if agentConn || claimsSession {
+			return errHumanOnly
+		}
+		if rq.surface != surfaceSocket {
+			return errCLIOnly
+		}
+		return nil
+
+	case accessLocalPage:
+		if rq.surface == surfaceSocket && claimsSession {
+			sess, err := s.d.SessionFor(r.Context(), r.Header.Get("X-Keeper-Session"))
+			if err != nil {
+				return errSessionNeeded
+			}
+			rq.session = sess
+		}
 		return nil
 
 	case accessLoopback:
@@ -313,6 +354,9 @@ func (s *Server) authorize(rq *reqInfo, acc access, r *http.Request) error {
 		return nil
 
 	case accessShared:
+		if err := s.needSession(rq, r); err != nil {
+			return err
+		}
 		if rq.surface == surfaceSocket && claimsSession {
 			sess, err := s.d.SessionFor(r.Context(), r.Header.Get("X-Keeper-Session"))
 			if err != nil {
@@ -325,6 +369,21 @@ func (s *Server) authorize(rq *reqInfo, acc access, r *http.Request) error {
 	default:
 		return errHumanOnly
 	}
+}
+
+// needSession is the loopback listener's authentication. Origin, Host and CSRF
+// only keep a browser on another site out: a process on this machine passes all
+// three. The cookie is what only `keeper ui` hands out.
+func (s *Server) needSession(rq *reqInfo, r *http.Request) error {
+	if rq.surface != surfaceLoopback {
+		return nil
+	}
+	c, err := r.Cookie(uiCookie)
+	_, secret := s.d.UISession()
+	if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(secret)) != 1 {
+		return errUISessionNeeded
+	}
+	return nil
 }
 
 func surfaceName(sf surface) string {

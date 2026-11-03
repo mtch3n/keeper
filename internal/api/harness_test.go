@@ -146,6 +146,8 @@ type rig struct {
 	red   *fakeRedactor
 	alog  *fakeAuditLog
 	pipe  *fakePipeline
+	notes *notes
+	uictl *fakeUI
 
 	sockLn  *pipeListener
 	sockSrv *http.Server
@@ -166,6 +168,12 @@ func newRig(t *testing.T) *rig {
 // newRigWith is newRig with the daemon's tuning given, for tests of its timer.
 func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 	t.Helper()
+	return newRigSettings(t, cfg, nil)
+}
+
+// newRigSettings starts the daemon over a vault that already holds settings.
+func newRigSettings(t *testing.T, cfg daemon.Config, settings *types.Settings) *rig {
+	t.Helper()
 
 	conn := &types.Connection{
 		ID: "c1", Name: "prod", Engine: "postgres", Database: "app", Role: "app_ro",
@@ -179,6 +187,8 @@ func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 		red:   newRedactor(),
 		alog:  &fakeAuditLog{},
 		pipe:  &fakePipeline{},
+		notes: &notes{},
+		uictl: &fakeUI{},
 		conn:  conn,
 		open:  map[string]func() error{},
 	}
@@ -199,11 +209,17 @@ func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 		Audit:        r.alog,
 		Detector:     fakeDetector{},
 		Pipeline:     r.pipe,
+		Notifier:     r.notes,
+		UI:           r.uictl,
 	})
 	if err != nil {
 		t.Fatalf("daemon.New: %v", err)
 	}
 	r.d = d
+	r.vault.settings = settings
+	if err := d.StartUI(t.Context()); err != nil {
+		t.Fatalf("StartUI: %v", err)
+	}
 
 	// The loopback listener first, so the server knows the port it must accept
 	// in Host and Origin.
@@ -267,14 +283,66 @@ func (r *rig) agent() *client {
 
 func (c *client) sessionID() string { return c.header.Get("X-Keeper-Session") }
 
-// browser talks to the loopback listener with a good Origin and the CSRF token.
-func (r *rig) browser() *client {
+// visitor talks to the loopback listener with a good Origin and the CSRF token
+// and no dashboard session: any process on this machine can do as much.
+func (r *rig) visitor() *client {
 	c := &client{
-		t: r.t, http: r.ui.Client(), tr: nil, base: r.ui.URL, header: http.Header{},
+		t: r.t, http: &http.Client{Timeout: 5 * time.Second}, tr: nil, base: r.ui.URL, header: http.Header{},
 	}
 	c.header.Set("Origin", r.uiOrig)
 	c.header.Set("X-Keeper-CSRF", testCSRF)
 	return c
+}
+
+// browser is a visitor that holds the dashboard session `keeper ui` opens.
+func (r *rig) browser() *client {
+	c := r.visitor()
+	_, secret := r.d.UISession()
+	c.header.Set("Cookie", "keeper_ui="+secret)
+	return c
+}
+
+// fakeUI stands for the loopback listener's lifecycle.
+type fakeUI struct {
+	mu            sync.Mutex
+	starts, stops int
+}
+
+func (u *fakeUI) Start() (string, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.starts++
+	return "http://127.0.0.1:7774", nil
+}
+
+func (u *fakeUI) Stop() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.stops++
+}
+
+func (u *fakeUI) counts() (starts, stops int) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.starts, u.stops
+}
+
+// notes records what the desktop notifier was told.
+type notes struct {
+	mu    sync.Mutex
+	links []string
+}
+
+func (n *notes) Notify(_ context.Context, _, link string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.links = append(n.links, link)
+}
+
+func (n *notes) seen() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.links...)
 }
 
 func (c *client) do(method, path string, body any) (*http.Response, []byte) {

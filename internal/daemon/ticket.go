@@ -87,7 +87,9 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 		item.Facts = *facts
 	}
 
-	tk.t.URL = d.cfg.UIBase + "/r/" + tk.t.ID
+	if base := d.UIBase(); base != "" {
+		tk.t.URL = base + "/r/" + tk.t.ID
+	}
 	tk.t.Write = write
 	tk.t.Prompt = dialogMessage(item, profile, tk.t.URL)
 
@@ -97,7 +99,9 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 	d.mu.Unlock()
 
 	if d.deps.Notifier != nil {
-		d.wg.Go(func() { d.deps.Notifier.Notify(d.ctx, "keeper: a statement is waiting for you", tk.t.URL) })
+		d.wg.Go(func() {
+			d.deps.Notifier.Notify(d.ctx, "keeper: a statement is waiting for you", d.uiLink("/r/"+tk.t.ID))
+		})
 	}
 
 	d.hub.Publish(Event{Type: EventApproval, Data: ApprovalEvent{

@@ -17,7 +17,10 @@ import (
 
 func escalatingRig(t *testing.T, rels ...types.RelationRef) *rig {
 	t.Helper()
-	r := newRig(t)
+	return escalate(newRig(t), rels...)
+}
+
+func escalate(r *rig, rels ...types.RelationRef) *rig {
 	if len(rels) == 0 {
 		rels = []types.RelationRef{{Schema: "public", Relation: "users"}}
 	}
@@ -542,6 +545,7 @@ func TestEventStreamCarriesNoRequestID(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Origin", r.uiOrig)
+	req.Header.Set("Cookie", b.header.Get("Cookie"))
 	resp, err := b.http.Do(req)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)

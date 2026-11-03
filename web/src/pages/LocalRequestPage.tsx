@@ -12,6 +12,7 @@ import {
   decideApproval,
   getApproval,
   getLocalRequest,
+  isSessionNeeded,
   listConnections,
   submitLocalRequest,
   type LocalRequestView,
@@ -207,16 +208,22 @@ function InputRequest({
  */
 export function LocalRequestPage() {
   const { requestId } = useParams<{ requestId: string }>()
-  const [item, setItem] = useState<ApprovalItem | null | undefined>(undefined)
+  const [item, setItem] = useState<ApprovalItem | null | 'no-session' | undefined>(undefined)
 
   useEffect(() => {
     if (!requestId) return
     getApproval(requestId)
       .then((i) => setItem(i?.ticket_id ? i : null))
-      .catch(() => setItem(null))
+      .catch(async (e) => {
+        if (!isSessionNeeded(e)) return setItem(null)
+        // Without the dashboard session only an input page, which its id
+        // alone opens, can be shown; a ticket needs the person.
+        setItem(await getLocalRequest(requestId).then(() => null, () => 'no-session'))
+      })
   }, [requestId])
 
   if (item === undefined) return <Page><Skeleton className="h-64 w-full" /></Page>
+  if (item === 'no-session') return <SessionNeeded command={`keeper ui /r/${requestId}`} />
   if (item === null) return <RequestPage />
   return <TicketPage item={item} />
 }
@@ -261,6 +268,23 @@ function TicketPage({ item }: { item: ApprovalItem }) {
         busy={busy}
         onDecide={(d) => void decide(d)}
       />
+    </Page>
+  )
+}
+
+/** Shown wherever the daemon does not know this browser. The command is the
+ * whole instruction: the person's terminal is the only place a session starts. */
+export function SessionNeeded({ command = 'keeper ui' }: { command?: string }) {
+  return (
+    <Page>
+      <h1 className="text-title">Open keeper from your terminal</h1>
+      <p className="text-sm">Run keeper ui in your terminal, then open the link it prints.</p>
+      <p>
+        <code className="text-meta">{command}</code>
+      </p>
+      <p className="text-meta text-muted-foreground">
+        The link works for as long as the daemon runs. A restart of the daemon needs a new one.
+      </p>
     </Page>
   )
 }
