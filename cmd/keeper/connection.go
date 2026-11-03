@@ -66,7 +66,7 @@ func connectionAdd(ctx context.Context, args []string) error {
 	database := fs.String("database", "", "database name (required)")
 	user := fs.String("user", "", "the profile's login role (required)")
 	writes := fs.String("writes", "off", "off | approve: whether this profile's sessions may write; every write waits for approval")
-	catalogPath := fs.String("catalog", "", "catalog.yaml path (default .keeper/catalog.yaml, SPEC R5.2a)")
+	catalogPath := fs.String("catalog", "", "catalog.yaml path (default: this profile's own file in keeper's state directory)")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
 		return err

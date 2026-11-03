@@ -236,6 +236,7 @@ type QueryOut struct {
 	Transforms map[string]types.Transform `json:"transforms,omitzero"`
 	Tier       types.Tier                 `json:"tier,omitzero"`
 	AuditID    string                     `json:"audit_id,omitzero"`
+	Hint       string                     `json:"hint,omitzero"`
 
 	Ticket string            `json:"ticket,omitzero"`
 	State  types.TicketState `json:"state,omitzero"`
@@ -255,7 +256,7 @@ func (h *daemonHolder) query(ctx context.Context, req *mcp.CallToolRequest, in Q
 		r := outcome.Result
 		return nil, QueryOut{
 			Rows: r.Rows, Columns: r.Columns, RowCount: r.RowCount, Truncated: r.Truncated,
-			Transforms: r.Transforms, Tier: r.Tier, AuditID: r.AuditID,
+			Transforms: r.Transforms, Tier: r.Tier, AuditID: r.AuditID, Hint: r.Hint,
 		}, nil
 	}
 	t := outcome.Ticket
@@ -297,6 +298,7 @@ type GetResultOut struct {
 	State      types.TicketState          `json:"state"`
 	Rows       [][]any                    `json:"rows,omitzero"`
 	Transforms map[string]types.Transform `json:"transforms,omitzero"`
+	Hint       string                     `json:"hint,omitzero"`
 	Error      *types.Error               `json:"error,omitzero"`
 }
 
@@ -313,6 +315,7 @@ func (h *daemonHolder) getResult(ctx context.Context, req *mcp.CallToolRequest, 
 	if res.Result != nil {
 		out.Rows = res.Result.Rows
 		out.Transforms = res.Result.Transforms
+		out.Hint = res.Result.Hint
 	}
 	return nil, out, nil
 }

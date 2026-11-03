@@ -148,7 +148,8 @@ type Connection struct {
 	Role     string `json:"role"` // exposed: the role is the username, deliberately
 	Version  string `json:"version,omitzero"`
 
-	// CatalogPath defaults to .keeper/catalog.yaml in the project repo. SPEC R5.2a.
+	// CatalogPath is empty for the profile's own file in keeper's state directory;
+	// a path shared by several profiles is always explicit.
 	CatalogPath string `json:"catalog_path"`
 
 	Mode   Mode   `json:"mode"`
