@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
@@ -9,18 +8,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   getCatalog,
-  getCatalogGrantStatements,
   initCatalog,
   updateCatalogColumns,
   type InitProposal,
 } from '@/lib/api'
-import type { ColumnPolicy, PartialForm, Policy } from '@/lib/types'
+import type { ColumnPolicy, Policy } from '@/lib/types'
 
-const POLICIES: Policy[] = ['allow', 'scan', 'partial', 'token', 'redact', 'drop']
-const FORMS: PartialForm[] = ['email_domain', 'card_bin_last4', 'phone_country_area', 'ip_network']
+const POLICIES: Policy[] = ['allow', 'token', 'redact', 'scan']
 
 /**
- * One connection's catalog: the classification workhorse (SPEC §5, UI.md §2.3).
+ * One connection's catalog: the classification workhorse.
  *
  * It is a table, not a grid of cards: it shows hundreds of columns and is
  * designed for bulk operation over them rather than one-at-a-time editing. Cards
@@ -34,7 +31,6 @@ export function CatalogTab({ connId }: { connId: string }) {
   const [entries, setEntries] = useState<Record<string, ColumnPolicy>>({})
   const [unclassified, setUnclassified] = useState<string[]>([])
   const [proposal, setProposal] = useState<InitProposal | null>(null)
-  const [grants, setGrants] = useState<string[] | null>(null)
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -100,19 +96,6 @@ export function CatalogTab({ connId }: { connId: string }) {
         >
           Propose classifications
         </Button>
-        <Button
-          variant="outline"
-          disabled={busy}
-          onClick={async () => {
-            try {
-              setGrants((await getCatalogGrantStatements(connId)).statements)
-            } catch (e) {
-              setError(e instanceof Error ? e.message : String(e))
-            }
-          }}
-        >
-          Suggested grants
-        </Button>
       </div>
 
       {unclassified.length > 0 ? (
@@ -124,14 +107,6 @@ export function CatalogTab({ connId }: { connId: string }) {
 
       {proposal ? <Proposal proposal={proposal} onApply={put} busy={busy} /> : null}
 
-      {grants ? (
-        <section className="flex flex-col gap-2">
-          <h2 className="text-heading">Suggested grants</h2>
-          <p className="text-meta text-muted-foreground">Revokes the role's access to every `drop` column.</p>
-          <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{grants.join('\n')}</pre>
-        </section>
-      ) : null}
-
       <Separator />
 
       <Table>
@@ -140,8 +115,6 @@ export function CatalogTab({ connId }: { connId: string }) {
             <TableHead>Column</TableHead>
             <TableHead>Policy</TableHead>
             <TableHead>Namespace</TableHead>
-            <TableHead>Form</TableHead>
-            <TableHead>Name</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -187,9 +160,6 @@ function CatalogRow({
     setProblem(null)
     if (namespace !== policy.namespace) void onChange(columnKey, { ...policy, namespace })
   }
-  const set = (patch: Partial<ColumnPolicy>) => {
-    if (policy) void onChange(columnKey, { ...policy, ...patch })
-  }
 
   return (
     <TableRow>
@@ -224,38 +194,6 @@ function CatalogRow({
         ) : (
           <span className="text-meta text-muted-foreground">—</span>
         )}
-      </TableCell>
-      <TableCell>
-        {policy?.policy === 'partial' ? (
-          <Select
-            value={policy?.form ?? ''}
-            onValueChange={(v) => set({ form: v as PartialForm })}
-            disabled={busy}
-          >
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="choose a form" />
-            </SelectTrigger>
-            <SelectContent>
-              {FORMS.map((f) => (
-                <SelectItem key={f} value={f}>
-                  {f}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <span className="text-meta text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell>
-        <label className="flex items-center gap-2 text-meta">
-          <Checkbox
-            checked={policy?.hide_name ?? false}
-            disabled={busy}
-            onCheckedChange={(v) => set({ hide_name: v === true })}
-          />
-          hidden
-        </label>
       </TableCell>
     </TableRow>
   )

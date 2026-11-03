@@ -2,13 +2,13 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test } from 'vitest'
 
-import { detail, fakeDaemon, NEVER, renderApp, summary } from './daemon'
+import { detail, fakeDaemon, renderApp, summary } from './daemon'
 
 function catalogOf(unclassified: string[], entries: Record<string, unknown> = {}) {
   const d = fakeDaemon()
   const saved: unknown[] = []
   d.on('GET', '/v1/connections', () => [200, [summary('c1', 'one')]])
-  d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one', NEVER, [])])
+  d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one')])
   d.on('GET', '/v1/catalog/c1', () => [
     200,
     { connection_id: 'c1', entries, unclassified, unclassified_count: unclassified.length },
