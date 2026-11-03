@@ -204,31 +204,7 @@ export interface ActivityDetail extends AuditRecord {
 export interface Session {
   id: string
   client: ClientInfo
-  intent?: string
   connected_at: string
-}
-
-export type RequestKind = 'input' | 'authorization'
-
-export interface PathRef {
-  connection_id: string
-  relation: RelationRef
-}
-
-export type GrantLifetime = 'session' | 'standing'
-
-export interface Grant {
-  id: string
-  path: PathRef
-  lifetime: GrantLifetime
-  row_ceiling: number
-  created_by: string
-  created_at: string
-  expires_at?: string
-  last_used_at?: string
-  uses: number
-  suspended?: boolean
-  reason?: string
 }
 
 export interface ApprovalFacts {

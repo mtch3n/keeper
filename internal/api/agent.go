@@ -93,6 +93,8 @@ type ticketResponse struct {
 	State   types.TicketState  `json:"state"`
 	Reason  string             `json:"reason,omitzero"`
 	AuditID string             `json:"audit_id,omitzero"`
+	URL     string             `json:"url,omitzero"`
+	Write   bool               `json:"write,omitzero"`
 	Result  *types.QueryResult `json:"result,omitzero"`
 	Error   *types.Error       `json:"error,omitzero"`
 }
@@ -104,16 +106,20 @@ func (s *Server) ticket(ctx context.Context, rq *reqInfo, _ http.ResponseWriter,
 	if err != nil {
 		return nil, err
 	}
+	return s.ticketOut(v), nil
+}
+
+func (s *Server) ticketOut(v *daemon.TicketView) ticketResponse {
 	out := ticketResponse{
 		Ticket: v.Ticket.ID, State: v.Ticket.State,
-		Reason: v.Ticket.Reason, AuditID: v.Ticket.AuditID, Result: v.Result,
+		Reason: v.Ticket.Reason, AuditID: v.Ticket.AuditID, URL: v.Ticket.URL, Write: v.Ticket.Write, Result: v.Result,
 	}
 	if v.Error != nil {
 		// The ticket's failure is converted here like every other error, and not
 		// where it was produced.
 		out.Error, _ = asError(v.Error)
 	}
-	return out, nil
+	return out
 }
 
 // cancelTicket withdraws the session's own pending request.
@@ -123,6 +129,27 @@ func (s *Server) cancelTicket(ctx context.Context, rq *reqInfo, _ http.ResponseW
 		return nil, err
 	}
 	return ticketResponse{Ticket: v.Ticket.ID, State: v.Ticket.State, Reason: v.Ticket.Reason, AuditID: v.Ticket.AuditID}, nil
+}
+
+type answerRequest struct {
+	Decision string `json:"decision"`
+}
+
+// answerTicket is the dialog's answer. It is bound to the session that owns the
+// ticket, and a ticket that is not this session's is reported as unknown.
+func (s *Server) answerTicket(ctx context.Context, rq *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
+	var req answerRequest
+	if err := s.readJSON(w, r, &req); err != nil {
+		return nil, err
+	}
+	if req.Decision != "approve" && req.Decision != "refuse" {
+		return nil, &types.ValidationError{Field: "decision", Reason: "must be approve or refuse"}
+	}
+	v, err := s.d.AnswerTicket(ctx, rq.session, r.PathValue("id"), req.Decision == "approve")
+	if err != nil {
+		return nil, err
+	}
+	return s.ticketOut(v), nil
 }
 
 type localRequestRequest struct {

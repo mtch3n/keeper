@@ -122,43 +122,6 @@ describe('the Inbox', () => {
   })
 })
 
-describe('notifications', () => {
-  function stubNotifications() {
-    const shown: string[] = []
-    class N {
-      static permission = 'granted'
-      static requestPermission = async () => 'granted'
-      constructor(title: string) {
-        shown.push(title)
-      }
-      close() {}
-    }
-    vi.stubGlobal('Notification', N)
-    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
-    return shown
-  }
-
-  test('SHELL-C8 a new Inbox item raises a notification when the page is hidden', async () => {
-    const shown = stubNotifications()
-    daemon()
-    renderApp('/connections')
-    await bar()
-    emit('approval', { action: 'queued', ticket_id: 't1', item: pending() })
-    await waitFor(() => expect(shown).toHaveLength(1))
-  })
-
-  test('SHELL-C9 notifications turned off raise nothing', async () => {
-    const shown = stubNotifications()
-    localStorage.setItem('keeper.notifications', 'off')
-    daemon()
-    renderApp('/connections')
-    await bar()
-    emit('approval', { action: 'queued', ticket_id: 't1', item: pending() })
-    await new Promise((r) => setTimeout(r, 50))
-    expect(shown).toHaveLength(0)
-  })
-})
-
 describe('Activity and Settings', () => {
   const rec = (id: string, connection: string) => ({ id, at: '2026-10-06T12:00:00Z', session_id: 's1', client: s1.client, connection, statement: 'SELECT 1', statement_type: 'SELECT', row_count: 1, duration: 0 })
 

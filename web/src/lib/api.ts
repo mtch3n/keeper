@@ -15,7 +15,6 @@
  */
 
 import type {
-  ApprovalFacts,
   Degradation,
   ApprovalItem,
   ActivityDetail,
@@ -23,11 +22,9 @@ import type {
   ColumnPolicy,
   Connection,
   ConnectionSummary,
-  Grant,
   Host,
   HostView,
   SSLMode,
-  GrantLifetime,
   KeeperError,
   KeeperEvent,
   KeeperEventKind,
@@ -37,8 +34,6 @@ import type {
   Writes,
   Detection,
   Session,
-  PathRef,
-  RequestKind,
 } from '@/lib/types'
 
 // ── transport ────────────────────────────────────────────────────────────
@@ -151,20 +146,13 @@ export function getConnection(id: string) {
  * without a linked Go type. */
 export interface LocalRequestView {
   request_id: string
-  kind: RequestKind
+  kind: 'input'
   connection_id: string
   namespace?: string
   purpose?: string
-  path?: PathRef
-  facts?: ApprovalFacts
-  sql?: string
   session: Session
   state: string
   expires_at: string
-  mode?: string
-  /** The path was already granted, in another window a moment ago. */
-  already_granted?: boolean
-  grants?: Grant[]
 }
 
 export function getLocalRequest(id: string, waitMs?: number) {
@@ -180,19 +168,7 @@ export function submitLocalRequest(id: string, body: { value: string; namespace?
   return post<{ kind: string; state: string; delivered: boolean }>(`/v1/requests/${id}/submit`, body)
 }
 
-/**
- * Answer an authorization request. Nothing is returned to the waiting session:
- * no token is minted and the session gains no value it did not have. The reply
- * says what was granted, to whom and for how long.
- */
-export function decideLocalRequest(
-  id: string,
-  body: { decision: 'grant' | 'cancel'; lifetime?: GrantLifetime; row_ceiling?: number; actor?: string },
-) {
-  return post<{ kind: string; state: string; granted?: Grant[] }>(`/v1/requests/${id}/decide`, body)
-}
-
-/** Cancel either kind, from the page's Cancel. */
+/** Cancel the request, from the page's Cancel. */
 export function cancelLocalRequest(id: string) {
   return post<{ kind: string; state: string }>(`/v1/requests/${id}/cancel`, {})
 }
@@ -247,10 +223,10 @@ export function listRequests() {
   return get<PendingRequest[]>('/v1/requests')
 }
 
-/** One input or authorization request waiting on a human. */
+/** One input request waiting on a human. */
 export interface PendingRequest {
   request_id: string
-  kind: RequestKind
+  kind: 'input'
   connection_id: string
   namespace?: string
   purpose?: string
@@ -290,6 +266,10 @@ export function testConnection(id: string) {
 
 export function listApprovals() {
   return get<ApprovalItem[]>('/v1/approvals')
+}
+
+export function getApproval(ticket: string) {
+  return get<ApprovalItem>(`/v1/approvals/${ticket}`)
 }
 
 export function decideApproval(ticket: string, body: { decision: 'approve' | 'refuse' }) {

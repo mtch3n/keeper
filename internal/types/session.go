@@ -56,6 +56,11 @@ type Ticket struct {
 	Reason       string      `json:"reason,omitzero"`
 	AuditID      string      `json:"audit_id"`
 	CreatedAt    time.Time   `json:"created_at"`
+	// URL is the ticket's local page, and Prompt the text of its approval dialog:
+	// facts and SQL, never a row or a resolved value. Write says which dialog.
+	URL    string `json:"url,omitzero"`
+	Prompt string `json:"prompt,omitzero"`
+	Write  bool   `json:"write,omitzero"`
 	// Preview is the one rollback run of a write; it stays on the daemon's side.
 	Preview *WritePreview `json:"-"`
 }

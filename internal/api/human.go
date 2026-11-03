@@ -97,6 +97,12 @@ func (s *Server) listApprovals(_ context.Context, _ *reqInfo, _ http.ResponseWri
 	return s.d.Approvals(), nil
 }
 
+// getApproval is one waiting ticket for its local page. A ticket that is settled
+// or unknown is not in the queue, and both are reported as unknown.
+func (s *Server) getApproval(_ context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
+	return s.d.Approval(r.PathValue("ticket"))
+}
+
 type decideRequest struct {
 	Decision string `json:"decision"`
 	Actor    string `json:"actor,omitzero"`

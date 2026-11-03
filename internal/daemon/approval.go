@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/mtchen/keeper/internal/types"
@@ -132,6 +133,7 @@ func (d *Daemon) startApproved(tk *ticket) {
 		ctx, cancel := context.WithTimeout(d.ctx, d.cfg.ExecuteTimeout)
 		defer cancel()
 		auth := "ticket:" + tk.t.ID
+		ctx = context.WithValue(ctx, approverKey{}, tk.approver)
 		info := s.Info()
 
 		var res *types.QueryResult
@@ -195,4 +197,49 @@ var decisionCode = map[types.Decision]types.Code{
 	types.DecisionRefused:   types.CodeApprovalRefused,
 	types.DecisionExpired:   types.CodeApprovalRefused,
 	types.DecisionCancelled: types.CodeApprovalRefused,
+}
+
+// Approval is one waiting ticket's queue item, for the local page.
+func (d *Daemon) Approval(ticketID string) (*types.ApprovalItem, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, q := range d.queue {
+		if q.item.TicketID == ticketID {
+			item := q.item
+			return &item, nil
+		}
+	}
+	return nil, errTicketUnknown
+}
+
+// AnswerTicket carries the answer of the dialog the server opened for the
+// session's own ticket. A ticket that is not this session's is unknown, whatever
+// the id: nothing runs and the answer says to resubmit. The first decision from
+// any surface wins, so an answer on a ticket already decided changes nothing and
+// reports where the ticket stands.
+func (d *Daemon) AnswerTicket(ctx context.Context, s *Session, ticketID string, accept bool) (*TicketView, error) {
+	d.mu.Lock()
+	tk, ok := d.tickets[ticketID]
+	owned := ok && d.ticketBelongsLocked(tk, s)
+	d.mu.Unlock()
+	if !owned {
+		return nil, errTicketUnknown
+	}
+	decide := "refuse"
+	if accept {
+		decide = "approve"
+	}
+	if err := d.Decide(ctx, ticketID, Decision{Decide: decide, Actor: "dialog"}); err != nil && !errors.Is(err, errNoDecision) {
+		return nil, err
+	}
+	return d.WaitTicket(ctx, s, ticketID, 0)
+}
+
+type approverKey struct{}
+
+// ApproverFrom is who accepted the ticket whose statement is running: the
+// surface that took the decision, such as dialog, ui or cli.
+func ApproverFrom(ctx context.Context) string {
+	a, _ := ctx.Value(approverKey{}).(string)
+	return a
 }

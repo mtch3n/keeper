@@ -92,7 +92,7 @@ export function InboxPage() {
   )
 }
 
-type Profile = { name: string; username?: string; database?: string; host?: HostView }
+export type Profile = { name: string; username?: string; database?: string; host?: HostView }
 
 function ProfileFact({ profile }: { profile: Profile }) {
   return (
@@ -112,7 +112,7 @@ const RISK_BADGE = { read: 'outline', write: 'secondary', destructive: 'destruct
  * human cannot tell from the text of a query that it returns 50,000 SSNs, so the
  * impact is what is decided on and the statement is the evidence.
  */
-function ApprovalCard({
+export function ApprovalCard({
   item,
   profile,
   busy,

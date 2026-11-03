@@ -102,6 +102,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, func(), e
 		Audit:        alog,
 		Detector:     patterns,
 		Pipeline:     &pipelineAdapter{p: pipe, catalogs: cats},
+		Notifier:     daemon.DesktopNotifier(),
 	}
 
 	cleanup := func() {
@@ -393,7 +394,7 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 	req := a.request(sess, connID, sql, params)
 	req.MaxRows = maxRows
 	if id, ok := strings.CutPrefix(authorization, "ticket:"); ok {
-		req.Approval = &pipeline.Approval{TicketID: id, Approver: sess.Client.Name}
+		req.Approval = &pipeline.Approval{TicketID: id, Approver: daemon.ApproverFrom(ctx)}
 	}
 	dec, err := a.p.Query(ctx, req)
 	if err != nil {

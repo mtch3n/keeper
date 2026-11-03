@@ -7,7 +7,6 @@ import { Brand } from '@/components/wrappers/Brand'
 import { ThemeToggle } from '@/components/wrappers/ThemeToggle'
 import { useInbox } from '@/lib/inbox'
 import { useLiveStatus } from '@/lib/live-status'
-import { useInboxNotifications } from '@/lib/notify'
 
 export type Section = 'inbox' | 'activity' | 'settings'
 
@@ -32,8 +31,7 @@ const SETTINGS_TABS: { tab: SettingsTab; label: string; to: string }[] = [
  * the one that asks something of you. There is no sidebar: its agent list is the
  * agents indicator here.
  *
- * Inbox carries the count of what waits, and the bar raises a notification when
- * something new arrives while the page is out of view. The daemon's lamp joins
+ * Inbox carries the count of what waits. The daemon's lamp joins
  * the bar only when the stream is degraded: a permanent "live" lamp spends the
  * chrome's attention on the reading that never needs acting on.
  */
@@ -48,7 +46,6 @@ export function AppShell({
 }) {
   const { status } = useLiveStatus()
   const { count } = useInbox()
-  useInboxNotifications()
 
   const daemon =
     status === 'waiting'

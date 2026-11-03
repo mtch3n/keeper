@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { getDoctor, getSettings, updateSettings, type DoctorReport, type Settings } from '@/lib/api'
-import { notificationsOn, setNotificationsOn } from '@/lib/notify'
 import { age } from '@/lib/render'
 import { positiveInt, useSave } from '@/lib/save'
 import { SettingSection } from '@/components/wrappers/SettingSection'
@@ -26,14 +24,11 @@ import { SettingSection } from '@/components/wrappers/SettingSection'
 
 /**
  * The daemon-wide choices: how long the activity log keeps a record, how long a
- * database's connections stay open unused, and whether this browser raises a
- * notification when something new waits in the Inbox.
+ * database's connections stay open unused.
  */
 function Preferences() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const save = useSave()
-  const [notify, setNotify] = useState(notificationsOn())
-  const [permission, setPermission] = useState(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission)
 
   useEffect(() => {
     getSettings()
@@ -64,29 +59,6 @@ function Preferences() {
           busy={save.busy}
           onSave={(n) => store({ connection_idle_minutes: n })}
         />
-        <Field orientation="horizontal">
-          <Switch
-            id="notify"
-            checked={notify}
-            onCheckedChange={(on) => {
-              setNotificationsOn(on)
-              setNotify(on)
-              if (on && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-                void Notification.requestPermission().then(setPermission)
-              }
-            }}
-          />
-          <FieldContent>
-            <FieldLabel htmlFor="notify">Notify me when something waits in the Inbox</FieldLabel>
-            <FieldDescription>
-              {permission === 'denied'
-                ? 'This browser has blocked notifications for keeper; allow them in its site settings.'
-                : permission === 'unsupported'
-                  ? 'This browser cannot show notifications.'
-                  : 'Only while keeper is open in a tab you are not looking at.'}
-            </FieldDescription>
-          </FieldContent>
-        </Field>
       </FieldGroup>
     </SettingSection>
   )
