@@ -9,20 +9,26 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Switch } from '@/components/ui/switch'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { registerConnection } from '@/lib/api'
-import type { Host } from '@/lib/types'
+import type { Host, Writes } from '@/lib/types'
+
+const WRITES: { value: Writes; title: string; consequence: string }[] = [
+  { value: 'off', title: 'Off', consequence: 'Refuse every write.' },
+  { value: 'ask', title: 'Ask', consequence: 'Each write waits in the Inbox, showing what it changes.' },
+  { value: 'allow', title: 'Allow', consequence: 'A write commits with no question.' },
+]
 
 const EMPTY = {
   name: '',
   database: '',
   user: '',
   password: '',
-  writes: false,
+  writes: 'off' as Writes,
   catalogPath: '',
 }
 
@@ -37,17 +43,13 @@ const EMPTY = {
  * daemon's vault assembles the string; it is never built or shown here.
  *
  * There is no engine control: registration records `postgres` and nothing
- * else (internal/daemon/connections.go), and a dropdown with one reachable
- * option is a promise the daemon has not made. For the same reason there is
- * no SSH tunnel section — keeper has none. One profile is one credential;
- * the writes switch says whether its sessions may write at all, and every
- * write still waits for a human.
+ * else, and a dropdown with one reachable option is a promise the daemon has
+ * not made. For the same reason there is no SSH tunnel section — keeper has
+ * none. One profile is one credential; the writes choice says whether its
+ * sessions may write, and whether a write waits for a human.
  *
- * There is no separate "Test connection" button because storing the
- * connection *is* the test: keeper opens the credential to audit the role, and
- * what the audit found is read on `Audit` rather than in here — it is a report
- * about the database, not a step in this form, and the connection works
- * either way.
+ * There is no "Test connection" button here because registering does not
+ * connect: the test is on the connection's Overview, once it is stored.
  *
  * Registry search: `pnpm dlx shadcn@latest search @shadcn -q "dialog"`
  * returns `@shadcn/dialog`, used here, and there is no registry item that
@@ -79,7 +81,7 @@ export function RegisterDialog({
         host_id: host.id,
         database: f.database.trim(),
         credential: { user: f.user.trim(), password: f.password || undefined },
-        writes: f.writes ? 'ask' : 'off',
+        writes: f.writes,
         catalog_path: f.catalogPath.trim() || undefined,
       })
       setF(EMPTY)
@@ -102,8 +104,8 @@ export function RegisterDialog({
         <DialogHeader>
           <DialogTitle>Add a database on {host.name}</DialogTitle>
           <DialogDescription>
-            {host.address}:{host.port}. keeper stores the credential, audits the role and reports what it holds on
-            Audit. The connection works either way.
+            {host.address}:{host.port}. keeper stores the credential and connects only when something needs it. Test
+            it from the connection's Overview.
           </DialogDescription>
         </DialogHeader>
 
@@ -141,29 +143,32 @@ export function RegisterDialog({
 
           <Separator />
 
-          <Field orientation="horizontal">
-            <Switch id="register-writes" checked={f.writes} onCheckedChange={(on) => set('writes', on)} />
-            <FieldContent>
-              <FieldLabel htmlFor="register-writes">Allow writes</FieldLabel>
-              <FieldDescription>
-                Off, this profile's sessions are read-only at the server. On, an agent may send writes as this user,
-                and each one waits in the Inbox showing what it changes.
-              </FieldDescription>
-            </FieldContent>
+          <Field>
+            <FieldLabel>Writes</FieldLabel>
+            <RadioGroup value={f.writes} onValueChange={(v) => set('writes', v as Writes)} className="flex flex-col gap-3">
+              {WRITES.map((o) => (
+                <label key={o.value} className="flex gap-4">
+                  <RadioGroupItem value={o.value} className="mt-1" />
+                  <span className="flex flex-col">
+                    <span className="text-sm">{o.title}</span>
+                    <span className="text-sm text-muted-foreground">{o.consequence}</span>
+                  </span>
+                </label>
+              ))}
+            </RadioGroup>
           </Field>
 
           <Separator />
 
 
           <Field>
-            <FieldLabel htmlFor="register-catalog">Catalog path</FieldLabel>
+            <FieldLabel htmlFor="register-catalog">Catalog path (optional)</FieldLabel>
             <Input
               id="register-catalog"
               value={f.catalogPath}
               onChange={(e) => set('catalogPath', e.target.value)}
-              placeholder=".keeper/catalog.yaml"
             />
-            <FieldDescription>Lives in the project repository and is reviewed like code.</FieldDescription>
+            <FieldDescription>Leave empty for keeper's own file for this profile. Set a path to share one catalog file with a project.</FieldDescription>
           </Field>
         </FieldGroup>
         </ScrollArea>
@@ -173,7 +178,7 @@ export function RegisterDialog({
             Cancel
           </Button>
           <Button onClick={submit} disabled={busy || !ready}>
-            Audit and store
+            Add database
           </Button>
         </DialogFooter>
       </DialogContent>
