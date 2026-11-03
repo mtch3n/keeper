@@ -32,7 +32,7 @@ const FORMS: PartialForm[] = ['email_domain', 'card_bin_last4', 'phone_country_a
  */
 export function CatalogTab({ connId }: { connId: string }) {
   const [entries, setEntries] = useState<Record<string, ColumnPolicy>>({})
-  const [unclassified, setUnclassified] = useState(0)
+  const [unclassified, setUnclassified] = useState<string[]>([])
   const [proposal, setProposal] = useState<InitProposal | null>(null)
   const [grants, setGrants] = useState<string[] | null>(null)
   const [filter, setFilter] = useState('')
@@ -44,8 +44,7 @@ export function CatalogTab({ connId }: { connId: string }) {
     try {
       const cat = await getCatalog(id)
       setEntries(cat.entries)
-      // The count is the daemon's; the list beside it may be a sample.
-      setUnclassified(cat.unclassified_count ?? cat.unclassified?.length ?? 0)
+      setUnclassified(cat.unclassified ?? [])
       setLoaded(true)
       setError(null)
     } catch (e) {
@@ -71,7 +70,8 @@ export function CatalogTab({ connId }: { connId: string }) {
 
   if (!loaded && !error) return <Skeleton className="h-40 w-full" />
 
-  const shown = Object.entries(entries).filter(([key]) => key.includes(filter))
+  const undecided: [string, ColumnPolicy | null][] = unclassified.map((key) => [key, null])
+  const shown = [...undecided, ...Object.entries(entries)].filter(([key]) => key.includes(filter))
 
   return (
     <div className="flex flex-col gap-6">
@@ -115,10 +115,10 @@ export function CatalogTab({ connId }: { connId: string }) {
         </Button>
       </div>
 
-      {unclassified > 0 ? (
+      {unclassified.length > 0 ? (
         <p className="text-sm">
-          <span className="text-waiting">{unclassified} column(s) unclassified.</span> Each one redacts
-          until you decide, which is safe and not useful.
+          <span className="text-waiting">{unclassified.length} column(s) unclassified.</span> Each one
+          redacts until you decide.
         </p>
       ) : null}
 
@@ -154,6 +154,10 @@ export function CatalogTab({ connId }: { connId: string }) {
   )
 }
 
+function namespaceFor(columnKey: string) {
+  return columnKey.split('.').pop() ?? columnKey
+}
+
 function CatalogRow({
   columnKey,
   policy,
@@ -161,19 +165,39 @@ function CatalogRow({
   onChange,
 }: {
   columnKey: string
-  policy: ColumnPolicy
+  policy: ColumnPolicy | null
   busy: boolean
   onChange: (key: string, p: ColumnPolicy) => Promise<void>
 }) {
-  const set = (patch: Partial<ColumnPolicy>) => void onChange(columnKey, { ...policy, ...patch })
+  const [namespace, setNamespace] = useState(policy?.namespace ?? '')
+  const [problem, setProblem] = useState<string | null>(null)
+  useEffect(() => setNamespace(policy?.namespace ?? ''), [policy?.namespace])
+
+  const choose = (next: Policy) => {
+    const entry: ColumnPolicy = { policy: next }
+    if (next === 'token') entry.namespace = namespaceFor(columnKey)
+    void onChange(columnKey, entry)
+  }
+  const commitNamespace = () => {
+    if (!policy) return
+    if (namespace.trim() === '') {
+      setProblem('A token column needs a namespace.')
+      return
+    }
+    setProblem(null)
+    if (namespace !== policy.namespace) void onChange(columnKey, { ...policy, namespace })
+  }
+  const set = (patch: Partial<ColumnPolicy>) => {
+    if (policy) void onChange(columnKey, { ...policy, ...patch })
+  }
 
   return (
     <TableRow>
       <TableCell className="text-meta">{columnKey}</TableCell>
       <TableCell>
-        <Select value={policy.policy} onValueChange={(v) => set({ policy: v as Policy })} disabled={busy}>
-          <SelectTrigger className="w-32">
-            <SelectValue />
+        <Select value={policy?.policy ?? ''} onValueChange={(v) => choose(v as Policy)} disabled={busy}>
+          <SelectTrigger className="w-32" aria-label={`Policy for ${columnKey}`}>
+            <SelectValue placeholder="unclassified" />
           </SelectTrigger>
           <SelectContent>
             {POLICIES.map((p) => (
@@ -185,26 +209,26 @@ function CatalogRow({
         </Select>
       </TableCell>
       <TableCell>
-        {/* R5.2b: a token without a namespace is a validation error, not a
-            default. Two token columns that do not share one will not join, which
-            is the single thing tokens exist to preserve. */}
-        {policy.policy === 'token' ? (
-          <Input
-            value={policy.namespace ?? ''}
-            disabled={busy}
-            onBlur={(e) => set({ namespace: e.target.value })}
-            onChange={() => undefined}
-            defaultValue={policy.namespace ?? ''}
-            className="w-32"
-          />
+        {policy?.policy === 'token' ? (
+          <div className="flex flex-col gap-1">
+            <Input
+              aria-label={`Namespace for ${columnKey}`}
+              value={namespace}
+              disabled={busy}
+              onChange={(e) => setNamespace(e.target.value)}
+              onBlur={commitNamespace}
+              className="w-32"
+            />
+            {problem ? <p className="text-meta text-blocked">{problem}</p> : null}
+          </div>
         ) : (
           <span className="text-meta text-muted-foreground">—</span>
         )}
       </TableCell>
       <TableCell>
-        {policy.policy === 'partial' ? (
+        {policy?.policy === 'partial' ? (
           <Select
-            value={policy.form ?? ''}
+            value={policy?.form ?? ''}
             onValueChange={(v) => set({ form: v as PartialForm })}
             disabled={busy}
           >
@@ -226,7 +250,7 @@ function CatalogRow({
       <TableCell>
         <label className="flex items-center gap-2 text-meta">
           <Checkbox
-            checked={policy.hide_name ?? false}
+            checked={policy?.hide_name ?? false}
             disabled={busy}
             onCheckedChange={(v) => set({ hide_name: v === true })}
           />
