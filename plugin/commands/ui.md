@@ -13,8 +13,6 @@ They want the dashboard, not a description of it.
 If it printed something else, read it and say which of these it is:
 
 - **not reachable** — the daemon is not running. `keeper daemon start`.
-- **vault locked** — it is running and nothing can be read yet.
-  `keeper vault unlock`, which needs their terminal; it refuses a pipe.
 - **command not found** — keeper is not installed. The `keeper-install` skill
   walks that, or the repository README has the download.
 

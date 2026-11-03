@@ -9,7 +9,7 @@ GOFLAGS ?=
 BIN     ?= bin
 PKGS    := ./...
 
-.PHONY: all build ui ui-audit check fmt vet staticcheck test test-race lint-explain clean tidy dev changelog
+.PHONY: all build ui ui-audit check fmt vet staticcheck test test-race lint-explain plugin-version clean tidy dev changelog
 
 all: check build
 
@@ -33,7 +33,7 @@ ui-audit:
 	cd web && $(PNPM) lint && $(PNPM) test && $(PNPM) ui-audit
 
 ## check — everything that must pass before work is called done
-check: fmt vet staticcheck lint-explain test-race ui-audit
+check: fmt vet staticcheck lint-explain plugin-version test-race ui-audit
 
 fmt:
 	@out=$$(gofmt -l . | grep -v '^web/' || true); \
@@ -55,6 +55,10 @@ test-race:
 ## Go cannot make a string literal fail to compile, so this is the enforcement.
 lint-explain:
 	@sh scripts/lint-explain-analyze.sh
+
+## plugin-version — a change under plugin/ needs a version bump (installed plugins are cached by version)
+plugin-version:
+	@sh scripts/check-plugin-version.sh
 
 ## changelog — prepend the commits since the last tag. TAG=v1.2.3 to head them
 ## under a version. Nothing needs installing; uvx fetches git-cliff.

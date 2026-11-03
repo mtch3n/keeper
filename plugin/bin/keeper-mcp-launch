@@ -1,42 +1,77 @@
 #!/bin/sh
-# Starts keeper's MCP server, or explains why it cannot.
-#
-# The plugin does not ship the binary. keeper holds database credentials and
-# audits privileges, and an executable that arrives as a side effect of
-# installing a plugin is not one anybody chose to trust — plugin distribution has
-# no checksum story, and this one's whole subject is what is safe to hand over.
-# So it is installed separately and verified against the release's SHA256SUMS.
-#
-# What this wrapper buys is the message below. Without it the failure is a bare
-# ENOENT, which says nothing about what to do next.
+# Starts keeper's MCP server. When keeper is not installed it downloads the
+# latest release, verifies it against the release's SHA256SUMS, installs it in
+# ~/.local/bin and runs it. The checksum comes from the same release as the
+# binary, so it guards against corruption and not against a compromised release.
+# Any failure prints its reason on stderr and exits non-zero; nothing runs then.
 set -eu
+
+fail() {
+    echo "keeper launcher: $*" >&2
+    exit 1
+}
 
 if command -v keeper >/dev/null 2>&1; then
     exec keeper mcp "$@"
 fi
 
-cat >&2 <<'EOF'
-keeper is not on PATH, so this plugin has nothing to talk to.
+bindir="${HOME:?}/.local/bin"
+dest="$bindir/keeper"
+if [ -x "$dest" ]; then
+    exec "$dest" mcp "$@"
+fi
 
-Ask your agent to install it — the plugin ships a `keeper-install` skill that
-checks what is already present, installs what is missing, and tells you the
-parts it cannot do itself.
+case "$(uname -s)" in
+    Linux) os=linux ;;
+    Darwin) os=darwin ;;
+    *) fail "unsupported operating system $(uname -s): download a release from https://github.com/mtch3n/keeper/releases" ;;
+esac
+case "$(uname -m)" in
+    x86_64 | amd64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) fail "unsupported architecture $(uname -m): download a release from https://github.com/mtch3n/keeper/releases" ;;
+esac
 
-Or do it by hand:
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
+elif command -v shasum >/dev/null 2>&1; then
+    sha256() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
+else
+    fail "neither sha256sum nor shasum is installed, so a download cannot be verified"
+fi
 
-  # from a release, verified
-  https://github.com/mtch3n/keeper/releases
-  sha256sum -c SHA256SUMS --ignore-missing
-  tar xzf keeper_<version>_<os>_<arch>.tar.gz
-  install -m755 keeper_<version>_<os>_<arch>/keeper ~/.local/bin/
+base="https://github.com/mtch3n/keeper/releases/latest/download"
+work="$(mktemp -d "${TMPDIR:-/tmp}/keeper-install.XXXXXX")" || fail "cannot make a temporary folder"
+trap 'rm -rf "$work"' EXIT
 
-  # or from source, with Go 1.27 and pnpm
-  git clone https://github.com/mtch3n/keeper && cd keeper
-  make build && install -m755 bin/keeper ~/.local/bin/
+fetch() {
+    curl -fsSL --connect-timeout 15 --max-time 300 -o "$2" "$1" || fail "cannot download $1"
+}
 
-One binary, three entry points: `keeper` is the CLI, `keeper daemon` runs the
-daemon, `keeper mcp` is this server. Check it with `keeper version`, which
-prints both the client's version and the daemon's — they refuse each other on a
-mismatch, so one number would be the wrong answer.
-EOF
-exit 1
+fetch "$base/SHA256SUMS" "$work/SHA256SUMS"
+line="$(grep -E "keeper_[^ ]*_${os}_${arch}\.tar\.gz\$" "$work/SHA256SUMS" | head -n 1)" ||
+    true
+[ -n "$line" ] || fail "the latest release has no build for ${os}/${arch}"
+want="${line%% *}"
+asset="${line##*/}"
+asset="${asset##* }"
+
+fetch "$base/$asset" "$work/$asset"
+got="$(sha256 "$work/$asset")"
+[ "$got" = "$want" ] || fail "checksum mismatch for $asset: expected $want, got $got"
+
+tar -xzf "$work/$asset" -C "$work" || fail "cannot unpack $asset"
+src="$work/${asset%.tar.gz}/keeper"
+[ -f "$src" ] || fail "$asset has no keeper binary"
+
+mkdir -p "$bindir" || fail "cannot make $bindir"
+tmp="$(mktemp "$bindir/.keeper.XXXXXX")" || fail "cannot write to $bindir"
+cp "$src" "$tmp" && chmod 755 "$tmp" && mv -f "$tmp" "$dest" || {
+    rm -f "$tmp"
+    fail "cannot install $dest"
+}
+
+rm -rf "$work"
+trap - EXIT
+echo "keeper launcher: installed $asset to $dest" >&2
+exec "$dest" mcp "$@"
