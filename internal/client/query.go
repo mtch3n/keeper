@@ -32,9 +32,8 @@ func (c *Client) Explain(ctx context.Context, connID, sql string, params []Param
 	return &out, nil
 }
 
-// QueryOutcome is what `query` returned: either a completed Result (tier 0/1,
-// SPEC §3.2) or a Ticket to poll with GetResult (tier 2/3). Exactly one is
-// non-nil.
+// QueryOutcome is what `query` returned: either a completed Result or a Ticket
+// to poll with GetResult when a person must accept first. Exactly one is non-nil.
 type QueryOutcome struct {
 	Result *types.QueryResult
 	Ticket *types.Ticket

@@ -2,18 +2,6 @@ package types
 
 import "time"
 
-// Tier is the routing decision of SPEC §7.7. It describes routing, not disclosure
-// permission: the mode and the explicit policies govern the final action.
-type Tier int
-
-const (
-	Tier0Run       Tier = 0 // read, under caps, all output allow
-	Tier1Record    Tier = 1 // runs, recorded prominently: anything was masked
-	Tier2Uncertain Tier = 2 // near a cap, or a changed view: runs in assisted, waits in strict
-	Tier3Approve   Tier = 3 // any write, or mode-dependent uncertainty
-	Tier4Refuse    Tier = 4 // denylisted, DDL, writes off, multi-statement
-)
-
 // Basis says which layer decided a transform, so the agent can tell what it may
 // conclude from what it received. SPEC R8.5b.
 type Basis string
@@ -70,14 +58,11 @@ type QueryResult struct {
 	// TruncatedBy says which limit: the row ceiling or the size cap.
 	TruncatedBy Cut                  `json:"truncated_by,omitzero"`
 	Transforms  map[string]Transform `json:"transforms"`
+	AuditID     string               `json:"audit_id"`
+	// Authorization names what let this run: "run", "writes:allow" or "ticket:<id>".
 	// Hint names the command that changes what keeper classified by itself.
 	// It is set after the statement is audited and is not part of the audit record.
-	Hint    string `json:"hint,omitzero"`
-	Tier    Tier   `json:"tier"`
-	AuditID string `json:"audit_id"`
-	Mode    Mode   `json:"mode"`
-	// Authorization names what let this run: "tier0", "grant:<id>", "ticket:<id>",
-	// SPEC §9.4 requires the basis to be reported.
+	Hint          string        `json:"hint,omitzero"`
 	Authorization string        `json:"authorization,omitzero"`
 	Degradations  []Degradation `json:"degradations,omitzero"`
 	// ExecutedRows is set for a write: the count the commit actually reported,
@@ -111,7 +96,6 @@ type ExplainResult struct {
 	EstimatedRows int64         `json:"estimated_rows"`
 	EstimatedCost float64       `json:"estimated_cost"`
 	OutputColumns []ColumnMeta  `json:"output_columns"`
-	PredictedTier Tier          `json:"predicted_tier"`
 	Outcome       Outcome       `json:"outcome"`
 	Reasons       []string      `json:"reasons,omitzero"`
 }
@@ -126,7 +110,6 @@ const (
 	CodeMultiStatement   Code = "multi_statement"   // more than one statement
 	CodePermissionDenied Code = "permission_denied" // G3 refused; Invariant A working
 	CodeUnclassified     Code = "unclassified"      // a column needs a catalog entry
-	CodeDenylisted       Code = "denylisted"        // SPEC R4.5
 	CodeDDLRefused       Code = "ddl_refused"       // SPEC R4.2c
 	CodeWritesOff        Code = "writes_off"        // the profile's sessions are read-only
 	CodeApprovalRequired Code = "approval_required"
@@ -172,7 +155,6 @@ type AuditRecord struct {
 	StatementType string               `json:"statement_type"`
 	Relations     []RelationRef        `json:"relations,omitzero"`
 	OutputColumns []ColumnMeta         `json:"output_columns,omitzero"`
-	Tier          Tier                 `json:"tier"`
 	Transforms    map[string]Transform `json:"transforms,omitzero"`
 	RowCount      int                  `json:"row_count"`
 	Authorization string               `json:"authorization,omitzero"`

@@ -2,20 +2,8 @@ package types
 
 import "time"
 
-// Mode is how much keeper decides without asking. Set per connection by a human;
-// MCP cannot change it. SPEC §9.4.
-type Mode string
-
-const (
-	// ModeStrict runs known-safe reads and puts every uncertain one in front of
-	// a human.
-	ModeStrict Mode = "strict"
-	// ModeAssisted is the default. Ordinary reads run, and an uncertain one runs
-	// too, under the same deterministic masking.
-	ModeAssisted Mode = "assisted"
-)
-
-// Reads is when a profile's reads ask a person first. Anything else behaves as ReadsAlways.
+// Reads is when a profile's reads ask a person first: always, only when the
+// statement is uncertain, or never. Anything else behaves as ReadsAlways.
 type Reads string
 
 const (
@@ -48,39 +36,6 @@ type Stage struct {
 	Entities []string `json:"entities,omitzero"`
 	// Raw sends the stage unmasked text: earlier stages' hits left in place.
 	Raw bool `json:"raw,omitzero"`
-}
-
-// Valid reports whether m is a mode keeper knows.
-func (m Mode) Valid() bool { return m == ModeStrict || m == ModeAssisted }
-
-// FindingKind groups what a G0 audit can report. SPEC §4.1.
-type FindingKind string
-
-const (
-	FindingAttribute      FindingKind = "attribute"        // rolsuper and friends
-	FindingMembership     FindingKind = "membership"       // pg_read_server_files and friends
-	FindingRelationWrite  FindingKind = "relation-write"   // INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES
-	FindingSchemaCreate   FindingKind = "schema-create"    // CREATE on a schema
-	FindingFunctionExec   FindingKind = "function-exec"    // EXECUTE on a file or program function
-	FindingSecurityDefine FindingKind = "security-definer" // SECURITY DEFINER reachable by this role
-)
-
-// Finding is one thing the privilege audit found. It is advice, not a gate:
-// keeper neither refuses a credential over a finding nor holds the connection
-// shut until somebody signs it off. The audit reports what the role can do and
-// the statement that would narrow it; acting on that is the operator's call.
-// SPEC R4.1.
-type Finding struct {
-	// ID is the stable key the audit report groups by: "rolsuper",
-	// "relation-write:public.orders", "security-definer:pg_catalog.azure_sys_fn".
-	ID      string      `json:"id"`
-	Kind    FindingKind `json:"kind"`
-	Subject string      `json:"subject"` // the role attribute, relation, or function
-	// Detail says in one sentence what the finding means for this connection.
-	Detail string `json:"detail"`
-	// Narrower is the SQL that would remove the finding, copyable as-is. Empty
-	// where no single statement would ("rolsuper" on a managed server, say).
-	Narrower string `json:"narrower,omitzero"`
 }
 
 // RelationRef names a relation. keeper stores names and resolves them to OIDs at
@@ -136,9 +91,8 @@ var SSLModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "v
 // password and connection string never appear in an MCP response; SPEC §6.1
 // returns the fields marked exposed.
 //
-// It is a connection, not the host, that owns a catalog, token keys and a
-// privilege audit: a (tableOID, attnum) pair means nothing outside its
-// database, and a finding describes one role.
+// It is a connection, not the host, that owns a catalog and token keys: a
+// (tableOID, attnum) pair means nothing outside its database.
 type Connection struct {
 	ID       string `json:"id"`
 	HostID   string `json:"host_id"`
@@ -152,38 +106,31 @@ type Connection struct {
 	// a path shared by several profiles is always explicit.
 	CatalogPath string `json:"catalog_path"`
 
-	Mode   Mode   `json:"mode"`
 	Reads  Reads  `json:"reads"`
+	Writes Writes `json:"writes"`
 	Limits Limits `json:"limits"`
 	// Detection is the ordered pipeline a scan column's free text runs through.
 	// Empty is off: free text is redacted whole.
-	Detection []Stage       `json:"detection,omitzero"`
-	Denylist  []RelationRef `json:"denylist,omitzero"`
-
-	// Findings is what the last audit reported. It does not gate anything: a
-	// registered connection is usable, and the audit is a separate report the
-	// operator reads on its own schedule. SPEC R4.1.
-	Findings  []Finding `json:"findings,omitzero"`
-	AuditedAt time.Time `json:"audited_at"`
-
-	// Writes is whether this profile's sessions may write at all. Every write
-	// still waits for approval; there is no standing approval of a write.
-	Writes Writes `json:"writes"`
+	Detection []Stage `json:"detection,omitzero"`
 	// PersistentTokens lets an agent that declares persistent scope receive
 	// tokens that outlive its session. Off, it gets session tokens.
 	PersistentTokens bool `json:"persistent_tokens,omitzero"`
 }
 
 // Writes is a profile's write setting. Off is the default: its sessions are
-// read-only, and a write is refused rather than run as some other profile.
+// read-only, and a write is refused rather than run as some other profile. Ask
+// waits for a person; allow commits without a question and without a preview.
+// Anything else behaves as off.
 type Writes string
 
 const (
-	WritesOff     Writes = "off"
-	WritesApprove Writes = "approve"
-	WritesAsk     Writes = "ask"
-	WritesAllow   Writes = "allow"
+	WritesOff   Writes = "off"
+	WritesAsk   Writes = "ask"
+	WritesAllow Writes = "allow"
 )
+
+// Valid reports whether w is a setting keeper knows.
+func (w Writes) Valid() bool { return w == WritesOff || w == WritesAsk || w == WritesAllow }
 
 // Settings are the daemon-wide choices an operator makes in Settings. They live
 // in the vault beside the connections and are unreachable from MCP.

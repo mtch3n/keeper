@@ -141,7 +141,7 @@ func Run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	deps, auth, closeDeps, err := buildDeps(ctx, logger)
+	deps, closeDeps, err := buildDeps(ctx, logger)
 	if err != nil {
 		logger.Error("dependencies", "err", err)
 		socketLn.Close()
@@ -150,19 +150,12 @@ func Run(args []string) int {
 	}
 	defer closeDeps()
 
-	stateDir, _ := configDir()
 	d, err := daemon.New(daemon.Config{
 		Version:  version,
 		UIBase:   base,
 		Logger:   logger,
-		StateDir: stateDir,
 		IdleExit: *idleExit,
 	}, deps)
-	if err == nil {
-		// The pipeline and the daemon each need the other; this is the second
-		// half of that knot, tied once the daemon exists.
-		auth.Bind(d)
-	}
 	if err != nil {
 		logger.Error("daemon", "err", err)
 		socketLn.Close()
@@ -175,7 +168,7 @@ func Run(args []string) int {
 
 	// ConnContext and ConnState are what bind a session to its connection
 	// (R3.4e). Without them a session outlives the client that opened it, and
-	// its tickets, reverse map and session grants outlive it too.
+	// its tickets, and reverse map outlive it too.
 	socketSrv := &http.Server{
 		Handler:           srv.Socket(),
 		ConnContext:       d.ConnContext,

@@ -7,7 +7,7 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// Pipeline is internal/pipeline: G1–G9, tiers and computed-column inheritance.
+// Pipeline is internal/pipeline: G1–G9 and computed-column inheritance.
 //
 // The interface is declared here because the daemon is its consumer. Its
 // signatures name only internal/types and internal/ports, because CONTRACT §1
@@ -34,21 +34,19 @@ type Pipeline interface {
 	Explain(ctx context.Context, sess types.Session, connectionID, sql string, params []ports.Param) (*types.ExplainResult, error)
 
 	// Query runs G1–G9. Exactly one of the first two results is non-nil on
-	// success: a *types.QueryResult when the statement ran (tier 0 or 1), or a
-	// ticket template when it escalated (tier 2 or 3) carrying State, Tier,
-	// Reason and AuditID. A tier-4 refusal is a *types.Error.
+	// success: a *types.QueryResult when the statement ran, or a ticket
+	// template when it must wait for a person, carrying State, Reason and
+	// AuditID. A refusal is a *types.Error.
 	//
-	// authorization is the basis the daemon already established — "", "grant:id"
-	// or "ticket:id" — and is what the pipeline reports in QueryResult and
-	// records in the audit log (§9.4). maxRows is the agent's request already
-	// capped by any grant ceiling; the per-connection ceiling of §4.5 is still
-	// the pipeline's to enforce.
+	// authorization is the basis the daemon already established, "" or
+	// "ticket:id", and is what the pipeline reports in QueryResult and records
+	// in the audit log. maxRows is the agent's request; the per-connection
+	// ceiling of §4.5 is still the pipeline's to enforce.
 	Query(ctx context.Context, sess types.Session, connectionID, sql string, params []ports.Param, maxRows int, authorization string) (*types.QueryResult, *types.Ticket, error)
 
 	// Facts is §9.2's approval payload — intent, statement type, relations,
 	// estimates, what will be masked and why this escalated — for a statement
-	// Query escalated. The daemon calls it once, when it enqueues, and uses the
-	// relation list for R9.3c's exact-path grant matching.
+	// Query escalated. The daemon calls it once, when it enqueues.
 	Facts(ctx context.Context, sess types.Session, connectionID, sql string, params []ports.Param) (*types.ApprovalFacts, error)
 
 	// CommitWrite is R4.2d's third step: a fresh transaction on a fresh

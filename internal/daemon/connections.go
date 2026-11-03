@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/sealed"
@@ -29,30 +28,10 @@ type Profile struct {
 
 // ConnectionSummary is GET /v1/connections.
 type ConnectionSummary struct {
-	ID     string     `json:"id"`
-	Name   string     `json:"name"`
-	Engine string     `json:"engine"`
-	Mode   types.Mode `json:"mode"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Engine string `json:"engine"`
 	Profile
-}
-
-// AuditedPrivileges is what G0 found on one connection, and when. It is a
-// report and nothing else: no field here decides whether the connection runs.
-type AuditedPrivileges struct {
-	AuditedAt time.Time       `json:"audited_at"`
-	Findings  []types.Finding `json:"findings,omitzero"`
-}
-
-// AuditReport is one connection's entry in GET /v1/audit. The privilege audit
-// is its own surface rather than a step in registration, so it carries enough
-// of the connection to be read on its own. SPEC R4.1.
-type AuditReport struct {
-	ConnectionID string          `json:"connection_id"`
-	Name         string          `json:"name"`
-	Database     string          `json:"database"`
-	Role         string          `json:"role"`
-	AuditedAt    time.Time       `json:"audited_at"`
-	Findings     []types.Finding `json:"findings,omitzero"`
 }
 
 // CatalogStatus is the freshness and backlog half of describe_connection.
@@ -71,16 +50,13 @@ type ConnectionDetail struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version,omitzero"`
 	Profile
-	Schemas           []string             `json:"schemas,omitzero"`
-	AuditedPrivileges AuditedPrivileges    `json:"audited_privileges"`
-	CatalogStatus     CatalogStatus        `json:"catalog_status"`
-	PolicySummary     map[types.Policy]int `json:"policy_summary,omitzero"`
-	Mode              types.Mode           `json:"mode"`
-	Detection         []types.Stage        `json:"detection"`
-	Limits            types.Limits         `json:"limits"`
-	PersistentTokens  bool                 `json:"persistent_tokens"`
-	Denylist          []types.RelationRef  `json:"denylist,omitzero"`
-	Degradations      []types.Degradation  `json:"degradations,omitzero"`
+	Schemas          []string             `json:"schemas,omitzero"`
+	CatalogStatus    CatalogStatus        `json:"catalog_status"`
+	PolicySummary    map[types.Policy]int `json:"policy_summary,omitzero"`
+	Detection        []types.Stage        `json:"detection"`
+	Limits           types.Limits         `json:"limits"`
+	PersistentTokens bool                 `json:"persistent_tokens"`
+	Degradations     []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // Connections lists what is registered.
@@ -92,7 +68,7 @@ func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
 	out := make([]ConnectionSummary, 0, len(cs))
 	for _, c := range cs {
 		out = append(out, ConnectionSummary{
-			ID: c.ID, Name: c.Name, Engine: c.Engine, Mode: c.Mode,
+			ID: c.ID, Name: c.Name, Engine: c.Engine,
 			Profile: d.profile(ctx, c),
 		})
 	}
@@ -103,8 +79,11 @@ func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
 // profile is c's login without its password. A host the vault cannot find
 // leaves the host fields empty rather than failing the listing.
 func (d *Daemon) profile(ctx context.Context, c *types.Connection) Profile {
-	p := Profile{Database: c.Database, Username: c.Role, Writes: c.Writes}
-	if p.Writes == "" {
+	p := Profile{Database: c.Database, Username: c.Role, Reads: c.Reads, Writes: c.Writes}
+	if !p.Reads.Valid() {
+		p.Reads = types.ReadsAlways
+	}
+	if !p.Writes.Valid() {
 		p.Writes = types.WritesOff
 	}
 	if h, err := d.deps.Vault.Host(ctx, c.HostID); err == nil && h != nil {
@@ -122,14 +101,11 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 	}
 	det := &ConnectionDetail{
 		ID: c.ID, Name: c.Name, Engine: c.Engine, Version: c.Version,
-		Profile:           d.profile(ctx, c),
-		AuditedPrivileges: AuditedPrivileges{AuditedAt: c.AuditedAt, Findings: c.Findings},
-		CatalogStatus:     CatalogStatus{Path: c.CatalogPath},
-		Mode:              c.Mode,
-		Detection:         c.Detection,
-		Limits:            c.Limits,
-		PersistentTokens:  c.PersistentTokens,
-		Denylist:          c.Denylist,
+		Profile:          d.profile(ctx, c),
+		CatalogStatus:    CatalogStatus{Path: c.CatalogPath},
+		Detection:        c.Detection,
+		Limits:           c.Limits,
+		PersistentTokens: c.PersistentTokens,
 	}
 
 	// Every catalog layer needs the catalog open, and opening is what an
@@ -241,7 +217,7 @@ func (d *Daemon) Schema(ctx context.Context, connID, schema, table string) (*Sch
 			p, ok := cat.LookupName(r.Ref, c.Name)
 			if !ok {
 				// R5.4a: an unresolved column is redacted, not refused, and is
-				// surfaced in Catalog rather than raising the tier.
+				// surfaced in Catalog.
 				p = types.ColumnPolicy{Policy: types.PolicyRedact}
 			}
 			if p.HideName {
@@ -276,20 +252,13 @@ type RegisterSpec struct {
 	HostID     string
 	Database   string
 	Credential ports.Credential
-	// Writes is off unless the operator allows this profile's sessions to
-	// write; every write still waits for approval.
+	// Writes is off unless the operator lets this profile's sessions write.
 	Writes      types.Writes
 	CatalogPath string
 }
 
-// Register stores the connection and runs G0 once so the audit report has
-// something to show. R4.1: the audit reports, it does not gate — a registered
-// connection is usable whatever the audit found, and what to do about a
-// finding is a separate decision the operator makes from the audit surface.
-// Nothing here logs or echoes a credential.
-//
-// It stores before it audits so the audit reads its DSN from the vault, the
-// one place a DSN is assembled, exactly as a later re-audit does.
+// Register stores the connection. Nothing here connects to the database, and
+// nothing logs or echoes a credential.
 func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connection, error) {
 	if spec.Name == "" || spec.HostID == "" || spec.Database == "" || spec.Credential.User == "" {
 		return nil, errValidation("name, host, database and user", "are required")
@@ -310,84 +279,15 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 		Role:        spec.Credential.User,
 		Writes:      writes,
 		CatalogPath: spec.CatalogPath,
-		Mode:        types.ModeAssisted,
+		Reads:       types.ReadsUncertain,
 		Detection:   []types.Stage{{Kind: types.KindPatterns}},
 		Limits:      types.DefaultLimits(),
 	}
 	if err := d.deps.Vault.Register(ctx, c, spec.Credential); err != nil {
 		return nil, err
 	}
-	// An audit that cannot run is not a connection keeper refuses to hold. G0
-	// reads pg_authid, pg_proc and the ACLs, and a managed server that hides
-	// them, a role without the introspection grants, or a host that is down at
-	// registration all arrived here as "cannot register at all" — which taught
-	// the operator to keep exactly the connections worth masking outside
-	// keeper. R4.1 says the audit reports and does not gate; failing to produce
-	// a report is the strongest form of not gating there is. A zero AuditedAt
-	// is how the connection says it has no report yet.
-	if findings, err := d.auditRoles(ctx, c); err == nil {
-		c.Findings, c.AuditedAt = findings, d.now()
-		if err := d.deps.Vault.Update(ctx, c); err != nil {
-			return nil, err
-		}
-	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "registered", "connection_id": c.ID}})
 	return c, nil
-}
-
-// auditRoles runs G0 over the profile's credential. A profile that allows
-// writes is audited as a writer, so its INSERT, UPDATE and DELETE grants are
-// expected rather than reported.
-func (d *Daemon) auditRoles(ctx context.Context, c *types.Connection) ([]types.Finding, error) {
-	dsn, err := d.deps.Vault.DSN(ctx, c.ID)
-	if err != nil {
-		return nil, err
-	}
-	role := ports.RoleRead
-	if c.Writes == types.WritesApprove {
-		role = ports.RoleWrite
-	}
-	return d.deps.Auditor.Audit(ctx, dsn, role)
-}
-
-// Audit re-runs G0 and replaces the stored report. R4.1e: it neither disables
-// the connection nor cancels anything in flight. A privilege that appears
-// between runs is a line in the audit report, and the operator decides whether
-// to narrow the grant — keeper noticing was never what constrained the role.
-func (d *Daemon) Audit(ctx context.Context, id string) (*types.Connection, error) {
-	c, err := d.deps.Vault.Connection(ctx, id)
-	if err != nil || c == nil {
-		return nil, errUnknownConnection
-	}
-	findings, err := d.auditRoles(ctx, c)
-	if err != nil {
-		return nil, err
-	}
-	c.Findings = findings
-	c.AuditedAt = d.now()
-	if err := d.deps.Vault.Update(ctx, c); err != nil {
-		return nil, err
-	}
-	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "audited", "connection_id": id, "findings": len(findings)}})
-	return c, nil
-}
-
-// Audits is GET /v1/audit: the last privilege audit for every connection, in
-// the same order the connection list uses.
-func (d *Daemon) Audits(ctx context.Context) ([]AuditReport, error) {
-	cs, err := d.deps.Vault.Connections(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]AuditReport, 0, len(cs))
-	for _, c := range cs {
-		out = append(out, AuditReport{
-			ConnectionID: c.ID, Name: c.Name, Database: c.Database,
-			Role: c.Role, AuditedAt: c.AuditedAt, Findings: c.Findings,
-		})
-	}
-	slices.SortStableFunc(out, func(a, b AuditReport) int { return strings.Compare(a.Name, b.Name) })
-	return out, nil
 }
 
 // TestConnection logs in with a connection's credential and reports who the
@@ -403,7 +303,7 @@ func (d *Daemon) TestConnection(ctx context.Context, id string) (*ports.PingResu
 // Patch is §4.5's operator limits. Unreachable from MCP (§6.3), which the api
 // enforces by refusing the route to a request carrying a session.
 type Patch struct {
-	Mode   *types.Mode
+	Reads  *types.Reads
 	Limits *types.Limits
 	// Detection replaces the connection's pipeline; an empty list turns
 	// detection off.
@@ -412,15 +312,15 @@ type Patch struct {
 	PersistentTokens *bool
 }
 
-// validWrites accepts off and approve; empty is off.
+// validWrites accepts off, ask and allow; empty is off.
 func validWrites(w types.Writes) (types.Writes, error) {
-	switch w {
-	case "", types.WritesOff:
+	if w == "" {
 		return types.WritesOff, nil
-	case types.WritesApprove:
-		return w, nil
 	}
-	return "", errValidation("writes", "must be off or approve")
+	if !w.Valid() {
+		return "", errValidation("writes", "must be off, ask or allow")
+	}
+	return w, nil
 }
 
 // Update applies a patch.
@@ -429,11 +329,11 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 	if err != nil || c == nil {
 		return nil, errUnknownConnection
 	}
-	if p.Mode != nil {
-		if !p.Mode.Valid() {
-			return nil, errValidation("mode", "must be strict or assisted")
+	if p.Reads != nil {
+		if !p.Reads.Valid() {
+			return nil, errValidation("reads", "must be always, uncertain or never")
 		}
-		c.Mode = *p.Mode
+		c.Reads = *p.Reads
 	}
 	if p.Writes != nil {
 		w, err := validWrites(*p.Writes)
@@ -467,26 +367,6 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 		return nil, err
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "updated", "connection_id": id}})
-	return c, nil
-}
-
-// SetDenylist is R4.5's relation list. It is evaluated against the plan, never
-// against statement text, which is the pipeline's job; the daemon only stores it.
-func (d *Daemon) SetDenylist(ctx context.Context, id string, rels []types.RelationRef) (*types.Connection, error) {
-	c, err := d.deps.Vault.Connection(ctx, id)
-	if err != nil || c == nil {
-		return nil, errUnknownConnection
-	}
-	for _, r := range rels {
-		if r.Schema == "" || r.Relation == "" {
-			return nil, errValidation("relations", "each entry needs a schema and a relation")
-		}
-	}
-	c.Denylist = rels
-	if err := d.deps.Vault.Update(ctx, c); err != nil {
-		return nil, err
-	}
-	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "denylist", "connection_id": id}})
 	return c, nil
 }
 
@@ -539,25 +419,12 @@ func (d *Daemon) RotateMaster(ctx context.Context) error {
 
 // Remove deletes a connection and its credentials.
 //
-// Everything scoped to it goes too: its pools are closed, its grants are
-// revoked, and its catalog is dropped from the resolver. A grant naming a
-// connection that no longer exists would be a rule nobody can read and nobody
-// can revoke, which is the state R9.3e's list exists to prevent.
+// Its pools are closed with it.
 func (d *Daemon) Remove(ctx context.Context, id string) error {
 	if _, err := d.deps.Vault.Connection(ctx, id); err != nil {
 		return err
 	}
 	d.deps.Executor.Close(id)
-	d.SuspendGrantsForConnection(id, "the connection was removed")
-
-	d.mu.Lock()
-	for gid, g := range d.grants {
-		if g.Path.ConnectionID == id {
-			delete(d.grants, gid)
-		}
-	}
-	d.mu.Unlock()
-
 	if err := d.deps.Vault.Remove(ctx, id); err != nil {
 		return err
 	}

@@ -272,22 +272,12 @@ func (a *fakeAudit) last(t *testing.T) *types.AuditRecord {
 // --- authority -------------------------------------------------------------
 
 type fakeAuthority struct {
-	conn   *types.Connection
-	grants map[types.PathRef]*types.Grant
-	err    error
-	// suspended names the connections whose grants were suspended.
-	suspended []string
+	conn *types.Connection
+	err  error
 }
-
-func (a *fakeAuthority) SuspendGrants(connID, _ string) { a.suspended = append(a.suspended, connID) }
 
 func (a *fakeAuthority) Connection(context.Context, string) (*types.Connection, error) {
 	return a.conn, a.err
-}
-
-func (a *fakeAuthority) Grant(_ context.Context, _ string, path types.PathRef) (*types.Grant, bool) {
-	g, ok := a.grants[path]
-	return g, ok
 }
 
 // --- the schema every test shares ------------------------------------------
@@ -338,7 +328,7 @@ func testConnection() *types.Connection {
 		Engine:   "postgres",
 		Database: "acme",
 		Role:     "acme_prod_app_ro",
-		Mode:     types.ModeAssisted,
+		Reads:    types.ReadsUncertain,
 		Limits:   types.DefaultLimits(),
 	}
 }
@@ -369,7 +359,7 @@ func newHarness(t *testing.T, mutate ...func(*harness)) *harness {
 		redactor:  &fakeRedactor{},
 		exec:      &fakeExecutor{},
 		audit:     &fakeAudit{},
-		authority: &fakeAuthority{conn: testConnection(), grants: map[types.PathRef]*types.Grant{}},
+		authority: &fakeAuthority{conn: testConnection()},
 	}
 	for _, m := range mutate {
 		m(h)

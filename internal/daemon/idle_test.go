@@ -3,8 +3,6 @@ package daemon
 import (
 	"testing"
 	"time"
-
-	"github.com/mtchen/keeper/internal/types"
 )
 
 // idleDaemon is bare() plus the fields the idle path needs.
@@ -95,5 +93,3 @@ func TestTouchRestartsTheIdleClock(t *testing.T) {
 	default:
 	}
 }
-
-var _ = types.GrantStanding

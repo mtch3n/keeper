@@ -42,10 +42,6 @@ var (
 		"that ticket is no longer waiting for a decision",
 		"re-run the query")
 
-	errWriteGrant = keeperErr(types.CodePermissionDenied,
-		"no grant authorizes a write: a write needs its own approval every time",
-		"approve the ticket")
-
 	// A local request is one-use (R8.7c). A replay is reported as a conflict
 	// with the state the daemon already holds rather than as a refusal, because
 	// nobody refused anything: the decision was already made.

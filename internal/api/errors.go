@@ -18,7 +18,7 @@ func status(c types.Code) int {
 	switch c {
 	case types.CodeSyntax, types.CodeMultiStatement:
 		return http.StatusBadRequest
-	case types.CodePermissionDenied, types.CodeUnclassified, types.CodeDenylisted,
+	case types.CodePermissionDenied, types.CodeUnclassified,
 		types.CodeDDLRefused, types.CodeWritesOff,
 		types.CodeApprovalRefused, types.CodeRowCap:
 		return http.StatusForbidden
@@ -87,7 +87,7 @@ var (
 		"call it over the keeper socket")
 
 	errHumanOnly = denied(
-		"registering connections, approving, granting, editing the catalog and setting limits are CLI and UI actions only",
+		"registering connections, approving, editing the catalog, setting reads and writes and setting limits are CLI and UI actions only",
 		"use `keeper` or the local page")
 
 	errSessionNeeded = denied(

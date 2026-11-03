@@ -108,7 +108,7 @@ func (e *leanEnv) approveAndWait(t *testing.T, a *agentSession, body string) str
 	if q.Ticket == "" {
 		t.Fatalf("no ticket in %s", body)
 	}
-	if err := e.op.DecideApproval(t.Context(), q.Ticket, client.DecisionApprove, nil); err != nil {
+	if err := e.op.DecideApproval(t.Context(), q.Ticket, client.DecisionApprove); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	return a.call(t, "get_result", map[string]any{"ticket": q.Ticket, "wait_ms": 10000})

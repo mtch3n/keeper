@@ -1,5 +1,7 @@
 package api
 
+import "net/http"
+
 // routes is CONTRACT §3, one line per row of its two tables, with the access
 // rule beside each. Reading this function is how you check the claim that the
 // agent surface is socket-only and that the human surface is unreachable from an
@@ -26,21 +28,14 @@ func (s *Server) routes() {
 	s.handle("POST /v1/hosts", accessHuman, s.registerHost)
 	s.handle("DELETE /v1/hosts/{id}", accessHuman, s.removeHost)
 	s.handle("POST /v1/connections", accessHuman, s.registerConnection)
-	s.handle("GET /v1/audit", accessHuman, s.listAudits)
-	s.handle("POST /v1/connections/{id}/audit", accessHuman, s.auditConnection)
 	s.handle("PATCH /v1/connections/{id}", accessHuman, s.patchConnection)
 	s.handle("DELETE /v1/connections/{id}", accessHuman, s.removeConnection)
-	s.handle("PUT /v1/connections/{id}/denylist", accessHuman, s.putDenylist)
 	s.handle("PUT /v1/connections/{id}/terms", accessHuman, s.putTerms)
 	s.handle("POST /v1/connections/{id}/test", accessHuman, s.testConnection)
 
 	s.handle("GET /v1/approvals", accessHuman, s.listApprovals)
 	s.handle("GET /v1/requests", accessHuman, s.listRequests)
 	s.handle("POST /v1/approvals/{ticket}/decide", accessHuman, s.decide)
-
-	s.handle("GET /v1/grants", accessHuman, s.listGrants)
-	s.handle("POST /v1/grants", accessHuman, s.createGrant)
-	s.handle("DELETE /v1/grants/{id}", accessHuman, s.revokeGrant)
 
 	s.handle("GET /v1/catalog/{connection}", accessHuman, s.getCatalog)
 	s.handle("PUT /v1/catalog/{connection}/columns", accessHuman, s.putCatalogColumns)
@@ -69,8 +64,13 @@ func (s *Server) routes() {
 	// Loopback only. The kind is fixed when the request is minted, and the page
 	// reads it from GET /v1/requests/{id} above.
 	s.handle("POST /v1/requests/{id}/submit", accessLoopback, s.submitRequest)
-	s.handle("POST /v1/requests/{id}/decide", accessLoopback, s.decideRequest)
 	s.handle("POST /v1/requests/{id}/cancel", accessLoopback, s.cancelRequest)
+
+	// A path keeper does not serve is not found for every method; without
+	// these the UI's catch-all would turn it into a 405 for anything but GET.
+	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+		s.mux.HandleFunc(method+" /v1/", http.NotFound)
+	}
 
 	// --- the embedded UI, loopback ---------------------------------------
 	s.raw("GET /r/{request_id}", accessPublic, s.serveApp)

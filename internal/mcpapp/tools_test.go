@@ -8,9 +8,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// wantTools is exactly SPEC §6.1/§6.3's agent-facing surface. Nothing else
-// may be registered: register_connection, set_policy, catalog init, approve,
-// grants, allow and denylist are CLI/UI only (R4.1f).
+// wantTools is exactly the agent-facing surface. Nothing else may be
+// registered: register_connection, set_policy, catalog init, approve and the
+// reads and writes settings are CLI/UI only.
 var wantTools = []string{
 	"set_session_intent",
 	"list_connections",
@@ -22,8 +22,6 @@ var wantTools = []string{
 	"cancel",
 	"request_input",
 	"get_input_result",
-	"request_authorization",
-	"get_authorization_result",
 }
 
 // forbiddenTools names SPEC §6.3's CLI/UI-only surface. If any of these ever
@@ -37,6 +35,8 @@ var forbiddenTools = []string{
 	"grants",
 	"allow",
 	"denylist",
+	"request_authorization",
+	"get_authorization_result",
 }
 
 func TestToolListIsExactly(t *testing.T) {

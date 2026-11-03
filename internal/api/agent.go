@@ -107,7 +107,6 @@ func (s *Server) query(ctx context.Context, rq *reqInfo, w http.ResponseWriter, 
 type ticketResponse struct {
 	Ticket  string             `json:"ticket"`
 	State   types.TicketState  `json:"state"`
-	Tier    types.Tier         `json:"tier,omitzero"`
 	Reason  string             `json:"reason,omitzero"`
 	AuditID string             `json:"audit_id,omitzero"`
 	Result  *types.QueryResult `json:"result,omitzero"`
@@ -122,7 +121,7 @@ func (s *Server) ticket(ctx context.Context, rq *reqInfo, _ http.ResponseWriter,
 		return nil, err
 	}
 	out := ticketResponse{
-		Ticket: v.Ticket.ID, State: v.Ticket.State, Tier: v.Ticket.Tier,
+		Ticket: v.Ticket.ID, State: v.Ticket.State,
 		Reason: v.Ticket.Reason, AuditID: v.Ticket.AuditID, Result: v.Result,
 	}
 	if v.Error != nil {
@@ -139,7 +138,7 @@ func (s *Server) cancelTicket(ctx context.Context, rq *reqInfo, _ http.ResponseW
 	if err != nil {
 		return nil, err
 	}
-	return ticketResponse{Ticket: v.Ticket.ID, State: v.Ticket.State, Tier: v.Ticket.Tier, Reason: v.Ticket.Reason, AuditID: v.Ticket.AuditID}, nil
+	return ticketResponse{Ticket: v.Ticket.ID, State: v.Ticket.State, Reason: v.Ticket.Reason, AuditID: v.Ticket.AuditID}, nil
 }
 
 type localRequestRequest struct {
@@ -147,12 +146,10 @@ type localRequestRequest struct {
 	ConnectionID string            `json:"connection_id"`
 	Namespace    string            `json:"namespace,omitzero"`
 	Purpose      string            `json:"purpose,omitzero"`
-	Path         *types.PathRef    `json:"path,omitzero"`
 }
 
-// openRequest is R8.7g's one mechanism: an input request takes a value the agent
-// must never see and returns a token; an authorization request grants a path and
-// returns nothing at all.
+// openRequest opens an input request: it takes a value the agent must never
+// see and returns a token.
 func (s *Server) openRequest(ctx context.Context, rq *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
 	var req localRequestRequest
 	if err := s.readJSON(w, r, &req); err != nil {
@@ -163,7 +160,6 @@ func (s *Server) openRequest(ctx context.Context, rq *reqInfo, w http.ResponseWr
 		ConnectionID: req.ConnectionID,
 		Namespace:    req.Namespace,
 		Purpose:      req.Purpose,
-		Path:         req.Path,
 	})
 }
 

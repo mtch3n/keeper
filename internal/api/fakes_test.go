@@ -155,23 +155,6 @@ func (v *fakeVault) Export(context.Context) ([]byte, error)       { return nil, 
 func (v *fakeVault) Import(context.Context, []byte, string) error { return nil }
 func (v *fakeVault) RotateMaster(context.Context) error           { return nil }
 
-// ---------------------------------------------------------------- auditor
-
-type fakeAuditor struct {
-	findings []types.Finding
-	// err stands in for the servers G0 cannot read: a managed instance that
-	// hides pg_authid, a role without the introspection grants, a host that is
-	// down while somebody registers it.
-	err error
-}
-
-func (a *fakeAuditor) Audit(context.Context, string, ports.Role) ([]types.Finding, error) {
-	if a.err != nil {
-		return nil, a.err
-	}
-	return a.findings, nil
-}
-
 // ---------------------------------------------------------------- catalog
 
 type fakeCatalog struct {
