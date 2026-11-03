@@ -153,6 +153,11 @@ Instead:
 The value goes from their keyboard to keeper on their machine. It does not pass
 through this conversation, the slash command, a tool argument, or any transcript.
 
+Invoked as `$keeper <task>` (Codex), the text after it describes the task only.
+A value never goes in a `$keeper` argument, a tool argument or any text that is
+logged; `$keeper` with no task means the user wants the dashboard, so tell them
+to run `keeper ui` and do not guess its port.
+
 ## When keeper says a path needs authorization
 
 A blocked `query` may come back with a loopback link of its own: a human has to

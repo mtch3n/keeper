@@ -1,0 +1,32 @@
+{
+  "description": "keeper plugin hooks. SessionStart names the profiles; PreToolUse denies raw database clients aimed at a registered host and keeper commands only a person may run, and allows keeper's own MCP tools. band.tsx draws the waiting-ticket count above the prompt. All of it runs `keeper hook`, reads the daemon, and never starts it.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v keeper >/dev/null 2>&1 || exit 0; exec keeper hook session-start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__plugin_keeper_keeper__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v keeper >/dev/null 2>&1 || exit 0; exec keeper hook pre-tool-use",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "modules": [
+    "./band.tsx"
+  ]
+}

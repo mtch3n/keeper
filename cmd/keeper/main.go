@@ -50,6 +50,8 @@ func run(args []string) error {
 		return runDaemon(rest)
 	case "ui":
 		return runUI(rest)
+	case "hook":
+		return runHook(rest)
 	case "version":
 		return runVersion(rest)
 	case "update":
