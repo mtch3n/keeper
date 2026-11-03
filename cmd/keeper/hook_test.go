@@ -252,3 +252,53 @@ func TestPlg_PLG_C15_WaitingReadsTheDaemonAndNeverStartsIt(t *testing.T) {
 		t.Errorf("got %v", got)
 	}
 }
+
+func TestHookCommandShapes(t *testing.T) {
+	registered := []string{"prod.db", "10.0.0.5", "localhost", "other.db:6543"}
+	cases := []struct {
+		command string
+		deny    bool
+	}{
+		{`PGSSLROOTCERT=/etc/ca.pem psql -h prod.db`, true},
+		{`PGPASSWORD=a/b psql -h prod.db`, true},
+		{`timeout 30 psql -h prod.db`, true},
+		{`nice -n 5 psql -h prod.db`, true},
+		{`psql --dbname=postgres://u:p@prod.db/app`, true},
+		{`psql --dbname=host=prod.db`, true},
+		{`psql -d "host=prod.db dbname=app"`, true},
+		{`psql 'hostaddr=10.0.0.5 dbname=app'`, true},
+		{`psql app`, true},
+		{`psql -h other.db -p 6543 app`, true},
+		{`PGHOST=prod.db PGPORT=5432 psql app`, true},
+		{`env PGHOST=prod.db psql app`, true},
+		{`echo x | xargs psql -h prod.db`, true},
+		{`echo $(psql -h prod.db -c 'select 1')`, true},
+		{`PATH=/x:$PATH keeper connect`, true},
+		{`KEEPER_HOME=/tmp/k keeper vault export`, true},
+		{`timeout 5 keeper approve abc`, true},
+		{`xargs keeper approve`, true},
+		{`bash -lc 'keeper update'`, true},
+
+		{`git commit -m "keeper connect requires TLS"`, false},
+		{`grep -n "keeper vault" README.md`, false},
+		{`echo "keeper update"`, false},
+		{"cat <<EOF\nkeeper approve abc\npsql -h prod.db\nEOF", false},
+		{`grep 'psql -h prod.db' README.md`, false},
+		{`psql -h localhost -p 5433 testdb`, false},
+		{`psql -h other.db -p 5432 app`, false},
+		{`PGPORT=5433 psql -h localhost app`, false},
+		{`psql -h unrelated.example.com app`, false},
+		{`command -v psql`, false},
+		{`psql --version`, false},
+		{`ls keeper`, false},
+	}
+	for _, c := range cases {
+		reason := deniedCommand(c.command, registered)
+		if c.deny && reason == "" {
+			t.Errorf("%q: want denied", c.command)
+		}
+		if !c.deny && reason != "" {
+			t.Errorf("%q: want pass, got %q", c.command, reason)
+		}
+	}
+}
