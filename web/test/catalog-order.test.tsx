@@ -23,7 +23,7 @@ test('catalog rows are sorted by column key with unclassified first', async () =
   renderApp('/connections/c1/catalog')
   await screen.findByRole('combobox', { name: 'Policy for public.products.sku' })
   const keys = screen
-    .getAllByRole('combobox')
+    .getAllByRole('combobox', { name: /^Policy for / })
     .map((c) => c.getAttribute('aria-label')?.replace('Policy for ', ''))
   expect(keys).toEqual([
     'public.alpha.a',
