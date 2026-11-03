@@ -160,7 +160,7 @@ func (s *Server) initCatalog(ctx context.Context, _ *reqInfo, w http.ResponseWri
 
 func (s *Server) activity(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
 	q := r.URL.Query()
-	f := ports.AuditFilter{SessionID: q.Get("session"), ConnectionID: q.Get("connection"), Before: q.Get("before")}
+	f := ports.AuditFilter{SessionID: q.Get("session"), ConnectionID: q.Get("connection"), Decision: types.Decision(q.Get("decision")), Before: q.Get("before")}
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {

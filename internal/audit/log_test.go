@@ -180,6 +180,29 @@ func TestQueryAndGet(t *testing.T) {
 	}
 }
 
+func TestQueryFiltersByDecisionAcrossTheWholeLog(t *testing.T) {
+	l := newLog(t)
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	decisions := []types.Decision{types.DecisionRefused, "", "", "", types.DecisionApproved}
+	var refusedID string
+	for i, d := range decisions {
+		r := &types.AuditRecord{At: base.Add(time.Duration(i) * time.Hour), SessionID: "s1", Connection: "c1", Statement: "SELECT 1", Decision: d}
+		if err := l.Write(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		if d == types.DecisionRefused {
+			refusedID = r.ID
+		}
+	}
+	got, err := l.Query(t.Context(), ports.AuditFilter{Decision: types.DecisionRefused, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != refusedID {
+		t.Errorf("decision filter returned %+v, want only the refused record beyond the limit window", got)
+	}
+}
+
 func TestQueryToleratesATruncatedLine(t *testing.T) {
 	l := newLog(t)
 	if err := l.Write(t.Context(), &types.AuditRecord{Statement: "SELECT 1"}); err != nil {

@@ -400,7 +400,9 @@ type AuditLog interface {
 type AuditFilter struct {
 	SessionID    string
 	ConnectionID string
-	Since        time.Time
+	// Decision keeps only records an escalated statement settled this way.
+	Decision types.Decision
+	Since    time.Time
 	// Before is an audit id: only records written before it are returned. It
 	// is how the Activity screen pages back through a log longer than Limit.
 	Before string

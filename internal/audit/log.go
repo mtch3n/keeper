@@ -253,6 +253,8 @@ func matches(r types.AuditRecord, f ports.AuditFilter) bool {
 		return false
 	case f.ConnectionID != "" && r.Connection != f.ConnectionID:
 		return false
+	case f.Decision != "" && r.Decision != f.Decision:
+		return false
 	case !f.Since.IsZero() && r.At.Before(f.Since):
 		return false
 	}

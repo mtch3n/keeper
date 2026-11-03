@@ -351,10 +351,16 @@ func (a *fakeAuditLog) Write(_ context.Context, r *types.AuditRecord) error {
 	return nil
 }
 
-func (a *fakeAuditLog) Query(context.Context, ports.AuditFilter) ([]types.AuditRecord, error) {
+func (a *fakeAuditLog) Query(_ context.Context, f ports.AuditFilter) ([]types.AuditRecord, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]types.AuditRecord(nil), a.records...), nil
+	var out []types.AuditRecord
+	for _, r := range a.records {
+		if f.Decision == "" || r.Decision == f.Decision {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (a *fakeAuditLog) Get(_ context.Context, id string) (*types.AuditRecord, error) {

@@ -809,6 +809,19 @@ func Test_SHELL_C7_ARefusalIsRecordedWithWhoDecided(t *testing.T) {
 	}
 }
 
+func TestActivityDecisionParamFiltersOnTheServer(t *testing.T) {
+	r := escalatingRig(t)
+	var tk types.Ticket
+	r.agent().mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
+	r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "refuse", "actor": "ming"}, nil)
+	var refused, approved []decisionRecord
+	r.browser().mustJSON("GET", "/v1/activity?decision=refused", nil, &refused)
+	r.browser().mustJSON("GET", "/v1/activity?decision=approved", nil, &approved)
+	if len(refused) != 1 || refused[0].Decision != types.DecisionRefused || len(approved) != 0 {
+		t.Errorf("refused = %+v, approved = %+v", refused, approved)
+	}
+}
+
 func Test_SHELL_C11_RetentionIsSavedAndReported(t *testing.T) {
 	r := newRig(t)
 	b := r.browser()
