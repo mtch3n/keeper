@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/mtchen/keeper/internal/client"
 	"github.com/mtchen/keeper/internal/types"
 )
@@ -83,6 +81,21 @@ func modeNotice(t connTarget, hostMode string) string {
 	return ""
 }
 
+// checkHostMode decides whether a registered host may carry this string's
+// login. A string that names a stronger sslmode than the host has would go out
+// weaker than the person asked for, so it is refused; a weaker one cannot
+// weaken a stronger host and only gets the notice.
+func checkHostMode(t connTarget, hostMode string) (string, error) {
+	want, ok := sslStrength[hostMode]
+	if !ok {
+		return "", fmt.Errorf("the registered host has sslmode %q, which is not one of %s", hostMode, strings.Join(types.SSLModes, ", "))
+	}
+	if !t.sslDefaulted && sslStrength[t.sslmode] > want {
+		return "", fmt.Errorf("the connection string asks for sslmode=%s, but this host is already registered with sslmode=%s, so the login would be weaker than requested; remove the host with `keeper host rm <name>` and connect again, or lower the string's sslmode", t.sslmode, hostMode)
+	}
+	return modeNotice(t, hostMode), nil
+}
+
 func isLoopback(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
@@ -91,23 +104,55 @@ func isLoopback(host string) bool {
 	return err == nil && ip.IsLoopback()
 }
 
+var errNotConnString = errors.New("that is not a PostgreSQL connection string; use postgres://user:password@host:5432/database or key=value pairs")
+
+// parseConnString reads only what the person typed. pgx.ParseConfig fills the
+// gaps from PGUSER, PGPASSWORD, PGHOST, the service file and ~/.pgpass and has
+// no option to stop, so a string missing a user would register a credential
+// nobody typed.
 func parseConnString(raw string) (connTarget, error) {
 	raw = strings.TrimSpace(raw)
-	cfg, err := pgx.ParseConfig(raw)
-	if err != nil || raw == "" {
-		return connTarget{}, fmt.Errorf("that is not a PostgreSQL connection string; use postgres://user:password@host:5432/database or key=value pairs")
+	var kv map[string]string
+	var err error
+	switch {
+	case raw == "":
+		return connTarget{}, errNotConnString
+	case strings.HasPrefix(raw, "postgres://") || strings.HasPrefix(raw, "postgresql://"):
+		kv, err = parseURI(raw)
+	default:
+		kv, err = parseKeyValue(raw)
 	}
-	t := connTarget{
-		address: cfg.Host, port: int(cfg.Port), database: cfg.Database,
-		user: cfg.User, password: cfg.Password,
+	if err != nil {
+		return connTarget{}, errNotConnString
 	}
-	if t.address == "" || strings.HasPrefix(t.address, "/") {
-		return connTarget{}, fmt.Errorf("the connection string needs a server host name or address")
+	t := connTarget{address: kv["host"], port: 5432, database: kv["dbname"], user: kv["user"], password: kv["password"]}
+	if p := kv["port"]; p != "" {
+		n, err := strconv.ParseUint(p, 10, 16)
+		if err != nil || n == 0 {
+			return connTarget{}, fmt.Errorf("the port in the connection string must be a number from 1 to 65535")
+		}
+		t.port = int(n)
 	}
-	if t.database == "" || t.user == "" {
-		return connTarget{}, fmt.Errorf("the connection string needs a database and a user")
+	if strings.HasPrefix(t.address, "/") {
+		return connTarget{}, fmt.Errorf("the connection string needs a server host name or address, not a socket directory")
 	}
-	if v := sslmodeOf(raw); v != "" {
+	var missing []string
+	if t.address == "" {
+		missing = append(missing, "a server host name or address")
+	}
+	if t.database == "" {
+		missing = append(missing, "a database")
+	}
+	if t.user == "" {
+		missing = append(missing, "a user")
+	}
+	if len(missing) > 0 {
+		return connTarget{}, fmt.Errorf("the connection string needs %s", strings.Join(missing, ", "))
+	}
+	if v := kv["sslmode"]; v != "" {
+		if _, ok := sslStrength[v]; !ok {
+			return connTarget{}, fmt.Errorf("sslmode %q is not valid; use one of %s", v, strings.Join(types.SSLModes, ", "))
+		}
 		t.sslmode = v
 	} else {
 		t.sslDefaulted = true
@@ -120,19 +165,72 @@ func parseConnString(raw string) (connTarget, error) {
 	return t, nil
 }
 
-func sslmodeOf(raw string) string {
-	if strings.HasPrefix(raw, "postgres://") || strings.HasPrefix(raw, "postgresql://") {
-		if u, err := url.Parse(raw); err == nil {
-			return u.Query().Get("sslmode")
-		}
-		return ""
+func parseURI(raw string) (map[string]string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
 	}
-	for f := range strings.FieldsSeq(raw) {
-		if v, ok := strings.CutPrefix(f, "sslmode="); ok {
-			return v
+	kv := map[string]string{"host": u.Hostname(), "port": u.Port(), "dbname": strings.TrimPrefix(u.Path, "/")}
+	if u.User != nil {
+		kv["user"] = u.User.Username()
+		kv["password"], _ = u.User.Password()
+	}
+	for k, v := range u.Query() {
+		if k == "database" {
+			k = "dbname"
+		}
+		if kv[k] == "" && len(v) > 0 {
+			kv[k] = v[0]
 		}
 	}
-	return ""
+	if strings.Contains(kv["host"], ",") {
+		return nil, errors.New("one host only")
+	}
+	return kv, nil
+}
+
+// parseKeyValue reads libpq's key=value form: values end at whitespace, or are
+// single-quoted, and a backslash escapes the next character in both.
+func parseKeyValue(s string) (map[string]string, error) {
+	kv := map[string]string{}
+	for s = strings.TrimSpace(s); s != ""; s = strings.TrimSpace(s) {
+		key, rest, ok := strings.Cut(s, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" || strings.ContainsAny(key, " \t\n\r") {
+			return nil, errors.New("invalid key=value")
+		}
+		rest = strings.TrimLeft(rest, " \t\n\r")
+		quoted := strings.HasPrefix(rest, "'")
+		if quoted {
+			rest = rest[1:]
+		}
+		var val strings.Builder
+		i, closed := 0, false
+		for ; i < len(rest); i++ {
+			c := rest[i]
+			if c == '\\' && i+1 < len(rest) {
+				i++
+				val.WriteByte(rest[i])
+			} else if quoted && c == '\'' {
+				i++
+				closed = true
+				break
+			} else if !quoted && strings.IndexByte(" \t\n\r", c) >= 0 {
+				break
+			} else {
+				val.WriteByte(c)
+			}
+		}
+		if quoted && !closed {
+			return nil, errors.New("unterminated quoted value")
+		}
+		if key == "database" {
+			key = "dbname"
+		}
+		kv[key] = val.String()
+		s = rest[i:]
+	}
+	return kv, nil
 }
 
 // connectProfile registers first and tests second, because the daemon has no
@@ -157,7 +255,11 @@ func connectProfile(ctx context.Context, cli *client.Client, t connTarget) error
 	for _, h := range hosts {
 		if h.Address == t.address && h.Port == t.port {
 			hostID = h.ID
-			if n := modeNotice(t, h.SSLMode); n != "" {
+			n, err := checkHostMode(t, h.SSLMode)
+			if err != nil {
+				return err
+			}
+			if n != "" {
 				fmt.Println(n)
 			}
 		}

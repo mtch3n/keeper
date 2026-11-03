@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,5 +82,90 @@ func TestModeNotice(t *testing.T) {
 		if (got != "") != tc.want || tc.want && !strings.Contains(got, tc.hostMode) {
 			t.Errorf("%s: notice %q, want notice %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestParseConnStringIgnoresEnvironment(t *testing.T) {
+	passfile := filepath.Join(t.TempDir(), "pgpass")
+	if err := os.WriteFile(passfile, []byte("*:*:*:*:from-pgpass\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PGUSER", "env_user")
+	t.Setenv("PGPASSWORD", "env_password")
+	t.Setenv("PGHOST", "env.host")
+	t.Setenv("PGPORT", "6543")
+	t.Setenv("PGDATABASE", "env_db")
+	t.Setenv("PGSSLMODE", "disable")
+	t.Setenv("PGPASSFILE", passfile)
+
+	for _, tc := range []struct {
+		name, raw string
+		want      connTarget
+		wantErr   string
+	}{
+		{"uri complete", "postgres://u:p@db.internal:5433/app", connTarget{address: "db.internal", port: 5433, database: "app", user: "u", password: "p", sslmode: "require", sslDefaulted: true}, ""},
+		{"uri no password", "postgres://u@db.internal/app", connTarget{address: "db.internal", port: 5432, database: "app", user: "u", sslmode: "require", sslDefaulted: true}, ""},
+		{"uri percent-encoded", "postgres://u:p%40ss%3Aw%2Fd%20x@db.internal/app", connTarget{address: "db.internal", port: 5432, database: "app", user: "u", password: "p@ss:w/d x", sslmode: "require", sslDefaulted: true}, ""},
+		{"uri query sslmode", "postgresql://u:p@db.internal/app?sslmode=verify-full", connTarget{address: "db.internal", port: 5432, database: "app", user: "u", password: "p", sslmode: "verify-full"}, ""},
+		{"kv complete", "host=db.internal port=5433 dbname=app user=u password=p", connTarget{address: "db.internal", port: 5433, database: "app", user: "u", password: "p", sslmode: "require", sslDefaulted: true}, ""},
+		{"kv quoted", `host='db.internal' dbname='my app' user=u password='it\'s a "pw" \\ x'`, connTarget{address: "db.internal", port: 5432, database: "my app", user: "u", password: `it's a "pw" \ x`, sslmode: "require", sslDefaulted: true}, ""},
+		{"kv database alias", "host=db.internal database=app user=u", connTarget{address: "db.internal", port: 5432, database: "app", user: "u", sslmode: "require", sslDefaulted: true}, ""},
+		{"kv no user", "host=db.internal dbname=app", connTarget{}, "a user"},
+		{"kv no database", "host=db.internal user=u", connTarget{}, "a database"},
+		{"kv no host", "dbname=app user=u", connTarget{}, "host"},
+		{"uri no database", "postgres://u:p@db.internal", connTarget{}, "a database"},
+		{"uri no user", "postgres://db.internal/app", connTarget{}, "a user"},
+		{"unknown sslmode", "postgres://u:p@db.internal/app?sslmode=reqiure", connTarget{}, "verify-full"},
+		{"bad port", "host=db.internal port=x dbname=app user=u", connTarget{}, "port"},
+		{"not a string", "hello", connTarget{}, "not a PostgreSQL connection string"},
+		{"empty", "  ", connTarget{}, "not a PostgreSQL connection string"},
+	} {
+		got, err := parseConnString(tc.raw)
+		if tc.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("%s: err %v, want it to contain %q", tc.name, err, tc.wantErr)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		tc.want.profile = tc.want.database + "_" + tc.want.user
+		if got != tc.want {
+			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestCheckHostMode(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		t          connTarget
+		hostMode   string
+		wantNotice bool
+		wantErr    bool
+	}{
+		{"stronger refused", connTarget{sslmode: "require"}, "disable", false, true},
+		{"stronger refused over prefer", connTarget{sslmode: "verify-full"}, "prefer", false, true},
+		{"weaker noticed", connTarget{sslmode: "disable"}, "require", true, false},
+		{"equal silent", connTarget{sslmode: "require"}, "require", false, false},
+		{"defaulted weaker host noticed", connTarget{sslmode: "require", sslDefaulted: true}, "prefer", true, false},
+		{"defaulted never refused", connTarget{sslmode: "require", sslDefaulted: true}, "disable", true, false},
+	} {
+		notice, err := checkHostMode(tc.t, tc.hostMode)
+		if (err != nil) != tc.wantErr || (notice != "") != tc.wantNotice {
+			t.Errorf("%s: notice %q err %v", tc.name, notice, err)
+		}
+		if err != nil {
+			for _, want := range []string{tc.t.sslmode, tc.hostMode, "keeper host rm"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s: error %q lacks %q", tc.name, err, want)
+				}
+			}
+		}
+	}
+	if _, err := checkHostMode(connTarget{sslmode: "require"}, "bogus"); err == nil || !strings.Contains(err.Error(), "verify-full") {
+		t.Errorf("unknown host mode: %v", err)
 	}
 }
