@@ -16,13 +16,11 @@ import (
 
 func runHost(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("host: expected a subcommand (add, ls, rm)")
+		return fmt.Errorf("host: expected a subcommand (ls, rm)")
 	}
 	ctx := context.Background()
 	sub, rest := args[0], args[1:]
 	switch sub {
-	case "add":
-		return hostAdd(ctx, rest)
 	case "ls":
 		return hostLs(ctx, rest)
 	case "rm":
@@ -45,38 +43,6 @@ func resolveHostID(ctx context.Context, cli *client.Client, name string) (string
 		}
 	}
 	return "", fmt.Errorf("no host named %q (run `keeper host ls`)", name)
-}
-
-func hostAdd(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("host add", flag.ExitOnError)
-	name := fs.String("name", "", "host name (required)")
-	address := fs.String("address", "", "server hostname or IP (required)")
-	port := fs.Int("port", 5432, "server port")
-	sslmode := fs.String("sslmode", "prefer", "libpq sslmode: disable, allow, prefer, require, verify-ca, verify-full")
-	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if *name == "" || *address == "" {
-		return fmt.Errorf("host add: --name and --address are required")
-	}
-
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	h, err := cli.RegisterHost(ctx, client.RegisterHostParams{Name: *name, Address: *address, Port: *port, SSLMode: *sslmode})
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return printJSON(h)
-	}
-	fmt.Printf("host %q registered (id %s). Add a database on it with\n", h.Name, h.ID)
-	fmt.Printf("  keeper connection add --host %s --name ... --database ... --user ...\n", h.Name)
-	return nil
 }
 
 func hostLs(ctx context.Context, args []string) error {
