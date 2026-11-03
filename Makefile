@@ -43,7 +43,7 @@ vet:
 	$(GO) vet $(PKGS)
 
 staticcheck:
-	staticcheck $(PKGS)
+	go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 $(PKGS)
 
 test:
 	$(GO) test $(PKGS)

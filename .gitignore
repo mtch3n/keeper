@@ -36,3 +36,5 @@ AGENTS.md
 
 # design critique snapshots
 .impeccable/
+plugin/tsconfig.json
+plugin/.claude-plugin/types/
