@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { ChevronRightIcon } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
@@ -9,7 +10,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Cell, type CellValue } from '@/components/wrappers/Cell'
 import { Fact, Facts } from '@/components/wrappers/Facts'
+import { PagedTable } from '@/components/wrappers/PagedTable'
 import { getActivityRecord, listActivity, listConnections } from '@/lib/api'
+import { usePaging } from '@/lib/paging'
 import { age, durationMs, relationList, renderSQL } from '@/lib/render'
 import { cn } from '@/lib/utils'
 import type { ActivityDetail, AuditRecord, ColumnMeta, ConnectionSummary, QueryResult, Transform } from '@/lib/types'
@@ -17,9 +20,6 @@ import type { ActivityDetail, AuditRecord, ColumnMeta, ConnectionSummary, QueryR
 /** The filter value meaning "no filter". */
 const ALL = 'all'
 const NO_FILTER = { session: ALL, connection: ALL, decision: ALL }
-
-/** Rows per page. One more is asked for, to know whether an older page exists. */
-const PAGE = 50
 
 /** Mirrors redact.RedactedMarker: a cell that kept nothing. */
 const REDACTED = '⟨redacted⟩'
@@ -38,10 +38,7 @@ const REDACTED = '⟨redacted⟩'
  */
 export function ActivityPage() {
   const [records, setRecords] = useState<AuditRecord[] | null>(null)
-  const [hasOlder, setHasOlder] = useState(false)
-  // The `before` cursor of every page from the newest to this one. Empty is
-  // the first page; Older pushes the last id shown, Newer pops.
-  const [cursors, setCursors] = useState<string[]>([])
+  const [total, setTotal] = useState(0)
   const [open, setOpen] = useState<string | null>(null)
   const [details, setDetails] = useState<Record<string, ActivityDetail>>({})
   const [error, setError] = useState<string | null>(null)
@@ -55,24 +52,21 @@ export function ActivityPage() {
     listConnections().then(setConnections).catch(() => {})
   }, [])
 
-  // A cursor belongs to the filter it was taken under, so changing a filter
-  // goes back to the newest page.
-  function filter(change: Partial<typeof filters>) {
-    setCursors([])
-    setFilters((f) => ({ ...f, ...change }))
-  }
+  const paging = usePaging('activity', JSON.stringify(filters))
+  const { page: pageNo, size } = paging
+  const filter = (change: Partial<typeof filters>) => setFilters((f) => ({ ...f, ...change }))
 
-  const before = cursors.at(-1)
   const refresh = useCallback(async () => {
     try {
-      const page = await listActivity({
+      const { records: page, total } = await listActivity({
         session: filters.session === ALL ? undefined : filters.session,
         connection: filters.connection === ALL ? undefined : filters.connection,
-        before,
-        limit: PAGE + 1,
+        decision: filters.decision === ALL ? undefined : filters.decision,
+        limit: size,
+        offset: (pageNo - 1) * size,
       })
-      setHasOlder(page.length > PAGE)
-      setRecords(page.slice(0, PAGE))
+      setTotal(total)
+      setRecords(page)
       setAgents((known) => {
         const next = { ...known }
         for (const r of page) next[r.session_id] ??= `${r.client.name} · ${r.client.workspace ?? 'unknown workspace'}`
@@ -82,7 +76,7 @@ export function ActivityPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [filters, before])
+  }, [filters, pageNo, size])
 
   useEffect(() => {
     void refresh()
@@ -140,7 +134,7 @@ export function ActivityPage() {
 
       {records === null ? (
         <Skeleton className="h-40 w-full" />
-      ) : records.length === 0 ? (
+      ) : records.length === 0 && total === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyTitle>No activity</EmptyTitle>
@@ -148,21 +142,27 @@ export function ActivityPage() {
           </EmptyHeader>
         </Empty>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8" />
-              <TableHead>When</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Connection</TableHead>
-              <TableHead>Decision</TableHead>
-              <TableHead className="text-right">Rows</TableHead>
-              <TableHead>Policies applied</TableHead>
-              <TableHead>Statement</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {records.filter((r) => filters.decision === ALL || r.decision === filters.decision).map((r) => (
+        <PagedTable
+          paging={paging}
+          items={records}
+          total={total}
+          unit="records"
+          label="Activity"
+          head={
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-8" />
+                <TableHead>When</TableHead>
+                <TableHead>Agent</TableHead>
+                <TableHead>Connection</TableHead>
+                <TableHead>Decision</TableHead>
+                <TableHead className="text-right">Rows</TableHead>
+                <TableHead>Policies applied</TableHead>
+                <TableHead>Statement</TableHead>
+              </TableRow>
+            </TableHeader>
+          }
+          row={(r) => (
               <Fragment key={r.id}>
                 <TableRow className="cursor-pointer" aria-expanded={open === r.id} onClick={() => void toggle(r.id)}>
                   <TableCell>
@@ -196,26 +196,9 @@ export function ActivityPage() {
                   </TableRow>
                 ) : null}
               </Fragment>
-            ))}
-          </TableBody>
-        </Table>
+          )}
+        />
       )}
-
-      {cursors.length > 0 || hasOlder ? (
-        <div className="flex items-center gap-3">
-          <Button variant="outline" disabled={cursors.length === 0} onClick={() => setCursors((c) => c.slice(0, -1))}>
-            Newer
-          </Button>
-          <span className="text-meta text-muted-foreground">page {cursors.length + 1}</span>
-          <Button
-            variant="outline"
-            disabled={!hasOlder || !records?.length}
-            onClick={() => setCursors((c) => [...c, records!.at(-1)!.id])}
-          >
-            Older
-          </Button>
-        </div>
-      ) : null}
 
       <p className="text-meta text-muted-foreground">Records policies applied, not verified output. Literals are not stored.</p>
     </div>
@@ -286,7 +269,20 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
                 <TableHeader>
                   <TableRow>
                     {record.result.columns.map((c) => (
-                      <TableHead key={c.name}>{c.name}</TableHead>
+                      <TableHead key={c.name}>
+                        {c.policy === 'redact' ? (
+                          <Link
+                            to={`/connections/${record.connection}/catalog?column=${encodeURIComponent(c.name)}`}
+                            className="underline underline-offset-4"
+                            title="Change this column's policy in the catalog"
+                          >
+                            {c.name}
+                          </Link>
+                        ) : (
+                          c.name
+                        )}{' '}
+                        <span className="text-meta text-muted-foreground">{c.policy}</span>
+                      </TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
@@ -386,9 +382,13 @@ function cellValue(v: unknown, column: ColumnMeta, transforms: Record<string, Tr
   }
 }
 
+const CUT = { rows: 'row ceiling', size: 'size cap' } as const
+
 function resultNote(r: QueryResult): string {
+  if (r.executed_rows) return `${r.executed_rows} row(s) changed`
   const rows = `${r.rows.length} row(s)`
-  return r.truncated ? `${rows} · truncated at row ceiling` : rows
+  if (!r.truncated) return rows
+  return r.truncated_by ? `${rows} · truncated at the ${CUT[r.truncated_by]}` : `${rows} · truncated`
 }
 
 function summarize(transforms: Record<string, Transform> | undefined): string {

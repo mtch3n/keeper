@@ -6,10 +6,12 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { PagedTable } from '@/components/wrappers/PagedTable'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { getDoctor, getSettings, updateSettings, type DoctorReport, type Settings } from '@/lib/api'
+import { usePaging } from '@/lib/paging'
 import { age } from '@/lib/render'
 import { positiveInt, useSave } from '@/lib/save'
 import { ConfirmWiden, SettingSection } from '@/components/wrappers/SettingSection'
@@ -27,7 +29,7 @@ import { ConfirmWiden, SettingSection } from '@/components/wrappers/SettingSecti
  * The daemon-wide choices: how long the activity log keeps a record, how long a
  * database's connections stay open unused.
  */
-function Preferences() {
+function Preferences({ onSaved }: { onSaved: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [confirmOff, setConfirmOff] = useState(false)
   const save = useSave()
@@ -40,7 +42,10 @@ function Preferences() {
 
   // Each Save sends only its own setting, so one field can never reset another.
   const store = (patch: Partial<Settings>) =>
-    void save.run(async () => setSettings(await updateSettings(patch)))
+    void save.run(async () => {
+      setSettings(await updateSettings(patch))
+      onSaved()
+    })
 
   return (
     <SettingSection title="Preferences" save={save}>
@@ -146,6 +151,7 @@ function NumberSetting({
 export function SettingsPage() {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const sessionPaging = usePaging('sessions')
 
   const refresh = useCallback(async () => {
     try {
@@ -164,11 +170,11 @@ export function SettingsPage() {
     <div className="flex flex-col gap-8">
       <h1 className="text-title">Settings</h1>
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
-      <Preferences />
+      <Preferences onSaved={() => void refresh()} />
       <Separator />
       {report === null ? (
         <div className="flex flex-col gap-2">
-          <p className="text-meta text-muted-foreground">Checking the daemon and every connection…</p>
+          <p className="text-meta text-muted-foreground">Checking the daemon…</p>
           <Skeleton className="h-40 w-full" />
         </div>
       ) : (
@@ -191,11 +197,9 @@ export function SettingsPage() {
       <section className="flex flex-col gap-3">
         <h2 className="text-heading">Vault</h2>
         {/* There is no locked state and no unlock control. keeperd opens the
-            vault from the keychain, KEEPER_MASTER_KEY or key.age before it
-            serves and exits if it cannot (§4.3), so a daemon this screen can
-            reach has an open vault. What is left to report is which source
-            answered: silent degradation to a weaker one is a defect (R4.3), so
-            it is named rather than assumed. */}
+            vault before it serves and exits if it cannot, so a daemon this
+            screen can reach has an open vault. What is left to report is which
+            key source answered. */}
         <Facts>
           <Fact label="state">
             <span className="flex items-center gap-2">
@@ -226,7 +230,7 @@ export function SettingsPage() {
                 {report.detector.name} {report.detector.version ?? ''}
               </Fact>
               {/* "What was examining my data, and could it talk to anyone" has to
-                  be answerable after the fact (R8.5g), so it is answerable now. */}
+                  be answerable after the fact, so it is answerable now. */}
               <Fact label="network">
                 {report.detector.network_posture === 'none' ? (
                   'no network access'
@@ -248,26 +252,30 @@ export function SettingsPage() {
           <Separator />
           <section className="flex flex-col gap-3">
             <h2 className="text-heading">Sessions</h2>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Workspace</TableHead>
-                  <TableHead className="text-right">Connected</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {report.sessions.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="text-meta">
-                      {s.client.name} {s.client.version ?? ''}
-                    </TableCell>
-                    <TableCell className="text-meta">{s.client.workspace ?? '—'}</TableCell>
-                    <TableCell className="text-right text-meta">{age(s.connected_at)} ago</TableCell>
+            <PagedTable
+              paging={sessionPaging}
+              items={[...report.sessions].sort((a, b) => a.connected_at.localeCompare(b.connected_at) || a.id.localeCompare(b.id))}
+              unit="sessions"
+              label="Sessions"
+              head={
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Workspace</TableHead>
+                    <TableHead className="text-right">Connected</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+              }
+              row={(s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="text-meta">
+                    {s.client.name} {s.client.version ?? ''}
+                  </TableCell>
+                  <TableCell className="text-meta">{s.client.workspace ?? '—'}</TableCell>
+                  <TableCell className="text-right text-meta">{age(s.connected_at)} ago</TableCell>
+                </TableRow>
+              )}
+            />
             <p className="text-meta text-muted-foreground">Closing a session discards its tickets and tokens.</p>
           </section>
         </>

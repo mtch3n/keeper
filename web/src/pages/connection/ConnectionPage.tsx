@@ -5,7 +5,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { buttonVariants } from '@/components/ui/button'
-import { getConnection, listConnections, type ConnectionDetail } from '@/lib/api'
+import { getConnection, KeeperApiError, listConnections, type ConnectionDetail } from '@/lib/api'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ConnectionSummary } from '@/lib/types'
 import { CatalogTab } from '@/pages/connection/CatalogTab'
@@ -34,8 +34,9 @@ export function ConnectionPage({ tab }: { tab: Tab }) {
       setDetail(await getConnection(id))
       setMissing(false)
       setError(null)
-    } catch {
-      setMissing(true)
+    } catch (e) {
+      if (e instanceof KeeperApiError && e.error.code === 'unknown_connection') setMissing(true)
+      else setError(e instanceof Error ? e.message : String(e))
     }
   }, [id])
 
@@ -58,7 +59,9 @@ export function ConnectionPage({ tab }: { tab: Tab }) {
       </Empty>
     )
   }
-  if (detail === null || detail.id !== id) return <Skeleton className="h-40 w-full" />
+  if (detail === null || detail.id !== id) {
+    return error ? <p className="text-sm text-blocked">{error}</p> : <Skeleton className="h-40 w-full" />
+  }
 
   const changed = () => void reload()
   const tabClass =

@@ -50,8 +50,11 @@ under GDPR Article 4(11).
    Paste a PostgreSQL connection string at the hidden prompt, for example
    `postgres://app_ro:...@db.internal/app?sslmode=require`. keeper makes one
    profile for that login. The profile reads and masks. It cannot write. With no
-   `sslmode` in the string, keeper requires TLS unless the host is loopback, and an
-   explicit `sslmode`, including `disable`, is always used.
+   `sslmode` in the string, keeper requires TLS unless the host is loopback. An
+   explicit `sslmode`, including `disable`, is used for a new host. A host that
+   keeper already holds keeps its own `sslmode`: a string that asks for a weaker
+   mode does not lower it, and keeper refuses a string that would send the login
+   with less TLS than it asked for or than its default.
 
 3. Ask the agent a question about your data. The agent calls `query`, and the
    rows come back on the same call.
@@ -137,6 +140,11 @@ restores them on another machine. keeper does not store the passphrase.
   misses a function that is declared STABLE or IMMUTABLE but calls a volatile one.
   It also misses immutable functions that run at plan time. For certainty, set
   `reads=always`.
+- **The preview of a write does not undo what a trigger does outside the
+  transaction.** keeper runs a write in a transaction and rolls it back to count
+  the rows. A trigger can call a function with an effect that stays, such as
+  `nextval` or `dblink_exec`. keeper does not run the preview for a statement
+  that calls such a function itself, but it cannot see inside a trigger.
 - **keeper hides values. It does not hide that a table or column exists.** It
   does not stop inference, such as `length(email)` or a predicate that narrows
   the rows. Use database grants to control which tables a role can reach.

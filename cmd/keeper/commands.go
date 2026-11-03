@@ -17,6 +17,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"golang.org/x/term"
 
@@ -285,8 +286,12 @@ func printQueue(queue []types.ApprovalItem) error {
 // from the SQL alone what the result contains.
 func printApproval(it types.ApprovalItem) {
 	f := it.Facts
-	fmt.Printf("agent     %s · %s\n", it.Session.Client.Name, it.Session.Client.Workspace)
-	if it.Write != nil {
+	fmt.Printf("agent     %s · %s\n", renderSQL(it.Session.Client.Name), renderSQL(it.Session.Client.Workspace))
+	if it.Write != nil && it.Write.Unpreviewed {
+		fmt.Printf("impact    %s · about %d rows (an estimate) · %s\n",
+			it.Write.Operation, it.Write.RowCount, relations(f.Relations))
+		fmt.Println("          not previewed: the statement calls a function with side effects")
+	} else if it.Write != nil {
 		fmt.Printf("impact    %s · %d rows as of the preview, %s ago · %s\n",
 			it.Write.Operation, it.Write.RowCount, age(it.Write.PreviewedAt), relations(f.Relations))
 		fmt.Println("          the count is not a lock; the executed count is reported back")
@@ -348,10 +353,11 @@ func runActivity(args []string) error {
 	if *since > 0 {
 		f.Since = time.Now().Add(-*since)
 	}
-	recs, err := cli.ListActivity(ctx, f)
+	page, err := cli.ListActivity(ctx, f)
 	if err != nil {
 		return err
 	}
+	recs := page.Records
 	if *asJSON {
 		return printJSON(recs)
 	}
@@ -360,19 +366,34 @@ func runActivity(args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "WHEN\tCONNECTION\tROWS\tPOLICIES APPLIED\tSTATEMENT")
+	fmt.Fprintln(w, "WHEN\tCONNECTION\tOUTCOME\tROWS\tPOLICIES APPLIED\tSTATEMENT")
 	for _, r := range recs {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
-			r.At.Format(time.RFC3339), r.Connection, r.RowCount,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			r.At.Format(time.RFC3339), r.Connection, outcomeOf(r), r.RowCount,
 			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
 	}
 	w.Flush()
+	if page.Total > len(recs) {
+		fmt.Printf("\nShowing the newest %d of %d records. Raise --limit to see more.\n", len(recs), page.Total)
+	}
 	// R10d: the log records what keeper intended to emit. Saying "values masked"
 	// here would claim something the log cannot establish.
 	fmt.Println("\nPolicies applied, not bytes verified: the log records the decision,")
 	fmt.Println("not proof that redaction ran correctly (SPEC R10d).")
 	fmt.Println("Literals are never stored, so the statement shown is the statement as kept.")
 	return nil
+}
+
+// outcomeOf is the decision or the error a record ended in. A record with
+// neither ran and returned.
+func outcomeOf(r types.AuditRecord) string {
+	switch {
+	case r.Decision != "":
+		return string(r.Decision)
+	case r.ErrorCode != "":
+		return string(r.ErrorCode)
+	}
+	return "ok"
 }
 
 // --------------------------------------------------------------- version ---
@@ -606,7 +627,7 @@ func runVault(args []string) error {
 			return err
 		}
 		fmt.Println("vault imported")
-		return nil
+		return warnMissingCatalogs(ctx, cli)
 
 	default:
 		return fmt.Errorf("vault: unknown subcommand %q", args[0])
@@ -756,15 +777,18 @@ func onOff(on bool) string {
 
 // ---------------------------------------------------------------- shared ---
 
-// renderSQL makes a trojan-source payload visible rather than letting the
-// terminal act on it. SPEC R9.2: bidirectional overrides render as their code
-// point, so a statement cannot read one way and run another.
+// renderSQL makes a trojan-source payload and terminal control bytes visible
+// rather than letting the terminal act on them. SPEC R9.2: bidirectional
+// overrides, an escape and the other control characters render as their code
+// point, so a statement cannot read one way and run another or rewrite the
+// screen. Newline and tab stay.
 func renderSQL(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		switch r {
-		case '‪', '‫', '‬', '‭', '‮',
-			'⁦', '⁧', '⁨', '⁩', '‏', '‎':
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case unicode.IsControl(r), strings.ContainsRune("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069", r):
 			fmt.Fprintf(&b, "[U+%04X]", r)
 		default:
 			b.WriteRune(r)
@@ -903,4 +927,37 @@ func presence(ok bool) string {
 		return "present"
 	}
 	return "absent"
+}
+
+// missingCatalogs names each profile whose catalog is a shared file that does
+// not exist on this machine. An export carries the catalog of a profile that
+// keeps it in keeper's state directory and leaves a shared path where it is, so
+// on a new machine such a profile starts with no declared columns.
+func missingCatalogs(details []*client.ConnectionDetail) []string {
+	var out []string
+	for _, d := range details {
+		if p := d.CatalogStatus.Path; p != "" {
+			if _, err := os.Stat(p); err != nil {
+				out = append(out, d.Name+" ("+p+")")
+			}
+		}
+	}
+	return out
+}
+
+func warnMissingCatalogs(ctx context.Context, cli *client.Client) error {
+	conns, err := cli.ListConnections(ctx)
+	if err != nil {
+		return err
+	}
+	var details []*client.ConnectionDetail
+	for _, c := range conns {
+		if d, err := cli.DescribeConnection(ctx, c.ID); err == nil {
+			details = append(details, d)
+		}
+	}
+	if missing := missingCatalogs(details); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: these profiles keep their catalog in a shared file that is absent here, so their declared columns are not applied until it is restored: %s\n", strings.Join(missing, ", "))
+	}
+	return nil
 }

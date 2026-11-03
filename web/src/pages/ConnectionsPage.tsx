@@ -5,10 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { PagedTable } from '@/components/wrappers/PagedTable'
 import { HostDialog } from '@/components/wrappers/HostDialog'
 import { RegisterDialog } from '@/components/wrappers/RegisterDialog'
 import { listConnections, listHosts, removeHost } from '@/lib/api'
+import { usePaging } from '@/lib/paging'
 import type { ConnectionSummary, HostView } from '@/lib/types'
 
 const COLUMNS = 5
@@ -30,6 +32,7 @@ export function ConnectionsPage() {
   const [list, setList] = useState<ConnectionSummary[]>([])
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const paging = usePaging('connections', filter.trim().toLowerCase())
   const navigate = useNavigate()
 
   const load = useCallback(async () => {
@@ -58,6 +61,7 @@ export function ConnectionsPage() {
   const groups = hosts
     .map((h) => ({ host: h, rows: list.filter((c) => h.connections.includes(c.id) && matches(c, h)) }))
     .filter((g) => needle === '' || g.rows.length > 0)
+    .sort((a, b) => a.host.name.localeCompare(b.host.name) || a.host.id.localeCompare(b.host.id))
 
   return (
     <div className="flex flex-col gap-6">
@@ -91,37 +95,36 @@ export function ConnectionsPage() {
             onChange={(e) => setFilter(e.target.value)}
             className="w-full sm:w-80"
           />
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Database</TableHead>
-                <TableHead>User</TableHead>
-                <TableHead>Writes</TableHead>
-                <TableHead>Reads</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groups.length === 0 ? (
+          <PagedTable
+            paging={paging}
+            items={groups}
+            unit="hosts"
+            label="Connections"
+            head={
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={COLUMNS} className="text-meta text-muted-foreground">
-                    No connection matches “{filter.trim()}”.
-                  </TableCell>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Database</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Writes</TableHead>
+                  <TableHead>Reads</TableHead>
                 </TableRow>
-              ) : (
-                groups.map(({ host, rows }) => (
-                  <HostRows
-                    key={host.id}
-                    host={host}
-                    rows={rows}
-                    onOpen={(id) => navigate(`/connections/${id}`)}
-                    onChanged={load}
-                    onError={setError}
-                  />
-                ))
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+            }
+            row={({ host, rows }) => (
+              <HostRows
+                key={host.id}
+                host={host}
+                rows={rows}
+                onOpen={(id) => navigate(`/connections/${id}`)}
+                onChanged={load}
+                onError={setError}
+              />
+            )}
+          />
+          {groups.length === 0 ? (
+            <p className="text-meta text-muted-foreground">No connection matches “{filter.trim()}”.</p>
+          ) : null}
         </>
       )}
     </div>
@@ -187,13 +190,13 @@ function HostRows({
       {rows.map((c) => {
         return (
           <TableRow key={c.id} className="cursor-pointer" onClick={() => onOpen(c.id)}>
-            <TableCell className="text-meta">
+            <TableCell className="text-meta whitespace-normal break-all">
               <Link to={`/connections/${c.id}`} onClick={(e) => e.stopPropagation()} className="hover:underline">
                 {c.name}
               </Link>
             </TableCell>
-            <TableCell className="text-meta">{c.database}</TableCell>
-            <TableCell className="text-meta">{c.username}</TableCell>
+            <TableCell className="text-meta whitespace-normal break-all">{c.database}</TableCell>
+            <TableCell className="text-meta whitespace-normal break-all">{c.username}</TableCell>
             <TableCell className="text-meta">{c.writes}</TableCell>
             <TableCell className="text-meta">{c.reads}</TableCell>
           </TableRow>

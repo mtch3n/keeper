@@ -146,6 +146,9 @@ func (d *Daemon) CloseConn(c net.Conn) {
 			continue
 		}
 		if !tk.t.State.Terminal() {
+			if tk.cancelRun != nil {
+				tk.cancelRun()
+			}
 			d.setTicketStateLocked(tk, types.TicketCancelled, nil, nil)
 			events = append(events, d.dequeueLocked(id, "session_closed")...)
 		}
@@ -164,6 +167,8 @@ func (d *Daemon) CloseConn(c net.Conn) {
 		delete(d.requests, id)
 	}
 	d.mu.Unlock()
+
+	d.recordDecisions(context.Background(), events, types.DecisionCancelled, s.client.Name)
 
 	// The reverse map is memory only and dies with the session (§8.4, R3.4d).
 	d.deps.Redactor.DropSession(s.id)

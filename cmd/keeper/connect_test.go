@@ -74,7 +74,6 @@ func TestModeNotice(t *testing.T) {
 	}{
 		{"explicit differs", connTarget{sslmode: "disable"}, "require", true},
 		{"explicit same", connTarget{sslmode: "require"}, "require", false},
-		{"default, weaker host", connTarget{sslmode: "require", sslDefaulted: true}, "prefer", true},
 		{"default, stronger host", connTarget{sslmode: "require", sslDefaulted: true}, "verify-full", false},
 		{"default, same host", connTarget{sslmode: "prefer", sslDefaulted: true}, "prefer", false},
 	} {
@@ -150,15 +149,17 @@ func TestCheckHostMode(t *testing.T) {
 		{"stronger refused over prefer", connTarget{sslmode: "verify-full"}, "prefer", false, true},
 		{"weaker noticed", connTarget{sslmode: "disable"}, "require", true, false},
 		{"equal silent", connTarget{sslmode: "require"}, "require", false, false},
-		{"defaulted weaker host noticed", connTarget{sslmode: "require", sslDefaulted: true}, "prefer", true, false},
-		{"defaulted never refused", connTarget{sslmode: "require", sslDefaulted: true}, "disable", true, false},
+		{"defaulted weaker host refused", connTarget{sslmode: "require", sslDefaulted: true}, "prefer", false, true},
+		{"defaulted disable host refused", connTarget{sslmode: "require", sslDefaulted: true}, "disable", false, true},
+		{"defaulted stronger host silent", connTarget{sslmode: "require", sslDefaulted: true}, "verify-full", false, false},
+		{"defaulted equal host silent", connTarget{sslmode: "prefer", sslDefaulted: true}, "prefer", false, false},
 	} {
 		notice, err := checkHostMode(tc.t, tc.hostMode)
 		if (err != nil) != tc.wantErr || (notice != "") != tc.wantNotice {
 			t.Errorf("%s: notice %q err %v", tc.name, notice, err)
 		}
 		if err != nil {
-			for _, want := range []string{tc.t.sslmode, tc.hostMode, "keeper host rm"} {
+			for _, want := range []string{tc.t.sslmode, tc.hostMode, "keeper connection rm", "keeper host rm"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%s: error %q lacks %q", tc.name, err, want)
 				}
@@ -167,5 +168,30 @@ func TestCheckHostMode(t *testing.T) {
 	}
 	if _, err := checkHostMode(connTarget{sslmode: "require"}, "bogus"); err == nil || !strings.Contains(err.Error(), "verify-full") {
 		t.Errorf("unknown host mode: %v", err)
+	}
+}
+
+func TestParseConnStringRefusesAParameterItWouldDrop(t *testing.T) {
+	for _, raw := range []string{
+		"postgres://u:p@db.internal/app?sslrootcert=/etc/ca.pem",
+		"postgres://u:p@db.internal/app?options=-c%20role%3Dro",
+		"host=db.internal dbname=app user=u sslrootcert=/etc/ca.pem",
+		"host=db.internal dbname=app user=u options='-c role=ro'",
+	} {
+		_, err := parseConnString(raw)
+		if err == nil || !strings.Contains(err.Error(), "sslrootcert") && !strings.Contains(err.Error(), "options") {
+			t.Errorf("%q: want a refusal naming the parameter, got %v", raw, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "p@") {
+			t.Errorf("the refusal repeats the string: %v", err)
+		}
+	}
+	for _, raw := range []string{
+		"postgres://u:p@db.internal/app?sslmode=require&database=app",
+		"host=db.internal dbname=app user=u password=p port=5433 sslmode=verify-full",
+	} {
+		if _, err := parseConnString(raw); err != nil {
+			t.Errorf("%q: %v", raw, err)
+		}
 	}
 }

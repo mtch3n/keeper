@@ -77,7 +77,7 @@ Usage:
   keeper host rm <name>
   keeper connection ls
   keeper connection show <name>
-  keeper connection set <name> [--reads always|uncertain|never] [--detection off|scan|all] [--writes off|ask|allow] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]
+  keeper connection set <name> [--reads always|uncertain|never] [--detection off|scan|all] [--writes off|ask|allow] [--max-rows N] [--max-bytes N] [--timeout D]
   keeper connection test <name>
   keeper connection rm <name>
   keeper catalog init <name> [--sample N]

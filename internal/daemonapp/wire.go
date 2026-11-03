@@ -103,6 +103,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, func(), e
 		Detector:     patterns,
 		Pipeline:     &pipelineAdapter{p: pipe, catalogs: cats},
 		Notifier:     daemon.DesktopNotifier(),
+		VaultReplaced: func() {
+			cats.closeAll()
+			exec.Shutdown()
+		},
 	}
 
 	cleanup := func() {
@@ -228,9 +232,9 @@ func (c *catalogs) openOne(connID string) (*catalog.Catalog, error) {
 		Cache:     filepath.Join(c.dir, "catalog-"+safeFileName(connID)+".db"),
 	}
 	if paths.Committed == "" {
-		paths.Committed = filepath.Join(c.dir, "catalogs", safeFileName(connID), "catalog.yaml")
+		paths.Committed = filepath.Join(vault.CatalogDir(c.dir, connID), vault.CatalogFile)
 	}
-	paths.Overlay = filepath.Join(filepath.Dir(paths.Committed), "catalog.local.yaml")
+	paths.Overlay = filepath.Join(filepath.Dir(paths.Committed), vault.CatalogOverlayFile)
 	cat, err := c.store.Open(ctx, connID, paths)
 	if err != nil {
 		return nil, openError(err)
@@ -394,7 +398,7 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 	req := a.request(sess, connID, sql, params)
 	req.MaxRows = maxRows
 	if id, ok := strings.CutPrefix(authorization, "ticket:"); ok {
-		req.Approval = &pipeline.Approval{TicketID: id, Approver: daemon.ApproverFrom(ctx)}
+		req.Approval = &pipeline.Approval{TicketID: id, Approver: daemon.ApproverFrom(ctx), PreviewedRows: daemon.PreviewedRowsFrom(ctx)}
 	}
 	dec, err := a.p.Query(ctx, req)
 	if err != nil {

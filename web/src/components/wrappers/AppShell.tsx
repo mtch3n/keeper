@@ -5,7 +5,7 @@ import { AgentsIndicator } from '@/components/wrappers/AgentsIndicator'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { Brand } from '@/components/wrappers/Brand'
 import { ThemeToggle } from '@/components/wrappers/ThemeToggle'
-import { useInbox } from '@/lib/inbox'
+import { InboxContext, useInboxState } from '@/lib/inbox'
 import { useLiveStatus } from '@/lib/live-status'
 
 export type Section = 'inbox' | 'activity' | 'settings'
@@ -31,7 +31,8 @@ const SETTINGS_TABS: { tab: SettingsTab; label: string; to: string }[] = [
  * the one that asks something of you. There is no sidebar: its agent list is the
  * agents indicator here.
  *
- * Inbox carries the count of what waits. The daemon's lamp joins
+ * The shell reads the Inbox once and shares it with the screen inside, so the
+ * count and the cards come from one load. Inbox carries the count of what waits. The daemon's lamp joins
  * the bar only when the stream is degraded: a permanent "live" lamp spends the
  * chrome's attention on the reading that never needs acting on.
  */
@@ -45,7 +46,8 @@ export function AppShell({
   children: ReactNode
 }) {
   const { status } = useLiveStatus()
-  const { count } = useInbox()
+  const inbox = useInboxState()
+  const { count } = inbox
 
   const daemon =
     status === 'waiting'
@@ -65,6 +67,7 @@ export function AppShell({
     'aria-[current=page]:text-foreground aria-[current=page]:after:scale-x-100'
 
   return (
+    <InboxContext.Provider value={inbox}>
     <div className="min-h-svh bg-background">
       <div className="sticky top-0 z-20 flex h-shell items-stretch gap-3 bg-background px-6 sm:gap-6 lg:px-8">
         <Brand className="flex items-center" />
@@ -114,5 +117,6 @@ export function AppShell({
         {children}
       </main>
     </div>
+    </InboxContext.Provider>
   )
 }

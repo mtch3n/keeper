@@ -469,7 +469,8 @@ func (v *Vault) RotateTokenKey(ctx context.Context, id string) (int, error) {
 	return next, nil
 }
 
-// Export returns the whole vault document, decrypted, as portable JSON.
+// Export returns the whole vault document, decrypted, as portable JSON, with
+// the catalog of each profile that keeps it in the state directory.
 // Losing the keychain item without an export loses every connection: SPEC
 // §4.3.
 func (v *Vault) Export(ctx context.Context) ([]byte, error) {
@@ -478,8 +479,14 @@ func (v *Vault) Export(ctx context.Context) ([]byte, error) {
 	if !v.open {
 		return nil, errNotOpen()
 	}
+	catalogs, err := v.exportCatalogs()
+	if err != nil {
+		return nil, err
+	}
+	exported := *v.doc
+	exported.Catalogs = catalogs
 	opts := append(append([]json.Options{}, jsonOptions...), jsontext.WithIndent("  "))
-	return json.Marshal(v.doc, opts...)
+	return json.Marshal(&exported, opts...)
 }
 
 // Import replaces this vault with an export sealed under passphrase, keys and
@@ -505,6 +512,9 @@ func (v *Vault) Import(ctx context.Context, data []byte, passphrase string) erro
 	defer v.mu.Unlock()
 	if !v.open {
 		return errNotOpen()
+	}
+	if err := v.importCatalogs(&doc); err != nil {
+		return err
 	}
 	prev := v.doc
 	v.doc = &doc

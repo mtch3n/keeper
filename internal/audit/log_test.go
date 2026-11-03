@@ -104,12 +104,50 @@ func TestWriteReNormalizesDefensively(t *testing.T) {
 		}
 	}
 	// Already-normalized text, with a catalogued identifier, survives untouched.
-	r2 := &types.AuditRecord{Statement: `SELECT "Email" FROM "order" WHERE id = $1`}
+	r2 := &types.AuditRecord{Statement: `SELECT "Email" FROM "order" WHERE id = $1`, Normalized: true}
 	if err := l.Write(t.Context(), r2); err != nil {
 		t.Fatal(err)
 	}
 	if r2.Statement != `SELECT "Email" FROM "order" WHERE id = $1` {
 		t.Errorf("a normalized statement was rewritten: %q", r2.Statement)
+	}
+}
+
+func records(t *testing.T, l *Log, f ports.AuditFilter) ([]types.AuditRecord, error) {
+	t.Helper()
+	page, err := l.Query(t.Context(), f)
+	return page.Records, err
+}
+
+func TestQueryPagesByOffsetAndCountsTheFilteredTotal(t *testing.T) {
+	l := newLog(t)
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	var ids []string
+	for i := range 7 {
+		conn := "c1"
+		if i%2 == 1 {
+			conn = "c2"
+		}
+		r := &types.AuditRecord{At: base.Add(time.Duration(i) * time.Hour), SessionID: "s1", Connection: conn, Statement: "SELECT 1"}
+		if err := l.Write(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	page, err := l.Query(t.Context(), ports.AuditFilter{Limit: 3, Offset: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 7 || len(page.Records) != 3 || page.Records[0].ID != ids[3] || page.Records[2].ID != ids[1] {
+		t.Errorf("page = total %d, %d records, first %v; want 7 and the 4th to 6th newest", page.Total, len(page.Records), page.Records)
+	}
+	filtered, _ := l.Query(t.Context(), ports.AuditFilter{ConnectionID: "c2", Limit: 2, Offset: 2})
+	if filtered.Total != 3 || len(filtered.Records) != 1 {
+		t.Errorf("filtered total %d, %d records; want 3 and the one past the offset", filtered.Total, len(filtered.Records))
+	}
+	past, _ := l.Query(t.Context(), ports.AuditFilter{Limit: 3, Offset: 50})
+	if past.Total != 7 || past.Records == nil || len(past.Records) != 0 {
+		t.Errorf("an offset past the end = %+v, want total 7 and an empty, non-nil list", past)
 	}
 }
 
@@ -132,7 +170,7 @@ func TestQueryAndGet(t *testing.T) {
 		ids = append(ids, r.ID)
 	}
 
-	all, err := l.Query(t.Context(), ports.AuditFilter{})
+	all, err := records(t, l, ports.AuditFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,24 +181,24 @@ func TestQueryAndGet(t *testing.T) {
 		t.Errorf("Query is not most-recent-first: %v", all[0].ID)
 	}
 
-	bySession, _ := l.Query(t.Context(), ports.AuditFilter{SessionID: "s1"})
+	bySession, _ := records(t, l, ports.AuditFilter{SessionID: "s1"})
 	if len(bySession) != 2 {
 		t.Errorf("session filter returned %d", len(bySession))
 	}
-	byConn, _ := l.Query(t.Context(), ports.AuditFilter{ConnectionID: "c2"})
+	byConn, _ := records(t, l, ports.AuditFilter{ConnectionID: "c2"})
 	if len(byConn) != 1 {
 		t.Errorf("connection filter returned %d", len(byConn))
 	}
-	since, _ := l.Query(t.Context(), ports.AuditFilter{Since: base.Add(90 * time.Minute)})
+	since, _ := records(t, l, ports.AuditFilter{Since: base.Add(90 * time.Minute)})
 	if len(since) != 1 {
 		t.Errorf("since filter returned %d", len(since))
 	}
-	limited, _ := l.Query(t.Context(), ports.AuditFilter{Limit: 2})
+	limited, _ := records(t, l, ports.AuditFilter{Limit: 2})
 	if len(limited) != 2 || limited[0].ID != ids[2] {
 		t.Errorf("limit returned %v", limited)
 	}
 	// The next page starts after the last record of this one.
-	older, _ := l.Query(t.Context(), ports.AuditFilter{Limit: 2, Before: limited[1].ID})
+	older, _ := records(t, l, ports.AuditFilter{Limit: 2, Offset: 2})
 	if len(older) != 1 || older[0].ID != ids[0] {
 		t.Errorf("before returned %v", older)
 	}
@@ -180,6 +218,29 @@ func TestQueryAndGet(t *testing.T) {
 	}
 }
 
+func TestQueryFiltersByDecisionAcrossTheWholeLog(t *testing.T) {
+	l := newLog(t)
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	decisions := []types.Decision{types.DecisionRefused, "", "", "", types.DecisionApproved}
+	var refusedID string
+	for i, d := range decisions {
+		r := &types.AuditRecord{At: base.Add(time.Duration(i) * time.Hour), SessionID: "s1", Connection: "c1", Statement: "SELECT 1", Decision: d}
+		if err := l.Write(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		if d == types.DecisionRefused {
+			refusedID = r.ID
+		}
+	}
+	got, err := records(t, l, ports.AuditFilter{Decision: types.DecisionRefused, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != refusedID {
+		t.Errorf("decision filter returned %+v, want only the refused record beyond the limit window", got)
+	}
+}
+
 func TestQueryToleratesATruncatedLine(t *testing.T) {
 	l := newLog(t)
 	if err := l.Write(t.Context(), &types.AuditRecord{Statement: "SELECT 1"}); err != nil {
@@ -192,7 +253,7 @@ func TestQueryToleratesATruncatedLine(t *testing.T) {
 	}
 	f.WriteString(`{"id":"broken`)
 	f.Close()
-	got, err := l.Query(t.Context(), ports.AuditFilter{})
+	got, err := records(t, l, ports.AuditFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +265,7 @@ func TestQueryToleratesATruncatedLine(t *testing.T) {
 func TestQueryOnAMissingFile(t *testing.T) {
 	l := newLog(t)
 	os.RemoveAll(l.dir)
-	got, err := l.Query(t.Context(), ports.AuditFilter{})
+	got, err := records(t, l, ports.AuditFilter{})
 	if err != nil || len(got) != 0 {
 		t.Errorf("Query on a missing log = %v, %v", got, err)
 	}
@@ -285,7 +346,7 @@ func TestConcurrentWrites(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	got, err := l.Query(t.Context(), ports.AuditFilter{})
+	got, err := records(t, l, ports.AuditFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,5 +358,78 @@ func TestConcurrentWrites(t *testing.T) {
 func TestNewRequiresADetector(t *testing.T) {
 	if _, err := New(Config{Key: testKey, Dir: filepath.Join(t.TempDir(), "activity")}); err == nil {
 		t.Error("New accepted a nil detector")
+	}
+}
+
+func TestWriteNormalizesEveryLiteralFormTheCallerLeftIn(t *testing.T) {
+	l := newLog(t)
+	cases := map[string]string{
+		`SELECT id AS "alice@example.com" FROM orders WHERE id = 123456789`: "alice",
+		`DELETE FROM orders WHERE total = 4111111111111111`:                 "4111",
+		`SELECT 1.5e3, .25, 0xff, 12345678901`:                              "12345",
+		`SELECT E'ssn\' 078051120'`:                                         "078051120",
+		`SELECT $a$secret$a$, $$secret2$$`:                                  "secret",
+		`SELECT U&'d\0061ta', B'1010', X'1F'`:                               "0061",
+		`SELECT 1 -- jane@example.com`:                                      "jane",
+		`SELECT /* 555-12-3456 */ 1`:                                        "555",
+		`SELECT "Jane Doe" FROM "orders"`:                                   "Jane",
+	}
+	for sql, leak := range cases {
+		r := &types.AuditRecord{Statement: sql}
+		if err := l.Write(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(r.Statement, leak) {
+			t.Errorf("%q was kept in %q", leak, r.Statement)
+		}
+		stored, err := l.Get(t.Context(), r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stored.Statement, leak) {
+			t.Errorf("%q reached the log in %q", leak, stored.Statement)
+		}
+	}
+}
+
+func TestALaterRecordWithTheSameIDReplacesTheIntentRecord(t *testing.T) {
+	l := newLog(t)
+	at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	for i, rows := range []int{0, 7} {
+		if err := l.Write(t.Context(), &types.AuditRecord{ID: "w1", At: at, Statement: "UPDATE t SET a = 1", RowCount: rows}); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			if err := l.Write(t.Context(), &types.AuditRecord{ID: "w2", At: at.Add(time.Second), Statement: "SELECT 1"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	page, err := l.Query(t.Context(), ports.AuditFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs := page.Records
+	if page.Total != 2 {
+		t.Errorf("total = %d, want one per audit id", page.Total)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2: %+v", len(recs), recs)
+	}
+	if recs[1].ID != "w1" || recs[1].RowCount != 7 {
+		t.Errorf("the intent record was not replaced by the final one: %+v", recs[1])
+	}
+	got, err := l.Get(t.Context(), "w1")
+	if err != nil || got.RowCount != 7 {
+		t.Errorf("Get returned %+v, %v", got, err)
+	}
+}
+
+func TestAWriteIsRecordedEvenWhenTheCallersContextIsCancelledFirst(t *testing.T) {
+	l := newLog(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := l.Write(context.WithoutCancel(ctx), &types.AuditRecord{Statement: "SELECT 1"}); err != nil {
+		t.Fatal(err)
 	}
 }

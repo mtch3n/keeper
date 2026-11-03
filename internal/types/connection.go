@@ -2,6 +2,8 @@ package types
 
 import (
 	"encoding/json"
+	"net/netip"
+	"strings"
 	"time"
 )
 
@@ -72,8 +74,6 @@ type Limits struct {
 	MaxBytes int `json:"max_bytes"`
 	// StatementTimeout is the SET LOCAL value for every statement.
 	StatementTimeout time.Duration `json:"statement_timeout"`
-	// ScanSample is how many rows the model layer of a scan column sees.
-	ScanSample int `json:"scan_sample"`
 }
 
 // DefaultLimits are keeper's starting values. SPEC §15 lists them as tuning
@@ -83,7 +83,6 @@ func DefaultLimits() Limits {
 		MaxRowsCeiling:   1000,
 		MaxBytes:         1 << 20,
 		StatementTimeout: 30 * time.Second,
-		ScanSample:       300, // ~299 rows finds a 1% rate at 95% confidence, SPEC R8.5b
 	}
 }
 
@@ -101,6 +100,15 @@ type Host struct {
 
 // SSLModes are the sslmode values libpq accepts.
 var SSLModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+
+// DefaultSSLMode is the sslmode keeper uses for a host when none is asked for:
+// require, except on this machine, where the server is reached over loopback.
+func DefaultSSLMode(address string) string {
+	if ip, err := netip.ParseAddr(address); strings.EqualFold(address, "localhost") || err == nil && ip.IsLoopback() {
+		return "prefer"
+	}
+	return "require"
+}
 
 // Connection is one database and role on a Host: what an agent queries. Host,
 // password and connection string never appear in an MCP response; SPEC §6.1

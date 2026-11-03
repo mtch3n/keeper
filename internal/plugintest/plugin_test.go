@@ -26,15 +26,20 @@ func TestPlg_PLG_C1_BothClientsStartTheSameServerAndHooks(t *testing.T) {
 	root := "../../plugin"
 	claude := readJSON(t, filepath.Join(root, ".claude-plugin/plugin.json"))
 	codex := readJSON(t, filepath.Join(root, ".codex-plugin/plugin.json"))
-	for _, key := range []string{"name", "version", "mcpServers", "hooks", "skills"} {
+	// Measured with Codex 0.166: it does not expand ${CLAUDE_PLUGIN_ROOT} and
+	// rejects the hooks file's "modules", so the two manifests cannot share
+	// mcpServers and hooks files. Only name, version and skills are shared.
+	for _, key := range []string{"name", "version", "skills"} {
 		if claude[key] == nil || claude[key] != codex[key] {
 			t.Errorf("manifests disagree on %q: claude %v, codex %v", key, claude[key], codex[key])
 		}
 	}
-	for _, key := range []string{"mcpServers", "hooks"} {
-		path := filepath.Join(root, claude[key].(string))
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("%s points at %s: %v", key, path, err)
+	for _, manifest := range []map[string]any{claude, codex} {
+		for _, key := range []string{"mcpServers", "hooks"} {
+			path := filepath.Join(root, manifest[key].(string))
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("%s points at %s: %v", key, path, err)
+			}
 		}
 	}
 	if info, err := os.Stat(filepath.Join(root, claude["skills"].(string))); err != nil || !info.IsDir() {
@@ -69,6 +74,22 @@ func TestPlg_PLG_C1_BothClientsStartTheSameServerAndHooks(t *testing.T) {
 	cmd := exec.Command("claude", "plugin", "validate", root)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("claude plugin validate: %v\n%s", err, out)
+	}
+}
+
+func TestPlg_CodexFilesAvoidWhatCodexRejects(t *testing.T) {
+	root := "../../plugin"
+	codex := readJSON(t, filepath.Join(root, ".codex-plugin/plugin.json"))
+	server := readJSON(t, filepath.Join(root, codex["mcpServers"].(string)))["mcpServers"].(map[string]any)["keeper"].(map[string]any)
+	if server["command"] != "./bin/keeper-mcp-launch" || server["cwd"] != "." {
+		t.Errorf("codex mcp server %v: it must run the launcher relative to the plugin root, Codex does not expand ${CLAUDE_PLUGIN_ROOT}", server)
+	}
+	hooks := readJSON(t, filepath.Join(root, codex["hooks"].(string)))
+	if _, ok := hooks["modules"]; ok {
+		t.Error("codex hooks file has modules: Codex rejects the whole file for an unknown field")
+	}
+	if hooks["hooks"] == nil {
+		t.Error("codex hooks file has no hooks")
 	}
 }
 

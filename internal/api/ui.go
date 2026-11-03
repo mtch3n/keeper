@@ -13,14 +13,29 @@ import (
 
 const uiCookie = "keeper_ui"
 
-// dist is the built UI. The directory holds a placeholder so this package
-// compiles before web/dist exists; the build copies the real bundle over it.
+// dist is the built UI. It is build output and untracked, apart from a .gitkeep
+// so this package compiles before the UI is built; until then placeholder is
+// served.
 //
 // all: is deliberate — a bundler emits dotfiles and underscore-prefixed chunk
 // names that the default embed pattern silently drops.
 //
 //go:embed all:dist
 var dist embed.FS
+
+//go:embed placeholder.html
+var placeholder []byte
+
+// serveIndex serves the app's index.html, or placeholder when the UI was not
+// built into this binary.
+func serveIndex(w http.ResponseWriter, r *http.Request, sub fs.FS) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := fs.Stat(sub, "index.html"); err != nil {
+		_, _ = w.Write(placeholder)
+		return
+	}
+	http.ServeFileFS(w, r, sub, "index.html")
+}
 
 func (s *Server) uiHandler() http.Handler {
 	sub, err := fs.Sub(dist, "dist")
@@ -59,8 +74,7 @@ func (s *Server) serveApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.setCSRFCookie(w)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	http.ServeFileFS(w, r, sub, "index.html")
+	serveIndex(w, r, sub)
 }
 
 // setCSRFCookie hands the page the token to echo in X-Keeper-CSRF.

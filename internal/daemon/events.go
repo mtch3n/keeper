@@ -26,12 +26,14 @@ type Event struct {
 // ApprovalEvent narrates the shared queue. An item that leaves because its
 // session disconnected is announced as cancelled rather than simply vanishing
 // (UI §2.5); types.ApprovalItem has nowhere to carry a state, so the state
-// travels here.
+// travels here. The stream carries no statement text: a page that wants the
+// item reloads the queue. Item is for the daemon's own records.
 type ApprovalEvent struct {
-	Action   string              `json:"action"` // queued, decided, cancelled, expired
-	TicketID string              `json:"ticket_id"`
-	State    types.TicketState   `json:"state,omitzero"`
-	Item     *types.ApprovalItem `json:"item,omitzero"`
+	Action     string              `json:"action"` // queued, decided, cancelled, expired
+	TicketID   string              `json:"ticket_id"`
+	State      types.TicketState   `json:"state,omitzero"`
+	Connection string              `json:"connection,omitzero"`
+	Item       *types.ApprovalItem `json:"-"`
 }
 
 // RequestEvent narrates a local request. It deliberately carries no request id:

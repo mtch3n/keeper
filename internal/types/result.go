@@ -165,6 +165,10 @@ type AuditRecord struct {
 	// Decision is how a human, or the clock, settled an escalated statement.
 	// Empty for a statement that never waited.
 	Decision Decision `json:"decision,omitzero"`
+	// Normalized says the caller already ran Statement through the log's
+	// normaliser with its own catalog. Without it the log normalises with no
+	// catalog, which drops every quoted identifier. It is never stored.
+	Normalized bool `json:"-"`
 }
 
 // Decision is how an escalated statement was settled.

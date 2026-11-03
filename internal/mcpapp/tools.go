@@ -2,6 +2,7 @@ package mcpapp
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -193,20 +194,37 @@ type QueryIn struct {
 // types.QueryResult, or {ticket, state, reason, audit_id} when the
 // statement escalated (SPEC §6.1). Exactly one shape is populated.
 type QueryOut struct {
-	Rows         [][]any                    `json:"rows,omitzero"`
-	Columns      []types.ColumnMeta         `json:"columns,omitzero"`
-	RowCount     int                        `json:"row_count,omitzero"`
-	Truncated    bool                       `json:"truncated,omitzero"`
-	Transforms   map[string]types.Transform `json:"transforms,omitzero"`
-	ExecutedRows int64                      `json:"executed_rows,omitzero"`
-	AuditID      string                     `json:"audit_id,omitzero"`
-	Hint         string                     `json:"hint,omitzero"`
+	ResultOut
 
 	Ticket string            `json:"ticket,omitzero"`
 	State  types.TicketState `json:"state,omitzero"`
 	Reason string            `json:"reason,omitzero"`
 	Link   string            `json:"link,omitzero"`
 	Next   string            `json:"next,omitzero"`
+}
+
+// ResultOut is a completed statement as the agent sees it. query and get_result
+// both return it, so a result is the same wherever it is collected.
+type ResultOut struct {
+	Rows          [][]any                    `json:"rows,omitzero"`
+	Columns       []types.ColumnMeta         `json:"columns,omitzero"`
+	RowCount      int                        `json:"row_count,omitzero"`
+	Truncated     bool                       `json:"truncated,omitzero"`
+	TruncatedBy   types.Cut                  `json:"truncated_by,omitzero"`
+	Transforms    map[string]types.Transform `json:"transforms,omitzero"`
+	ExecutedRows  int64                      `json:"executed_rows,omitzero"`
+	PreviewedRows int64                      `json:"previewed_rows,omitzero"`
+	Degradations  []types.Degradation        `json:"degradations,omitzero"`
+	AuditID       string                     `json:"audit_id,omitzero"`
+	Hint          string                     `json:"hint,omitzero"`
+}
+
+func resultOut(r *types.QueryResult) ResultOut {
+	return ResultOut{
+		Rows: r.Rows, Columns: r.Columns, RowCount: r.RowCount, Truncated: r.Truncated, TruncatedBy: r.TruncatedBy,
+		Transforms: r.Transforms, ExecutedRows: r.ExecutedRows, PreviewedRows: r.PreviewedRows,
+		Degradations: r.Degradations, AuditID: r.AuditID, Hint: r.Hint,
+	}
 }
 
 func (h *daemonHolder) query(ctx context.Context, req *mcp.CallToolRequest, in QueryIn) (*mcp.CallToolResult, QueryOut, error) {
@@ -223,11 +241,7 @@ func (h *daemonHolder) query(ctx context.Context, req *mcp.CallToolRequest, in Q
 		return nil, QueryOut{}, err
 	}
 	if outcome.Result != nil {
-		r := outcome.Result
-		return nil, QueryOut{
-			Rows: r.Rows, Columns: r.Columns, RowCount: r.RowCount, Truncated: r.Truncated,
-			Transforms: r.Transforms, ExecutedRows: r.ExecutedRows, AuditID: r.AuditID, Hint: r.Hint,
-		}, nil
+		return nil, QueryOut{ResultOut: resultOut(outcome.Result)}, nil
 	}
 	t := outcome.Ticket
 	if ip := req.Session.InitializeParams(); ip != nil && ip.Capabilities != nil && ip.Capabilities.Elicitation != nil {
@@ -247,8 +261,17 @@ func waiting(id string, state types.TicketState, reason, auditID, url string) Qu
 		who = "A person must accept this statement: ask them to run `keeper approve` in a terminal."
 	}
 	return QueryOut{
-		Ticket: id, State: state, Reason: reason, AuditID: auditID, Link: url,
+		ResultOut: ResultOut{AuditID: auditID},
+		Ticket:    id, State: state, Reason: reason, Link: url,
 		Next: who + " Then call get_result with the ticket; do not resubmit the statement.",
+	}
+}
+
+func errOutcomeUnknown(id string) *types.Error {
+	return &types.Error{
+		Code:    types.CodeInternal,
+		Summary: "the answer was sent but keeper's reply did not arrive, so the outcome is unknown: the statement may have run",
+		Action:  "do not resubmit the statement; call get_result with ticket " + id + " to see what happened",
 	}
 }
 
@@ -279,23 +302,25 @@ func (h *daemonHolder) answered(ctx context.Context, cli *client.Client, req *mc
 		cur, err = cli.AnswerTicket(ctx, id, false)
 	}
 	if err != nil {
-		return QueryOut{}, errResubmit
+		// The daemon saying the ticket is not this session's is the one answer
+		// that proves nothing ran. Any other failure came after the answer
+		// started on its way.
+		if kerr, ok := errors.AsType[*types.Error](err); ok && kerr.Code == types.CodeTicketUnknown {
+			return QueryOut{}, errResubmit
+		}
+		return QueryOut{}, errOutcomeUnknown(id)
 	}
 	if cur.State == types.TicketPending {
 		return waiting(id, cur.State, "", "", cur.URL), nil
 	}
 	for !cur.State.Terminal() {
 		if cur, err = cli.GetResult(ctx, id, 25000); err != nil {
-			return QueryOut{}, err
+			return QueryOut{}, errOutcomeUnknown(id)
 		}
 	}
 	switch {
 	case cur.State == types.TicketReady && cur.Result != nil:
-		r := cur.Result
-		return QueryOut{
-			Rows: r.Rows, Columns: r.Columns, RowCount: r.RowCount, Truncated: r.Truncated,
-			Transforms: r.Transforms, ExecutedRows: r.ExecutedRows, AuditID: r.AuditID, Hint: r.Hint,
-		}, nil
+		return QueryOut{ResultOut: resultOut(cur.Result)}, nil
 	case cur.Error != nil:
 		return QueryOut{}, cur.Error
 	default:
@@ -335,11 +360,9 @@ type GetResultIn struct {
 // GetResultOut is get_result's response (SPEC §6.1): {state, rows?,
 // transforms?, error?}.
 type GetResultOut struct {
-	State      types.TicketState          `json:"state"`
-	Rows       [][]any                    `json:"rows,omitzero"`
-	Transforms map[string]types.Transform `json:"transforms,omitzero"`
-	Hint       string                     `json:"hint,omitzero"`
-	Error      *types.Error               `json:"error,omitzero"`
+	State types.TicketState `json:"state"`
+	ResultOut
+	Error *types.Error `json:"error,omitzero"`
 }
 
 func (h *daemonHolder) getResult(ctx context.Context, req *mcp.CallToolRequest, in GetResultIn) (*mcp.CallToolResult, GetResultOut, error) {
@@ -353,9 +376,7 @@ func (h *daemonHolder) getResult(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 	out := GetResultOut{State: res.State, Error: res.Error}
 	if res.Result != nil {
-		out.Rows = res.Result.Rows
-		out.Transforms = res.Result.Transforms
-		out.Hint = res.Result.Hint
+		out.ResultOut = resultOut(res.Result)
 	}
 	return nil, out, nil
 }

@@ -5,7 +5,7 @@
 # this if you want the dashboard and the approval queue reachable without a
 # terminal open.
 #
-#   mkdir -p ~/.config/systemd/user
+#   mkdir -p ~/.config/systemd/user ~/.config/keeper
 #   cp docs/keeper.service ~/.config/systemd/user/
 #   systemctl --user enable --now keeper
 #
@@ -35,7 +35,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.config/keeper
+# %t is $XDG_RUNTIME_DIR, where the daemon's socket is; ProtectHome makes it
+# read-only too. The leading "-" lets the unit start when ~/.config/keeper does
+# not exist yet, but the daemon cannot create it from here: make it first.
+ReadWritePaths=%t -%h/.config/keeper
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true

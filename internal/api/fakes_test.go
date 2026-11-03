@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/mtchen/keeper/internal/audit"
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
@@ -351,10 +352,16 @@ func (a *fakeAuditLog) Write(_ context.Context, r *types.AuditRecord) error {
 	return nil
 }
 
-func (a *fakeAuditLog) Query(context.Context, ports.AuditFilter) ([]types.AuditRecord, error) {
+func (a *fakeAuditLog) Query(_ context.Context, f ports.AuditFilter) (ports.AuditPage, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]types.AuditRecord(nil), a.records...), nil
+	out := []types.AuditRecord{}
+	for _, r := range a.records {
+		if f.Decision == "" || r.Decision == f.Decision {
+			out = append(out, r)
+		}
+	}
+	return ports.AuditPage{Records: out, Total: len(out)}, nil
 }
 
 func (a *fakeAuditLog) Get(_ context.Context, id string) (*types.AuditRecord, error) {
@@ -368,7 +375,9 @@ func (a *fakeAuditLog) Get(_ context.Context, id string) (*types.AuditRecord, er
 	return nil, nil
 }
 
-func (a *fakeAuditLog) Normalize(sql string, _ func(string) bool) string { return sql }
+func (a *fakeAuditLog) Normalize(sql string, known func(string) bool) string {
+	return audit.Normalize(sql, known)
+}
 
 func (a *fakeAuditLog) ScreenText(context.Context, string) error { return nil }
 

@@ -4,12 +4,6 @@ import { describe, expect, test } from 'vitest'
 
 import { detail, doctorReport, fakeDaemon, renderApp, summary } from './daemon'
 
-const limits = { max_rows_ceiling: 1000, max_bytes: 1048576, statement_timeout: 30000000000, scan_sample: 300 }
-
-function health(id: string, name: string, state: string, extra: Record<string, unknown> = {}) {
-  return { id, name, state, limits, ...extra }
-}
-
 function connections(doctor?: unknown[]) {
   const d = fakeDaemon()
   d.on('GET', '/v1/hosts', () => [
@@ -24,8 +18,6 @@ function connections(doctor?: unknown[]) {
   if (doctor) d.on('GET', '/v1/doctor', () => [200, doctorReport({ connections: doctor })])
   return d
 }
-
-const row = async (name: string) => (await screen.findByRole('link', { name })).closest('tr') as HTMLElement
 
 describe('the Connections list', () => {
   test('POL-C3 every connection sits in one table under a row for its host', async () => {

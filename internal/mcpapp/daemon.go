@@ -19,6 +19,8 @@ type daemonHolder struct {
 	mu  sync.Mutex
 	cli *client.Client
 	err error // sticky: a version mismatch or dead daemon does not retry itself
+	// sock is the daemon's socket. Empty means the default path.
+	sock string
 }
 
 // get returns the daemon connection, dialing (and starting keeperd if
@@ -31,13 +33,24 @@ func (h *daemonHolder) get(ctx context.Context, req *mcp.CallToolRequest) (*clie
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.cli != nil {
-		return h.cli, nil
+		if h.cli.SessionAlive() {
+			return h.cli, nil
+		}
+		// The connection went, by a daemon restart or a broken socket, and the
+		// session with it. This process opens a new one: the tools work again,
+		// and anything that named the old session, a ticket or a token, is
+		// refused with the daemon's own explanation.
+		h.cli.Close()
+		h.cli = nil
 	}
 	if h.err != nil {
 		return nil, h.err
 	}
 
-	sock := client.DefaultSocketPath()
+	sock := h.sock
+	if sock == "" {
+		sock = client.DefaultSocketPath()
+	}
 	if err := client.StartDaemon(ctx, sock); err != nil {
 		h.err = err
 		return nil, err

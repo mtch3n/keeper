@@ -49,7 +49,7 @@ func (d *Daemon) dequeueLocked(ticketID, action string) []Event {
 		state = tk.t.State
 	}
 	return []Event{{Type: EventApproval, Data: ApprovalEvent{
-		Action: action, TicketID: ticketID, State: state, Item: &item,
+		Action: action, TicketID: ticketID, State: state, Connection: item.Connection, Item: &item,
 	}}}
 }
 
@@ -121,19 +121,24 @@ func (d *Daemon) Cancel(ctx context.Context, s *Session, ticketID string) (*Tick
 
 // startApproved executes a ticket a human approved, off the decider's request.
 func (d *Daemon) startApproved(tk *ticket) {
+	ctx, cancel := context.WithTimeout(d.ctx, d.cfg.ExecuteTimeout)
 	d.mu.Lock()
 	s := d.sessions[tk.t.SessionID]
+	if s != nil {
+		tk.cancelRun = cancel
+	}
 	d.mu.Unlock()
 	if s == nil {
 		// The session went while the human was deciding; CloseConn already
 		// cancelled the ticket.
+		cancel()
 		return
 	}
 	d.wg.Go(func() {
-		ctx, cancel := context.WithTimeout(d.ctx, d.cfg.ExecuteTimeout)
 		defer cancel()
 		auth := "ticket:" + tk.t.ID
 		ctx = context.WithValue(ctx, approverKey{}, tk.approver)
+		ctx = context.WithValue(ctx, previewedKey{}, tk.previewed)
 		info := s.Info()
 
 		var res *types.QueryResult
@@ -166,7 +171,8 @@ func (d *Daemon) startApproved(tk *ticket) {
 // recordDecisions writes a record for every queue item the events settle. An
 // approval is recorded when its statement runs, with the result; a refusal, an
 // expiry or a cancellation never runs, so this is its only record (SPEC §10).
-// The statement goes through the log's own normalisation, so no literal lands.
+// The statement is normalised here with no catalog, so no literal and no quoted
+// identifier lands.
 func (d *Daemon) recordDecisions(ctx context.Context, events []Event, decision types.Decision, actor string) {
 	for _, e := range events {
 		ev, ok := e.Data.(ApprovalEvent)
@@ -179,7 +185,8 @@ func (d *Daemon) recordDecisions(ctx context.Context, events []Event, decision t
 			SessionID:     it.Session.ID,
 			Client:        it.Session.Client,
 			Connection:    it.Connection,
-			Statement:     it.SQL,
+			Statement:     d.deps.Audit.Normalize(it.SQL, nil),
+			Normalized:    true,
 			StatementType: it.Facts.StatementType,
 			Relations:     it.Facts.Relations,
 			Approver:      actor,
@@ -235,7 +242,17 @@ func (d *Daemon) AnswerTicket(ctx context.Context, s *Session, ticketID string, 
 	return d.WaitTicket(ctx, s, ticketID, 0)
 }
 
-type approverKey struct{}
+type (
+	approverKey  struct{}
+	previewedKey struct{}
+)
+
+// PreviewedRowsFrom is the row count the preview of the ticket being executed
+// reported, or zero.
+func PreviewedRowsFrom(ctx context.Context) int64 {
+	n, _ := ctx.Value(previewedKey{}).(int64)
+	return n
+}
 
 // ApproverFrom is who accepted the ticket whose statement is running: the
 // surface that took the decision, such as dialog, ui or cli.

@@ -17,11 +17,13 @@ type ActivityFilter struct {
 	SessionID    string
 	ConnectionID string
 	Since        time.Time
+	Decision     types.Decision
 	Limit        int
+	Offset       int
 }
 
 // ListActivity queries the append-only audit log (GET /v1/activity).
-func (c *Client) ListActivity(ctx context.Context, f ActivityFilter) ([]types.AuditRecord, error) {
+func (c *Client) ListActivity(ctx context.Context, f ActivityFilter) (ports.AuditPage, error) {
 	q := url.Values{}
 	if f.SessionID != "" {
 		q.Set("session", f.SessionID)
@@ -32,6 +34,12 @@ func (c *Client) ListActivity(ctx context.Context, f ActivityFilter) ([]types.Au
 	if !f.Since.IsZero() {
 		q.Set("since", f.Since.Format(time.RFC3339))
 	}
+	if f.Decision != "" {
+		q.Set("decision", string(f.Decision))
+	}
+	if f.Offset > 0 {
+		q.Set("offset", fmt.Sprint(f.Offset))
+	}
 	if f.Limit > 0 {
 		q.Set("limit", fmt.Sprint(f.Limit))
 	}
@@ -39,9 +47,9 @@ func (c *Client) ListActivity(ctx context.Context, f ActivityFilter) ([]types.Au
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
-	var out []types.AuditRecord
+	var out ports.AuditPage
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return nil, err
+		return ports.AuditPage{}, err
 	}
 	return out, nil
 }

@@ -170,9 +170,6 @@ func (db *DB) limitsFor(connID string) types.Limits {
 		if got.MaxRowsCeiling > 0 {
 			lim.MaxRowsCeiling = got.MaxRowsCeiling
 		}
-		if got.ScanSample > 0 {
-			lim.ScanSample = got.ScanSample
-		}
 	}
 	return lim
 }
@@ -543,7 +540,11 @@ func (db *DB) write(ctx context.Context, connID, sql string, params []ports.Para
 			return keeperError(types.CodeDDLRefused)
 		}
 		if mode == previewTx && len(sd.Fields) == 0 {
-			if r, ok := c.previewChanges(ctx, sql, params, facts.StatementType); ok {
+			r, err := c.previewChanges(ctx, sql, params, facts.StatementType)
+			if err != nil {
+				return err
+			}
+			if r != nil {
 				res = r
 				return nil
 			}

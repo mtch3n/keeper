@@ -1,6 +1,6 @@
 {
   "name": "keeper",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, redaction of free text, approval in the agent's terminal, and a local form for values that must never be typed into chat.",
   "author": {
     "name": "mtch3n"
@@ -18,8 +18,8 @@
     "masking"
   ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
-  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.codex.json",
+  "hooks": "./hooks/hooks.codex.json",
   "interface": {
     "displayName": "keeper",
     "shortDescription": "Query a database through keeper, which masks results",

@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -239,14 +242,19 @@ func TestWaitMsCapped(t *testing.T) {
 	}
 }
 
-func TestGetResultWaitMsQueryParam(t *testing.T) {
+func TestGetResultWaitsInSlicesNoLongerThanTheCap(t *testing.T) {
+	defer func(old time.Duration) { waitSlice = old }(waitSlice)
+	waitSlice = 20 * time.Millisecond
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
 	})
-	var gotQuery string
+	var mu sync.Mutex
+	var waits []string
 	mux.HandleFunc("GET /v1/tickets/tik-1", func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.RawQuery
+		mu.Lock()
+		waits = append(waits, r.URL.Query().Get("wait_ms"))
+		mu.Unlock()
 		writeJSON(t, w, http.StatusOK, TicketResult{State: types.TicketPending})
 	})
 	sock, _ := newTestServer(t, mux)
@@ -256,11 +264,118 @@ func TestGetResultWaitMsQueryParam(t *testing.T) {
 	}
 	defer c.Close()
 
-	if _, err := c.GetResult(t.Context(), "tik-1", 999999); err != nil {
+	start := time.Now()
+	if _, err := c.GetResult(t.Context(), "tik-1", 100); err != nil {
 		t.Fatalf("GetResult: %v", err)
 	}
-	if gotQuery != "wait_ms=25000" {
-		t.Errorf("query = %q, want wait_ms=25000", gotQuery)
+	if took := time.Since(start); took < 90*time.Millisecond || took > time.Second {
+		t.Errorf("a 100 ms wait took %v", took)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(waits) < 5 {
+		t.Fatalf("the wait was not sliced: %v", waits)
+	}
+	for _, w := range waits {
+		if w != "20" && w != "19" && w != "18" && w != "17" && w != "16" && w != "15" && w != "14" && w != "13" && w != "12" && w != "11" && w != "10" {
+			if n, _ := strconv.Atoi(w); n > 20 || n < 0 {
+				t.Errorf("a slice waited %q ms", w)
+			}
+		}
+	}
+}
+
+// Cancelling a call ends the caller's wait and nothing else: net/http would
+// close the only connection, and the connection is the session.
+func TestCancellingACallKeepsTheSession(t *testing.T) {
+	defer func(old time.Duration) { waitSlice = old }(waitSlice)
+	waitSlice = 50 * time.Millisecond
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
+	})
+	mux.HandleFunc("GET /v1/tickets/tik-1", func(w http.ResponseWriter, r *http.Request) {
+		ms, _ := strconv.Atoi(r.URL.Query().Get("wait_ms"))
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+		writeJSON(t, w, http.StatusOK, TicketResult{State: types.TicketPending})
+	})
+	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Keeper-Session") != "sess-1" {
+			writeJSON(t, w, http.StatusForbidden, types.Error{Code: types.CodePermissionDenied, Summary: "this route needs an agent session"})
+			return
+		}
+		writeJSON(t, w, http.StatusOK, []ConnectionSummary{})
+	})
+	sock := filepath.Join(t.TempDir(), "keeper.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counting := &countingListener{Listener: l}
+	srv := &httptest.Server{Listener: counting, Config: &http.Server{Handler: mux}}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	conns := &counting.accepted
+	c, err := Dial(t.Context(), sock, types.ClientInfo{Name: "keeper-mcp"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+	if _, err := c.GetResult(ctx, "tik-1", 25000); !errors.Is(err, context.Canceled) {
+		t.Fatalf("GetResult returned %v, want the cancellation", err)
+	}
+	for range 3 {
+		if _, err := c.ListConnections(t.Context()); err != nil {
+			t.Fatalf("a call after the cancel failed: %v", err)
+		}
+	}
+	if !c.SessionAlive() {
+		t.Error("the session was reported lost")
+	}
+	if n := conns.Load(); n != 1 {
+		t.Errorf("the daemon saw %d connections, want the one session connection", n)
+	}
+}
+
+type countingListener struct {
+	net.Listener
+	accepted atomic.Int32
+}
+
+func (l *countingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err == nil {
+		l.accepted.Add(1)
+	}
+	return c, err
+}
+
+func TestALostConnectionIsReportedAsALostSession(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
+	})
+	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, []ConnectionSummary{})
+	})
+	sock, srv := newTestServer(t, mux)
+	c, err := Dial(t.Context(), sock, types.ClientInfo{Name: "keeper-mcp"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+	srv.CloseClientConnections()
+	time.Sleep(20 * time.Millisecond)
+
+	_, err = c.ListConnections(t.Context())
+	if _, ok := errors.AsType[*StaleSessionError](err); !ok {
+		t.Fatalf("err = %v, want a stale session", err)
+	}
+	if c.SessionAlive() {
+		t.Error("a client whose connection went still reports a live session")
 	}
 }
 

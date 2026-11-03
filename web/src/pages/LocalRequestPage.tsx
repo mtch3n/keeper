@@ -14,15 +14,17 @@ import {
   getLocalRequest,
   isSessionNeeded,
   listConnections,
+  listHosts,
   submitLocalRequest,
   type LocalRequestView,
 } from '@/lib/api'
-import type { ApprovalItem, ConnectionSummary } from '@/lib/types'
+import { useEvents, useLiveStatus } from '@/lib/live-status'
+import type { ApprovalItem, ConnectionSummary, HostView } from '@/lib/types'
 import { ApprovalCard } from '@/pages/InboxPage'
-import { age } from '@/lib/render'
+import { until } from '@/lib/render'
 
 /**
- * The local page (SPEC R8.7g, UI.md §6).
+ * The local page.
  *
  * An input request takes a value the agent must never see and returns a token
  * to the session.
@@ -37,6 +39,11 @@ function RequestPage() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [connections, setConnections] = useState<ConnectionSummary[]>([])
+
+  useEffect(() => {
+    listConnections().then(setConnections).catch(() => {})
+  }, [])
 
   const load = useCallback(async () => {
     if (!requestId) return
@@ -75,7 +82,7 @@ function RequestPage() {
     )
   }
 
-  const expired = view.state === 'expired' || view.state === 'cancelled'
+  const closed = view.state !== 'pending_input'
 
   return (
     <Page>
@@ -89,17 +96,19 @@ function RequestPage() {
           {view.session.client.name} · {view.session.client.workspace ?? 'unknown workspace'}
         </Fact>
         <Fact label="task">{view.purpose || '—'}</Fact>
-        <Fact label="connection">{view.connection_id}</Fact>
-        <Fact label="expires">in {age(view.expires_at)}</Fact>
+        <Fact label="connection">{connections.find((c) => c.id === view.connection_id)?.name ?? view.connection_id}</Fact>
+        <Fact label="expires">in {until(view.expires_at)}</Fact>
       </Facts>
 
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
 
       <Separator />
 
-      {expired ? (
+      {closed ? (
         <p className="text-sm">
-          This request is {view.state}. Nothing was sent. Ask the agent to open another.
+          {view.state === 'ready'
+            ? 'This request was already answered.'
+            : `This request is ${view.state}. Nothing was sent. Ask the agent to open another.`}
         </p>
       ) : (
         <InputRequest
@@ -112,7 +121,7 @@ function RequestPage() {
         />
       )}
 
-      {!expired ? (
+      {!closed ? (
         <Button
           variant="outline"
           disabled={busy}
@@ -163,7 +172,7 @@ function InputRequest({
         <Input
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          className="w-96"
+          className="w-full max-w-96"
           autoComplete="off"
           spellCheck={false}
           /* A synthetic example, never a real-looking one: a placeholder is the
@@ -225,25 +234,43 @@ export function LocalRequestPage() {
   if (item === undefined) return <Page><Skeleton className="h-64 w-full" /></Page>
   if (item === 'no-session') return <SessionNeeded command={`keeper ui /r/${requestId}`} />
   if (item === null) return <RequestPage />
-  return <TicketPage item={item} />
+  return <TicketPage first={item} />
 }
 
-function TicketPage({ item }: { item: ApprovalItem }) {
+function TicketPage({ first }: { first: ApprovalItem }) {
+  const ticket = first.ticket_id
+  const [item, setItem] = useState<ApprovalItem | null>(first)
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
+  const [hosts, setHosts] = useState<HostView[]>([])
   const [done, setDone] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { status } = useLiveStatus()
 
   useEffect(() => {
     listConnections().then(setConnections).catch(() => {})
+    listHosts().then(setHosts).catch(() => {})
   }, [])
 
-  const c = connections.find((x) => x.id === item.connection)
+  // A ticket another surface decided, or the clock expired, leaves the queue.
+  const follow = useCallback(() => {
+    getApproval(ticket)
+      .then((i) => setItem(i?.ticket_id ? i : null))
+      .catch(() => setItem(null))
+  }, [ticket])
+  useEvents((event) => {
+    if (event.kind === 'approval') follow()
+  })
+  useEffect(() => {
+    if (status === 'live') follow()
+  }, [status, follow])
+
   const decide = async (decision: 'approve' | 'refuse') => {
     setBusy(true)
+    setError(null)
     try {
-      await decideApproval(item.ticket_id, { decision })
-      setDone(decision === 'approve' ? 'Approved. The agent has its answer.' : 'Refused. Nothing ran.')
+      await decideApproval(ticket, { decision })
+      setDone(decision === 'approve' ? 'Approved. The statement is running.' : 'Refused. Nothing ran.')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -259,12 +286,23 @@ function TicketPage({ item }: { item: ApprovalItem }) {
       </Page>
     )
   }
+  if (item === null) {
+    return (
+      <Page>
+        <h1 className="text-title">This ticket is no longer waiting</h1>
+        <p className="text-sm">It was decided on another screen, or it expired. Nothing is waiting here.</p>
+        <p className="text-meta text-muted-foreground">You can close this page.</p>
+      </Page>
+    )
+  }
+  const c = connections.find((x) => x.id === item.connection)
+  const host = hosts.find((h) => h.connections.includes(item.connection))
   return (
     <Page>
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
       <ApprovalCard
         item={item}
-        profile={{ name: c?.name ?? item.connection, username: c?.username, database: c?.database }}
+        profile={{ name: c?.name ?? item.connection, username: c?.username, database: c?.database, host }}
         busy={busy}
         onDecide={(d) => void decide(d)}
       />

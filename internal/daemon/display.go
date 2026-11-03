@@ -1,38 +1,31 @@
 package daemon
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+	"unicode"
+)
 
-// bidiControls are the Unicode characters that reorder text without appearing in
-// it. R9.2 requires them to render visibly on an approval screen: a statement
-// that reads as a harmless SELECT and executes as something else is the
-// trojan-source shape, and keeper inherits the defence from gatekeeper.
+// forDisplay makes every character that acts on a terminal or reorders text
+// visible as its code point. R9.2 requires the bidirectional controls to render
+// visibly on an approval screen: a statement that reads as a harmless SELECT and
+// executes as something else is the trojan-source shape. The other control
+// characters, an escape above all, would let a statement rewrite what the
+// approver's terminal shows. Newline and tab stay, because a statement is laid
+// out with them.
 //
 // This runs on the *display* copy of a statement only. The bytes that execute
 // are the ones the agent sent, kept separately on the ticket, so neutralising
 // them here cannot change what a human approved into something else.
-var bidiControls = []rune{
-	0x061C,         // ALM
-	0x200E, 0x200F, // LRM, RLM
-	0x202A, 0x202B, 0x202C, 0x202D, 0x202E, // LRE, RLE, PDF, LRO, RLO
-	0x2066, 0x2067, 0x2068, 0x2069, // LRI, RLI, FSI, PDI
-}
-
-const hexDigits = "0123456789ABCDEF"
-
-// forDisplay replaces every bidirectional control with a visible name.
 func forDisplay(s string) string {
-	if !strings.ContainsFunc(s, isBidi) {
+	if !strings.ContainsFunc(s, isHidden) {
 		return s
 	}
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		if isBidi(r) {
-			b.WriteString("[U+")
-			for shift := 12; shift >= 0; shift -= 4 {
-				b.WriteByte(hexDigits[(r>>shift)&0xF])
-			}
-			b.WriteString("]")
+		if isHidden(r) {
+			fmt.Fprintf(&b, "[U+%04X]", r)
 			continue
 		}
 		b.WriteRune(r)
@@ -40,11 +33,16 @@ func forDisplay(s string) string {
 	return b.String()
 }
 
-func isBidi(r rune) bool {
-	for _, c := range bidiControls {
-		if r == c {
-			return true
-		}
+func isHidden(r rune) bool {
+	switch {
+	case r == '\n' || r == '\t':
+		return false
+	case unicode.IsControl(r):
+		return true
+	}
+	switch r {
+	case 0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069:
+		return true
 	}
 	return false
 }

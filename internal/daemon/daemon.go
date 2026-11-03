@@ -44,6 +44,9 @@ type Deps struct {
 	// Notifier is optional: when set it is told, off the statement's path, that
 	// a ticket opened.
 	Notifier Notifier
+	// VaultReplaced is optional: it runs after an import replaced the vault,
+	// and closes every pool and catalog opened under the old one.
+	VaultReplaced func()
 	// UI binds and releases the loopback listener. Optional: without it the
 	// dashboard is Config.UIBase while the setting is on.
 	UI UIControl
@@ -256,7 +259,7 @@ func (d *Daemon) expire() {
 			}
 			continue
 		}
-		if now.Sub(tk.t.CreatedAt) > d.cfg.TicketTTL {
+		if tk.t.State == types.TicketPending && now.Sub(tk.t.CreatedAt) > d.cfg.TicketTTL {
 			d.setTicketStateLocked(tk, types.TicketExpired, nil, nil)
 			expired = append(expired, d.dequeueLocked(id, "expired")...)
 		}
