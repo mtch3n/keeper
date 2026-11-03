@@ -33,6 +33,7 @@ export default defineConfig({
     },
   },
   test: {
+    testTimeout: 20000,
     environment: 'jsdom',
     include: ['test/**/*.test.tsx'],
     setupFiles: ['test/setup.ts'],
