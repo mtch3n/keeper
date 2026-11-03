@@ -9,7 +9,6 @@ import "net/http"
 func (s *Server) routes() {
 	// --- agent surface, socket only -------------------------------------
 	s.handle("POST /v1/session", accessHandshake, s.openSession)
-	s.handle("POST /v1/session/intent", accessAgent, s.setIntent)
 	s.handle("POST /v1/connections/{id}/explain", accessAgent, s.explain)
 	s.handle("POST /v1/connections/{id}/query", accessAgent, s.query)
 	s.handle("GET /v1/tickets/{id}", accessAgent, s.ticket)
@@ -56,7 +55,6 @@ func (s *Server) routes() {
 	// every connection keeper exists to stand in front of.
 	s.handle("POST /v1/vault/export", accessHuman, s.exportVault)
 	s.handle("POST /v1/vault/import", accessHuman, s.importVault)
-	s.handle("POST /v1/vault/rotate-master", accessHuman, s.rotateMaster)
 
 	s.raw("GET /v1/events", accessHuman, s.events)
 

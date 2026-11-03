@@ -17,23 +17,10 @@ type ClientInfo struct {
 // connection, one session. Ticket binding and the reverse map both scope to it,
 // and a reconnect is a new session with an empty map.
 type Session struct {
-	ID     string     `json:"id"`
-	Client ClientInfo `json:"client"`
-	Intent string     `json:"intent,omitzero"` // set_session_intent, optional
-	// TokenScope is how long this session's tokens live, as its agent declared.
-	TokenScope  TokenScope `json:"token_scope,omitzero"`
+	ID          string     `json:"id"`
+	Client      ClientInfo `json:"client"`
 	ConnectedAt time.Time  `json:"connected_at"`
 }
-
-// TokenScope is a session's declared token lifetime. Session tokens resolve only
-// inside the session that minted them; persistent tokens mean the same value
-// on every machine holding the vault, where the connection allows them.
-type TokenScope string
-
-const (
-	ScopeSession    TokenScope = "session"
-	ScopePersistent TokenScope = "persistent"
-)
 
 // TicketState is where an escalated statement has got to.
 type TicketState string
@@ -115,7 +102,6 @@ type ApprovalItem struct {
 
 // ApprovalFacts is SPEC §9.2's layout as data: facts first, SQL last.
 type ApprovalFacts struct {
-	Intent        string        `json:"intent"`
 	StatementType string        `json:"statement_type"`
 	Relations     []RelationRef `json:"relations"`
 	EstimatedRows int64         `json:"estimated_rows"`

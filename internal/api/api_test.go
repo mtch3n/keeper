@@ -36,8 +36,8 @@ func escalatingRig(t *testing.T, rels ...types.RelationRef) *rig {
 // retrieves another session's rows.
 func TestTicketIssuedToAnotherSessionIsRefused(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
-	b := r.agent("explore schema")
+	a := r.agent()
+	b := r.agent()
 
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"}, &tk)
@@ -66,7 +66,7 @@ func TestTicketIssuedToAnotherSessionIsRefused(t *testing.T) {
 // tickets, its queue items and its reverse map.
 func TestClosingTheConnectionDropsEverythingScopedToIt(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	session := a.sessionID()
 
 	var tk types.Ticket
@@ -96,7 +96,7 @@ func TestClosingTheConnectionDropsEverythingScopedToIt(t *testing.T) {
 // while a client is reading it.
 func TestApprovalQueueIsOldestFirst(t *testing.T) {
 	r := escalatingRig(t)
-	agents := []*client{r.agent("first task"), r.agent("second task"), r.agent("third task")}
+	agents := []*client{r.agent(), r.agent(), r.agent()}
 	var ids []string
 	for _, a := range agents {
 		var tk types.Ticket
@@ -118,7 +118,7 @@ func TestApprovalQueueIsOldestFirst(t *testing.T) {
 		if i > 0 && item.CreatedAt.Before(queue[i-1].CreatedAt) {
 			t.Fatalf("item %d is older than the one before it", i)
 		}
-		if item.Session.Client.Workspace == "" || item.Session.Intent == "" {
+		if item.Session.Client.Workspace == "" {
 			t.Fatalf("item %d carries no attribution: %+v", i, item.Session)
 		}
 	}
@@ -183,7 +183,7 @@ func TestLoopbackRequiresCSRFToken(t *testing.T) {
 // every §4.5 limit are never reachable from an MCP session.
 func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 
 	cases := []struct {
 		method, path string
@@ -201,7 +201,6 @@ func TestAgentSessionIsRefusedOnHumanRoutes(t *testing.T) {
 		{"GET", "/v1/activity", nil},
 		{"GET", "/v1/doctor", nil},
 		{"POST", "/v1/vault/export", nil},
-		{"POST", "/v1/vault/rotate-master", nil},
 	}
 	for _, tc := range cases {
 		resp, raw := a.do(tc.method, tc.path, tc.body)
@@ -237,7 +236,7 @@ func TestAgentSurfaceIsNotOnTheLoopbackListener(t *testing.T) {
 // the value.
 func TestInputRequestReturnsATokenIntoTheSessionAndNeverTheValue(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("find all orders for an email")
+	a := r.agent()
 	b := r.browser()
 
 	// --- input -------------------------------------------------------
@@ -288,8 +287,8 @@ func TestInputRequestReturnsATokenIntoTheSessionAndNeverTheValue(t *testing.T) {
 // R8.7c: a different session cannot retrieve another's request.
 func TestLocalRequestIsRefusedToAnotherSession(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("task a")
-	b := r.agent("task b")
+	a := r.agent()
+	b := r.agent()
 
 	var input types.LocalRequest
 	a.mustJSON("POST", "/v1/requests", map[string]any{
@@ -305,7 +304,7 @@ func TestLocalRequestIsRefusedToAnotherSession(t *testing.T) {
 // R8.7c: one-use.
 func TestLocalRequestIsOneUse(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("task")
+	a := r.agent()
 	b := r.browser()
 
 	var input types.LocalRequest
@@ -324,7 +323,7 @@ func TestLocalRequestIsOneUse(t *testing.T) {
 // polling, and the connection it polls on is the one the ticket was bound to.
 func TestApprovalExecutesAndTheAgentCollectsTheResult(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -347,7 +346,7 @@ func TestApprovalExecutesAndTheAgentCollectsTheResult(t *testing.T) {
 // A refusal comes back as a keeper error and nothing runs.
 func TestRefusalComesBackAsAnError(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -374,7 +373,7 @@ func TestAWriteApprovalCarriesItsPreviewAndCommits(t *testing.T) {
 	r := escalatingRig(t)
 	r.pipe.facts.StatementType = "UPDATE"
 	r.pipe.preview = &types.WritePreview{Operation: "UPDATE", RowCount: 4182, PreviewedAt: time.Now()}
-	a := r.agent("close duplicate accounts OPS-512")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -433,7 +432,7 @@ func TestNoUnlockSurfaceAndTheKeySourceIsStillNamed(t *testing.T) {
 // permanently unresolvable, and the error has to say that.
 func TestUnresolvableTokenExplainsWhatHappened(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 
 	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{
 		"sql": "SELECT 1 WHERE email = $1", "params": []any{map[string]any{"token": "<email:99>"}},
@@ -447,25 +446,6 @@ func TestUnresolvableTokenExplainsWhatHappened(t *testing.T) {
 	}
 	if len(r.pipe.seenAuths()) != 0 {
 		t.Fatal("a statement with an unresolvable token reached the pipeline")
-	}
-}
-
-// An intent is optional: a query runs without one. One that is given is still
-// screened (R10c), because it reaches the Inbox and the activity log.
-func TestIntentIsOptionalAndScreened(t *testing.T) {
-	r := newRig(t)
-	r.alog.reject = "patient Jane Doe"
-	a := r.agent("")
-
-	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT 1"})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("a query without an intent was refused: %d %s", resp.StatusCode, raw)
-	}
-	a.mustJSON("POST", "/v1/session/intent", map[string]any{"token_scope": "session"}, nil)
-
-	resp, raw = a.do("POST", "/v1/session/intent", map[string]any{"intent": "patient Jane Doe"})
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("an intent carrying PII was recorded: %d %s", resp.StatusCode, raw)
 	}
 }
 
@@ -510,7 +490,7 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 	r.cat.byName[users.String()+".email"] = types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "email"}
 	r.cat.byName[users.String()+".has_hiv_diagnosis"] = types.ColumnPolicy{Policy: types.PolicyDrop, HideName: true}
 
-	a := r.agent("explore schema")
+	a := r.agent()
 	var out struct {
 		Tables []struct {
 			Name          string                  `json:"name"`
@@ -537,7 +517,7 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 // R9.2: the approval screen shows the override rather than obeying it.
 func TestApprovalSQLShowsBidiOverrides(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	a.mustJSON("POST", "/v1/connections/c1/query",
 		map[string]any{"sql": "SELECT id FROM users -- \u202e DROP"}, nil)
 
@@ -555,7 +535,7 @@ func TestApprovalSQLShowsBidiOverrides(t *testing.T) {
 // already has it.
 func TestEventStreamCarriesNoRequestID(t *testing.T) {
 	r := newRig(t)
-	a := r.agent("task")
+	a := r.agent()
 	b := r.browser()
 
 	req, err := http.NewRequest("GET", r.ui.URL+"/v1/events", nil)
@@ -604,7 +584,7 @@ func TestEventStreamCarriesNoRequestID(t *testing.T) {
 // not grow a second copy.
 func TestATicketIsDecidedOnce(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -657,7 +637,7 @@ func TestConnectionDetailIsCompleteAndCarriesDuration(t *testing.T) {
 // sent. The rows are held in memory beside the audit record, never in it (R10b).
 func TestActivityRecordCarriesTheResultTheAgentSaw(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	cli := r.socket()
 
 	var tk types.Ticket
@@ -758,7 +738,7 @@ func Test_DET_C1_DescribeShowsAConnectionsPassesInOrder(t *testing.T) {
 func Test_DET_C2_AnAgentCannotChangeDetection(t *testing.T) {
 	r := newRig(t)
 	before := stageKinds(r.vault.conns["c1"].Detection)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	for _, req := range []struct {
 		method, path string
 		body         any
@@ -948,7 +928,7 @@ type decisionRecord struct {
 
 func Test_SHELL_C7_ARefusalIsRecordedWithWhoDecided(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("reconcile OPS-441")
+	a := r.agent()
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
 	r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "refuse", "actor": "ming"}, nil)
@@ -998,7 +978,7 @@ func Test_WRITE_C2_TheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
 	r.vault.conns["c9"] = &types.Connection{ID: "c9", Name: "prod_rw", HostID: "h1", Database: "app", Writes: types.WritesAsk, Reads: types.ReadsUncertain, Limits: types.DefaultLimits()}
 	r.vault.conns["c8"] = &types.Connection{ID: "c8", Name: "other_db", HostID: "h1", Database: "other", Writes: types.WritesAsk, Reads: types.ReadsUncertain, Limits: types.DefaultLimits()}
 	r.pipe.err = &types.Error{Code: types.CodeWritesOff, Summary: "writes are off for this profile"}
-	a := r.agent("fix a status")
+	a := r.agent()
 	resp, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "UPDATE orders SET status = 'x'"})
 	if resp.StatusCode == http.StatusOK && !strings.Contains(string(raw), "writes_off") {
 		t.Fatalf("not refused: %s", raw)
@@ -1017,7 +997,7 @@ func Test_WRITE_C3_AgentsSeeProfileDetailsButNeverAPassword(t *testing.T) {
 	r := newRig(t)
 	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Writes = "h1", types.WritesAsk
 	r.vault.terms["c1"] = ports.Terms{}
-	a := r.agent("look around")
+	a := r.agent()
 	var conns []struct {
 		Name     string `json:"name"`
 		Host     string `json:"host"`
@@ -1051,7 +1031,7 @@ func Test_WRITE_C6_PreviewedValuesReachOnlyTheApprover(t *testing.T) {
 		Operation: "UPDATE", RowCount: 1, PreviewedAt: time.Now(),
 		Changes: &types.WriteChanges{Columns: []string{"email"}, Rows: []types.ChangedRow{{Old: []string{"old@x"}, New: []string{secret}}}},
 	}
-	a := r.agent("fix an address")
+	a := r.agent()
 	cli := r.socket()
 
 	_, raw := a.do("POST", "/v1/connections/c1/query", map[string]any{"sql": "UPDATE users SET email = 'x'"})
@@ -1076,7 +1056,7 @@ func Test_WRITE_C6_PreviewedValuesReachOnlyTheApprover(t *testing.T) {
 
 func Test_WRITE_C9_AnAgentCancelsItsOwnPendingRequest(t *testing.T) {
 	r := escalatingRig(t)
-	a := r.agent("look at last week's orders")
+	a := r.agent()
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
 
@@ -1101,31 +1081,17 @@ func Test_WRITE_C9_AnAgentCancelsItsOwnPendingRequest(t *testing.T) {
 
 func Test_WRITE_C10_AnAgentCannotCancelAnotherSessionsRequest(t *testing.T) {
 	r := escalatingRig(t)
-	owner := r.agent("look at last week's orders")
+	owner := r.agent()
 	var tk types.Ticket
 	owner.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM orders"}, &tk)
 
-	other := r.agent("something else")
+	other := r.agent()
 	resp, raw := other.do("POST", "/v1/tickets/"+tk.ID+"/cancel", nil)
 	if resp.StatusCode == http.StatusOK {
 		t.Fatalf("another session cancelled the request: %s", raw)
 	}
 	if q := r.d.Approvals(); len(q) != 1 {
 		t.Errorf("the request left the Inbox: %+v", q)
-	}
-}
-
-func Test_TOKEN_C9_AnUnknownTokenScopeIsRefusedNamingBoth(t *testing.T) {
-	r := newRig(t)
-	a := r.agent("")
-	resp, raw := a.do("POST", "/v1/session/intent", map[string]any{"intent": "look around", "token_scope": "forever"})
-	if resp.StatusCode == http.StatusOK || !strings.Contains(string(raw), "session") || !strings.Contains(string(raw), "persistent") {
-		t.Fatalf("scope forever: %d %s; want a refusal naming session and persistent", resp.StatusCode, raw)
-	}
-	a.mustJSON("POST", "/v1/session/intent", map[string]any{"intent": "look around", "token_scope": "persistent"}, nil)
-	sessions := r.d.Sessions()
-	if len(sessions) != 1 || sessions[0].TokenScope != types.ScopePersistent {
-		t.Errorf("sessions = %+v, want token_scope persistent", sessions)
 	}
 }
 

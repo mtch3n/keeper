@@ -302,11 +302,11 @@ func printQueue(queue []types.ApprovalItem) error {
 	// database with similar SQL are otherwise indistinguishable, which is the
 	// normal case with three windows open.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tINTENT\tCONNECTION\tAGE")
+	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tCONNECTION\tAGE")
 	for _, it := range queue {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			it.TicketID, it.Session.Client.Name, it.Session.Client.Workspace,
-			truncate(it.Session.Intent, 40), it.Connection, age(it.CreatedAt))
+			it.Connection, age(it.CreatedAt))
 	}
 	w.Flush()
 	fmt.Println("\nkeeper approve <ticket> to decide one.")
@@ -317,7 +317,6 @@ func printQueue(queue []types.ApprovalItem) error {
 // from the SQL alone what the result contains.
 func printApproval(it types.ApprovalItem) {
 	f := it.Facts
-	fmt.Printf("intent    %s\n", f.Intent)
 	fmt.Printf("agent     %s · %s\n", it.Session.Client.Name, it.Session.Client.Workspace)
 	if it.Write != nil {
 		fmt.Printf("impact    %s · %d rows as of the preview, %s ago · %s\n",
@@ -575,7 +574,7 @@ func daemonlessDoctor(sock string, dialErr error, asJSON bool) error {
 
 func runVault(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("vault: expected a subcommand (export, import, rotate-master)")
+		return fmt.Errorf("vault: expected a subcommand (export, import)")
 	}
 	ctx := context.Background()
 	cli, err := connectDaemon(ctx)
@@ -634,13 +633,6 @@ func runVault(args []string) error {
 			return err
 		}
 		fmt.Println("vault imported")
-		return nil
-
-	case "rotate-master":
-		if err := cli.RotateMaster(ctx); err != nil {
-			return err
-		}
-		fmt.Println("master key rotated")
 		return nil
 
 	default:

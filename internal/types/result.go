@@ -146,7 +146,6 @@ type AuditRecord struct {
 	At         time.Time  `json:"at"`
 	SessionID  string     `json:"session_id"`
 	Client     ClientInfo `json:"client"`
-	Intent     string     `json:"intent,omitzero"`
 	Connection string     `json:"connection"`
 	// Statement is normalized with literals stripped and comments discarded.
 	// Quoted identifiers survive only when they match a catalogued relation or
@@ -166,8 +165,6 @@ type AuditRecord struct {
 	// Decision is how a human, or the clock, settled an escalated statement.
 	// Empty for a statement that never waited.
 	Decision Decision `json:"decision,omitzero"`
-	// TokenScope is how long the session declared its tokens live.
-	TokenScope TokenScope `json:"token_scope,omitzero"`
 }
 
 // Decision is how an escalated statement was settled.
