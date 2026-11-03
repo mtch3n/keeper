@@ -42,7 +42,7 @@ func (p *fakePipeline) Query(_ context.Context, _ types.Session, _, _ string, pa
 	p.mu.Lock()
 	p.auths = append(p.auths, auth)
 	p.params = append(p.params, params)
-	escalate, err := p.escalate, p.err
+	escalate, err, preview := p.escalate, p.err, p.preview
 	p.mu.Unlock()
 
 	if err != nil {
@@ -51,7 +51,7 @@ func (p *fakePipeline) Query(_ context.Context, _ types.Session, _, _ string, pa
 	if escalate && auth == "" {
 		return nil, &types.Ticket{
 			State: types.TicketPending, Tier: types.Tier3Approve,
-			Reason: "needs a human", AuditID: "audit-1",
+			Reason: "needs a human", AuditID: "audit-1", Preview: preview,
 		}, nil
 	}
 	return &types.QueryResult{
@@ -66,12 +66,6 @@ func (p *fakePipeline) Facts(context.Context, types.Session, string, string, []p
 	defer p.mu.Unlock()
 	f := p.facts
 	return &f, nil
-}
-
-func (p *fakePipeline) PreviewWrite(context.Context, types.Session, string, string, []ports.Param) (*types.WritePreview, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.preview, nil
 }
 
 func (p *fakePipeline) CommitWrite(_ context.Context, _ types.Session, _, _ string, _ []ports.Param, auth string) (*types.QueryResult, error) {

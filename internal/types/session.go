@@ -70,6 +70,8 @@ type Ticket struct {
 	Tier         Tier        `json:"tier"`
 	AuditID      string      `json:"audit_id"`
 	CreatedAt    time.Time   `json:"created_at"`
+	// Preview is the one rollback run of a write; it stays on the daemon's side.
+	Preview *WritePreview `json:"-"`
 }
 
 // RequestKind distinguishes the two things the local page serves. SPEC R8.7g:

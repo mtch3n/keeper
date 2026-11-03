@@ -130,17 +130,8 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 		}
 	}
 
-	var preview *types.WritePreview
-	if write {
-		// R4.2d: the preview is a second execution that rolls back, run before a
-		// human is asked, so the approval screen carries a count.
-		preview, err = d.deps.Pipeline.PreviewWrite(ctx, info, connID, sql, bound)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
 	facts.Intent = info.Intent
-	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, preview)
+	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, tmpl.Preview)
 	return nil, tk, nil
 }
 

@@ -51,11 +51,6 @@ type Pipeline interface {
 	// relation list for R9.3c's exact-path grant matching.
 	Facts(ctx context.Context, sess types.Session, connectionID, sql string, params []ports.Param) (*types.ApprovalFacts, error)
 
-	// PreviewWrite is R4.2d's first execution: BEGIN, statement, ROLLBACK,
-	// returning the command tag's count and any RETURNING transform summary.
-	// Nothing is committed.
-	PreviewWrite(ctx context.Context, sess types.Session, connectionID, sql string, params []ports.Param) (*types.WritePreview, error)
-
 	// CommitWrite is R4.2d's third step: a fresh transaction on a fresh
 	// connection, after a human approved the ticket the daemon passes as
 	// authorization.

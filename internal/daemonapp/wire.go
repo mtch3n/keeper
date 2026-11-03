@@ -417,6 +417,7 @@ func queryOutcome(dec *pipeline.Decision) (*types.QueryResult, *types.Ticket, er
 			Tier:    dec.Tier,
 			Reason:  strings.Join(dec.Escalation.Facts.Reasons, ", "),
 			AuditID: dec.AuditID,
+			Preview: dec.Escalation.Write,
 		}, nil
 	case dec.Error != nil:
 		return nil, nil, dec.Error
@@ -437,20 +438,6 @@ func (a *pipelineAdapter) Facts(ctx context.Context, sess types.Session, connID,
 		return nil, kerr
 	}
 	return f, nil
-}
-
-func (a *pipelineAdapter) PreviewWrite(ctx context.Context, sess types.Session, connID, sql string, params []ports.Param) (*types.WritePreview, error) {
-	dec, err := a.p.Query(ctx, a.request(sess, connID, sql, params))
-	if err != nil {
-		return nil, err
-	}
-	if dec.Escalation != nil && dec.Escalation.Write != nil {
-		return dec.Escalation.Write, nil
-	}
-	if dec.Error != nil {
-		return nil, dec.Error
-	}
-	return nil, fmt.Errorf("keeperd: no write preview for this statement")
 }
 
 func (a *pipelineAdapter) CommitWrite(ctx context.Context, sess types.Session, connID, sql string, params []ports.Param, authorization string) (*types.QueryResult, error) {

@@ -104,3 +104,9 @@ func (e *leanEnv) approveAndWait(t *testing.T, a *agentSession, body string) str
 	}
 	return a.call(t, "get_result", map[string]any{"ticket": q.Ticket, "wait_ms": 10000})
 }
+
+func parseBody2(body string) queryBody {
+	var q queryBody
+	_ = json.Unmarshal([]byte(body), &q)
+	return q
+}
