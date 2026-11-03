@@ -11,14 +11,27 @@ fail() {
     exit 1
 }
 
-if command -v keeper >/dev/null 2>&1; then
-    exec keeper mcp "$@"
-fi
-
 bindir="${HOME:?}/.local/bin"
 dest="$bindir/keeper"
+
+# ~/.local/bin is where this launcher installs keeper, and it is often not on
+# PATH. Run keeper from there anyway, and say how to put it on PATH so that
+# `keeper connect` works in a terminal.
+run() {
+    case ":$PATH:" in
+        *":$bindir:"*) ;;
+        *) echo "keeper launcher: $bindir is not on your PATH. Add it for \`keeper connect\` to work in a terminal: export PATH=\"\$HOME/.local/bin:\$PATH\"" >&2 ;;
+    esac
+    bin="$1"
+    shift
+    exec "$bin" mcp "$@"
+}
+
+if command -v keeper >/dev/null 2>&1; then
+    run keeper "$@"
+fi
 if [ -x "$dest" ]; then
-    exec "$dest" mcp "$@"
+    run "$dest" "$@"
 fi
 
 case "$(uname -s)" in
@@ -74,4 +87,4 @@ cp "$src" "$tmp" && chmod 755 "$tmp" && mv -f "$tmp" "$dest" || {
 rm -rf "$work"
 trap - EXIT
 echo "keeper launcher: installed $asset to $dest" >&2
-exec "$dest" mcp "$@"
+run "$dest" "$@"

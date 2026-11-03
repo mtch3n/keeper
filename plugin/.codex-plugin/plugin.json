@@ -1,7 +1,7 @@
 {
   "name": "keeper",
-  "version": "0.1.0",
-  "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, span-level redaction of free text, an approval queue shared across every agent session, and a local form for values that must never be typed into chat.",
+  "version": "0.2.0",
+  "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, redaction of free text, approval in the agent's terminal, and a local form for values that must never be typed into chat.",
   "author": {
     "name": "mtch3n"
   },
@@ -23,7 +23,7 @@
   "interface": {
     "displayName": "keeper",
     "shortDescription": "Query a database through keeper, which masks results",
-    "longDescription": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, span-level redaction of free text, an approval queue shared across every agent session, and a local form for values that must never be typed into chat.",
+    "longDescription": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, redaction of free text, approval in the agent's terminal, and a local form for values that must never be typed into chat.",
     "developerName": "mtch3n",
     "category": "Developer Tools",
     "capabilities": [
