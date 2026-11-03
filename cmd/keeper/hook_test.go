@@ -15,7 +15,7 @@ import (
 
 var registeredHosts = []string{"db.prod.example.com", "10.1.2.3"}
 
-func TestPLG_C7_RawClientAtRegisteredHostIsDenied(t *testing.T) {
+func TestPlg_PLG_C7_RawClientAtRegisteredHostIsDenied(t *testing.T) {
 	cases := []string{
 		`psql -h db.prod.example.com -U app app`,
 		`psql -hdb.prod.example.com app`,
@@ -43,7 +43,7 @@ func TestPLG_C7_RawClientAtRegisteredHostIsDenied(t *testing.T) {
 	}
 }
 
-func TestPLG_C8_UnregisteredHostOrNoDaemonPasses(t *testing.T) {
+func TestPlg_PLG_C8_UnregisteredHostOrNoDaemonPasses(t *testing.T) {
 	cases := []struct {
 		command string
 		hosts   []string
@@ -73,7 +73,7 @@ func TestPLG_C8_UnregisteredHostOrNoDaemonPasses(t *testing.T) {
 	preToolUseHook(in, func() []string { t.Error("daemon asked for a command that runs no database client"); return nil })
 }
 
-func TestPLG_C9_PersonOnlyKeeperCommandsAreDenied(t *testing.T) {
+func TestPlg_PLG_C9_PersonOnlyKeeperCommandsAreDenied(t *testing.T) {
 	cases := []string{
 		`keeper approve`,
 		`keeper approve 3f2a`,
@@ -100,7 +100,7 @@ func TestPLG_C9_PersonOnlyKeeperCommandsAreDenied(t *testing.T) {
 	}
 }
 
-func TestPLG_C10_ReadOnlyKeeperCommandsPass(t *testing.T) {
+func TestPlg_PLG_C10_ReadOnlyKeeperCommandsPass(t *testing.T) {
 	cases := []string{
 		`keeper version`,
 		`keeper doctor`,
@@ -133,7 +133,7 @@ func decode(t *testing.T, out any) map[string]any {
 	return m
 }
 
-func TestPLG_C11_KeeperToolsAreAllowedInClaudeCode(t *testing.T) {
+func TestPlg_PLG_C11_KeeperToolsAreAllowedInClaudeCode(t *testing.T) {
 	for _, tool := range []string{"query", "explain", "list_connections", "request_input", "get_result"} {
 		out := preToolUseHook(hookInput{ToolName: keeperToolPrefix + tool}, nil)
 		spec := decode(t, out)["hookSpecificOutput"].(map[string]any)
@@ -154,7 +154,7 @@ func TestPLG_C11_KeeperToolsAreAllowedInClaudeCode(t *testing.T) {
 	}
 }
 
-func TestPLG_C12_HookNeverOverridesAUserRule(t *testing.T) {
+func TestPlg_PLG_C12_HookNeverOverridesAUserRule(t *testing.T) {
 	inputs := []hookInput{{ToolName: keeperToolPrefix + "query"}, {ToolName: keeperToolPrefix + "describe_connection"}}
 	bash := hookInput{ToolName: "Bash"}
 	for _, c := range []string{`ls`, `psql -h 10.1.2.3`, `keeper approve`} {
@@ -209,7 +209,7 @@ func serveFake(t *testing.T, d fakeDaemon) {
 	t.Setenv("KEEPER_SOCKET", sock)
 }
 
-func TestPLG_C3_SessionStartNamesProfiles(t *testing.T) {
+func TestPlg_PLG_C3_SessionStartNamesProfiles(t *testing.T) {
 	serveFake(t, fakeDaemon{connections: `[{"id":"1","name":"app_ro"},{"id":"2","name":"reports"}]`})
 	spec := decode(t, sessionStartHook(context.Background()))["hookSpecificOutput"].(map[string]any)
 	text, _ := spec["additionalContext"].(string)
@@ -219,7 +219,7 @@ func TestPLG_C3_SessionStartNamesProfiles(t *testing.T) {
 	}
 }
 
-func TestPLG_C19_SessionStartAddsNothingWithoutDaemon(t *testing.T) {
+func TestPlg_PLG_C19_SessionStartAddsNothingWithoutDaemon(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "absent.sock")
 	t.Setenv("KEEPER_SOCKET", sock)
 	if out := sessionStartHook(context.Background()); out != nil {
@@ -234,7 +234,7 @@ func TestPLG_C19_SessionStartAddsNothingWithoutDaemon(t *testing.T) {
 	}
 }
 
-func TestPLG_C15_WaitingReadsTheDaemonAndNeverStartsIt(t *testing.T) {
+func TestPlg_PLG_C15_WaitingReadsTheDaemonAndNeverStartsIt(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "absent.sock")
 	t.Setenv("KEEPER_SOCKET", sock)
 	if out := waitingHook(context.Background()); out != nil {

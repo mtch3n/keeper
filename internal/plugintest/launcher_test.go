@@ -124,7 +124,7 @@ func launcherPath() string {
 	return p
 }
 
-func TestPLG_C4_LauncherInstallsAndRunsTheRelease(t *testing.T) {
+func TestPlg_PLG_C4_LauncherInstallsAndRunsTheRelease(t *testing.T) {
 	e := newLauncherEnv(t)
 	e.publish(t, false)
 	out, errOut, err := e.run()
@@ -148,7 +148,7 @@ func TestPLG_C4_LauncherInstallsAndRunsTheRelease(t *testing.T) {
 	}
 }
 
-func TestPLG_C5_LauncherStopsWithAReasonAndRunsNothing(t *testing.T) {
+func TestPlg_PLG_C5_LauncherStopsWithAReasonAndRunsNothing(t *testing.T) {
 	cases := []struct {
 		name    string
 		corrupt bool
@@ -181,7 +181,7 @@ func TestPLG_C5_LauncherStopsWithAReasonAndRunsNothing(t *testing.T) {
 	}
 }
 
-func TestPLG_C6_TwoLaunchersAtOnceLeaveOneGoodBinary(t *testing.T) {
+func TestPlg_PLG_C6_TwoLaunchersAtOnceLeaveOneGoodBinary(t *testing.T) {
 	e := newLauncherEnv(t)
 	e.publish(t, false)
 	var wg sync.WaitGroup

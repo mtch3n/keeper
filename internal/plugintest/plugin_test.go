@@ -22,7 +22,7 @@ func readJSON(t *testing.T, path string) map[string]any {
 	return m
 }
 
-func TestPLG_C1_BothClientsStartTheSameServerAndHooks(t *testing.T) {
+func TestPlg_PLG_C1_BothClientsStartTheSameServerAndHooks(t *testing.T) {
 	root := "../../plugin"
 	claude := readJSON(t, filepath.Join(root, ".claude-plugin/plugin.json"))
 	codex := readJSON(t, filepath.Join(root, ".codex-plugin/plugin.json"))
@@ -72,10 +72,10 @@ func TestPLG_C1_BothClientsStartTheSameServerAndHooks(t *testing.T) {
 	}
 }
 
-// TestPLG_C13_C15_BandTestsPass runs the band's own tests: the count and link
+// TestPlg_PLG_C13_PLG_C15_BandTestsPass runs the band's own tests: the count and link
 // with no button that clear when decided (C13), and no band and no daemon
 // start when the daemon is down (C15).
-func TestPLG_C13_C15_BandTestsPass(t *testing.T) {
+func TestPlg_PLG_C13_PLG_C15_BandTestsPass(t *testing.T) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Skip("claude is not on PATH")
 	}
@@ -99,7 +99,7 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func TestPLG_C2_PluginChangeWithoutVersionBumpFails(t *testing.T) {
+func TestPlg_PLG_C2_PluginChangeWithoutVersionBumpFails(t *testing.T) {
 	script, _ := filepath.Abs("../../scripts/check-plugin-version.sh")
 	dir := t.TempDir()
 	write := func(path, content string) {
