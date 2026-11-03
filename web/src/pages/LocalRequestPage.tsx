@@ -9,11 +9,16 @@ import { Fact, Facts } from '@/components/wrappers/Facts'
 import { KeeperMark } from '@/components/wrappers/KeeperMark'
 import {
   cancelLocalRequest,
+  decideApproval,
   decideLocalRequest,
+  getApproval,
   getLocalRequest,
+  listConnections,
   submitLocalRequest,
   type LocalRequestView,
 } from '@/lib/api'
+import type { ApprovalItem, ConnectionSummary } from '@/lib/types'
+import { ApprovalCard } from '@/pages/InboxPage'
 import { age, relationList, renderSQL } from '@/lib/render'
 
 /**
@@ -29,7 +34,7 @@ import { age, relationList, renderSQL } from '@/lib/render'
  * blocked agent printed, to make one decision, and the navigation would be an
  * invitation to do something else first.
  */
-export function LocalRequestPage() {
+function RequestPage() {
   const { requestId } = useParams<{ requestId: string }>()
   const [view, setView] = useState<LocalRequestView | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +59,7 @@ export function LocalRequestPage() {
     return (
       <Page>
         <h1 className="text-title">This request is not available</h1>
-        <p className="text-sm">{error}</p>
+        <p className="text-sm">It was already settled or does not exist. Nothing is waiting here.</p>
         <p className="text-meta text-muted-foreground">
           A request is one-use and expires quickly. Ask the agent to open another.
         </p>
@@ -289,6 +294,72 @@ function AuthorizationRequest({
         Granting returns nothing to the agent; the waiting statement re-evaluates. Covers this path only.
       </p>
     </section>
+  )
+}
+
+/**
+ * A ticket's own page, which the link in a fallback answer or a desktop
+ * notification opens. A waiting ticket shows the card the Inbox shows and
+ * decides it the same way; a ticket that is settled or unknown shows no card.
+ * Which of the two it is never matters to the person, so one sentence says both.
+ */
+export function LocalRequestPage() {
+  const { requestId } = useParams<{ requestId: string }>()
+  const [item, setItem] = useState<ApprovalItem | null | undefined>(undefined)
+
+  useEffect(() => {
+    if (!requestId) return
+    getApproval(requestId)
+      .then((i) => setItem(i?.ticket_id ? i : null))
+      .catch(() => setItem(null))
+  }, [requestId])
+
+  if (item === undefined) return <Page><Skeleton className="h-64 w-full" /></Page>
+  if (item === null) return <RequestPage />
+  return <TicketPage item={item} />
+}
+
+function TicketPage({ item }: { item: ApprovalItem }) {
+  const [connections, setConnections] = useState<ConnectionSummary[]>([])
+  const [done, setDone] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listConnections().then(setConnections).catch(() => {})
+  }, [])
+
+  const c = connections.find((x) => x.id === item.connection)
+  const decide = async (decision: 'approve' | 'refuse') => {
+    setBusy(true)
+    try {
+      await decideApproval(item.ticket_id, { decision })
+      setDone(decision === 'approve' ? 'Approved. The agent has its answer.' : 'Refused. Nothing ran.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (done) {
+    return (
+      <Page>
+        <h1 className="text-title">{done}</h1>
+        <p className="text-meta text-muted-foreground">You can close this page.</p>
+      </Page>
+    )
+  }
+  return (
+    <Page>
+      {error ? <p className="text-sm text-blocked">{error}</p> : null}
+      <ApprovalCard
+        item={item}
+        profile={{ name: c?.name ?? item.connection, username: c?.username, database: c?.database, writes: c?.writes }}
+        busy={busy}
+        onDecide={(d) => void decide(d)}
+      />
+    </Page>
   )
 }
 

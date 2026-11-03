@@ -92,7 +92,7 @@ export function InboxPage() {
   )
 }
 
-type Profile = { name: string; username?: string; database?: string; writes?: Writes; host?: HostView }
+export type Profile = { name: string; username?: string; database?: string; writes?: Writes; host?: HostView }
 
 function ProfileFact({ profile }: { profile: Profile }) {
   return (
@@ -126,7 +126,7 @@ function protectionLine(p?: Protection) {
  * human cannot tell from the text of a query that it returns 50,000 SSNs, so the
  * impact is what is decided on and the statement is the evidence.
  */
-function ApprovalCard({
+export function ApprovalCard({
   item,
   profile,
   busy,

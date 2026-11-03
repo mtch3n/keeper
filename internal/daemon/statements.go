@@ -73,7 +73,8 @@ func (d *Daemon) Explain(ctx context.Context, s *Session, connID, sql string, pa
 // on success.
 func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, params []Param, maxRows int) (*types.QueryResult, *types.Ticket, error) {
 	info := s.Info()
-	if _, err := d.usableConnection(ctx, connID); err != nil {
+	conn, err := d.usableConnection(ctx, connID)
+	if err != nil {
 		return nil, nil, err
 	}
 	bound, err := d.resolveParams(ctx, info.ID, connID, params)
@@ -101,7 +102,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	write := isWrite(facts.StatementType)
 
 	facts.Intent = info.Intent
-	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, tmpl, facts, tmpl.Preview)
+	tk := d.issueTicket(s, connID, sql, bound, maxRows, write, conn.Name, tmpl, facts, tmpl.Preview)
 	return nil, tk, nil
 }
 

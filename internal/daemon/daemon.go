@@ -40,6 +40,9 @@ type Deps struct {
 	// the daemon holds it only so doctor can report what examined the data and
 	// whether it could reach the network (SPEC R8.5g).
 	Detector ports.Detector
+	// Notifier is optional: when set it is told, off the statement's path, that
+	// a ticket opened.
+	Notifier Notifier
 }
 
 // Config is the daemon's tuning. Everything has a default; New fills the zeroes.

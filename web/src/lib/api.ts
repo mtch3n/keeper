@@ -331,6 +331,10 @@ export function listApprovals() {
   return get<ApprovalItem[]>('/v1/approvals')
 }
 
+export function getApproval(ticket: string) {
+  return get<ApprovalItem>(`/v1/approvals/${ticket}`)
+}
+
 export function decideApproval(
   ticket: string,
   body: { decision: 'approve' | 'refuse'; grant?: { lifetime: GrantLifetime; row_ceiling: number } },
