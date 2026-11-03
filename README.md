@@ -131,6 +131,11 @@ restores them on another machine. keeper does not store the passphrase.
   misses a function that is declared STABLE or IMMUTABLE but calls a volatile one.
   It also misses immutable functions that run at plan time. For certainty, set
   `reads=always`.
+- **The preview of a write does not undo what a trigger does outside the
+  transaction.** keeper runs a write in a transaction and rolls it back to count
+  the rows. A trigger can call a function with an effect that stays, such as
+  `nextval` or `dblink_exec`. keeper does not run the preview for a statement
+  that calls such a function itself, but it cannot see inside a trigger.
 - **keeper hides values. It does not hide that a table or column exists.** It
   does not stop inference, such as `length(email)` or a predicate that narrows
   the rows. Use database grants to control which tables a role can reach.

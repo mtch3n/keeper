@@ -391,6 +391,12 @@ func (d *Daemon) ImportVault(ctx context.Context, data []byte, passphrase string
 	if err := d.deps.Vault.Import(ctx, data, passphrase); err != nil {
 		return err
 	}
+	// Pools and catalogs are keyed by connection id and hold the old
+	// credentials and the old database's column identities. An id the import
+	// reuses would otherwise keep reaching the old server.
+	if d.deps.VaultReplaced != nil {
+		d.deps.VaultReplaced()
+	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "imported"}})
 	return nil
 }

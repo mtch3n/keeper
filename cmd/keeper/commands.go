@@ -16,6 +16,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"golang.org/x/term"
 
@@ -284,8 +285,12 @@ func printQueue(queue []types.ApprovalItem) error {
 // from the SQL alone what the result contains.
 func printApproval(it types.ApprovalItem) {
 	f := it.Facts
-	fmt.Printf("agent     %s · %s\n", it.Session.Client.Name, it.Session.Client.Workspace)
-	if it.Write != nil {
+	fmt.Printf("agent     %s · %s\n", renderSQL(it.Session.Client.Name), renderSQL(it.Session.Client.Workspace))
+	if it.Write != nil && it.Write.Unpreviewed {
+		fmt.Printf("impact    %s · about %d rows (an estimate) · %s\n",
+			it.Write.Operation, it.Write.RowCount, relations(f.Relations))
+		fmt.Println("          not previewed: the statement calls a function with side effects")
+	} else if it.Write != nil {
 		fmt.Printf("impact    %s · %d rows as of the preview, %s ago · %s\n",
 			it.Write.Operation, it.Write.RowCount, age(it.Write.PreviewedAt), relations(f.Relations))
 		fmt.Println("          the count is not a lock; the executed count is reported back")
@@ -360,10 +365,10 @@ func runActivity(args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "WHEN\tCONNECTION\tROWS\tPOLICIES APPLIED\tSTATEMENT")
+	fmt.Fprintln(w, "WHEN\tCONNECTION\tOUTCOME\tROWS\tPOLICIES APPLIED\tSTATEMENT")
 	for _, r := range recs {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
-			r.At.Format(time.RFC3339), r.Connection, r.RowCount,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			r.At.Format(time.RFC3339), r.Connection, outcomeOf(r), r.RowCount,
 			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
 	}
 	w.Flush()
@@ -376,6 +381,18 @@ func runActivity(args []string) error {
 	fmt.Println("not proof that redaction ran correctly (SPEC R10d).")
 	fmt.Println("Literals are never stored, so the statement shown is the statement as kept.")
 	return nil
+}
+
+// outcomeOf is the decision or the error a record ended in. A record with
+// neither ran and returned.
+func outcomeOf(r types.AuditRecord) string {
+	switch {
+	case r.Decision != "":
+		return string(r.Decision)
+	case r.ErrorCode != "":
+		return string(r.ErrorCode)
+	}
+	return "ok"
 }
 
 // --------------------------------------------------------------- version ---
@@ -700,15 +717,18 @@ func runUI(args []string) error {
 
 // ---------------------------------------------------------------- shared ---
 
-// renderSQL makes a trojan-source payload visible rather than letting the
-// terminal act on it. SPEC R9.2: bidirectional overrides render as their code
-// point, so a statement cannot read one way and run another.
+// renderSQL makes a trojan-source payload and terminal control bytes visible
+// rather than letting the terminal act on them. SPEC R9.2: bidirectional
+// overrides, an escape and the other control characters render as their code
+// point, so a statement cannot read one way and run another or rewrite the
+// screen. Newline and tab stay.
 func renderSQL(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		switch r {
-		case '‪', '‫', '‬', '‭', '‮',
-			'⁦', '⁧', '⁨', '⁩', '‏', '‎':
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case unicode.IsControl(r), strings.ContainsRune("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069", r):
 			fmt.Fprintf(&b, "[U+%04X]", r)
 		default:
 			b.WriteRune(r)

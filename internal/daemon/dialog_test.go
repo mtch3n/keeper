@@ -86,3 +86,60 @@ func TestDialogShowsSQLInItsFirstLines(t *testing.T) {
 		t.Errorf("the link is not in the first three lines:\n%s", msg)
 	}
 }
+
+func TestDialogSQLLineDropsLeadingComments(t *testing.T) {
+	item := dialogItem(true)
+	item.SQL = "/* SELECT count(*) FROM orders */ -- read only\nDELETE FROM orders WHERE total = 'x /* y */'"
+	msg := dialogMessage(item, "shop_rw", "http://127.0.0.1:1/r/t1")
+	first := strings.Split(msg, "\n")[0]
+	if first != "DELETE FROM orders WHERE total = 'x /* y */'" {
+		t.Errorf("the SQL line is %q", first)
+	}
+}
+
+func TestDialogFirstThreeLinesNameTheStatementItsTargetsAndRows(t *testing.T) {
+	for _, write := range []bool{false, true} {
+		item := dialogItem(write)
+		msg := dialogMessage(item, "shop_rw", "http://127.0.0.1:1/r/t1")
+		visible := strings.Join(strings.Split(msg, "\n")[:3], "\n")
+		kind := item.Facts.StatementType
+		for _, want := range []string{kind, item.Facts.Relations[0].String(), map[bool]string{false: "7", true: "1 rows"}[write]} {
+			if !strings.Contains(visible, want) {
+				t.Errorf("write=%v: the first three lines lack %q:\n%s", write, want, msg)
+			}
+		}
+		for i, l := range strings.Split(msg, "\n")[:3] {
+			if n := len([]rune(l)); n > dialogLineCap {
+				t.Errorf("write=%v: line %d is %d characters: %q", write, i, n, l)
+			}
+		}
+	}
+}
+
+func TestDialogSaysAnUnpreviewedWriteWasNotPreviewed(t *testing.T) {
+	item := dialogItem(true)
+	item.Write.Unpreviewed = true
+	item.Write.RowCount = 9
+	msg := dialogMessage(item, "shop_rw", "http://127.0.0.1:1/r/t1")
+	if visible := strings.Join(strings.Split(msg, "\n")[:3], "\n"); !strings.Contains(visible, "not previewed") {
+		t.Errorf("the visible lines do not say so:\n%s", msg)
+	}
+	if !strings.Contains(msg, "calls a function with side effects") || strings.Contains(msg, "9 rows affected") {
+		t.Errorf("the reason is missing, or the estimate reads as a count:\n%s", msg)
+	}
+}
+
+func TestDisplayCopyShowsTerminalControlBytesAsText(t *testing.T) {
+	got := forDisplay("SELECT 1\x1b[2J\x1b]0;x\x07\r\u009b")
+	for _, bad := range []string{"\x1b", "\x07", "\r", "\u009b"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%q survived in %q", bad, got)
+		}
+	}
+	if !strings.Contains(got, "[U+001B]") {
+		t.Errorf("the escape is not shown as text: %q", got)
+	}
+	if forDisplay("SELECT 1\n\tFROM t") != "SELECT 1\n\tFROM t" {
+		t.Error("a newline or a tab was rewritten")
+	}
+}

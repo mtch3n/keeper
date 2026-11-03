@@ -153,9 +153,13 @@ type FilterColumn struct {
 // WritePreview is the result of SPEC R4.2d's first execution. The count is exact
 // as of PreviewedAt and is not a lock.
 type WritePreview struct {
-	Operation   string        `json:"operation"` // UPDATE, INSERT, DELETE
-	RowCount    int64         `json:"row_count"`
-	PreviewedAt time.Time     `json:"previewed_at"`
+	Operation   string    `json:"operation"` // UPDATE, INSERT, DELETE
+	RowCount    int64     `json:"row_count"`
+	PreviewedAt time.Time `json:"previewed_at"`
+	// Unpreviewed says the statement was not run in a preview, because it calls
+	// a function that can have an effect a rollback does not undo. RowCount is
+	// then the planner's estimate.
+	Unpreviewed bool          `json:"unpreviewed,omitzero"`
 	Scope       []RelationRef `json:"scope"`
 	// Returning is the transform summary for a RETURNING clause, which passes
 	// through G7 like any other output. SPEC R4.2e.

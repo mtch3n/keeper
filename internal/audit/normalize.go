@@ -42,6 +42,19 @@ const UnknownIdentifier = `"?"`
 //
 // known may be nil, in which case no quoted identifier is kept.
 func Normalize(sql string, known func(string) bool) string {
+	return rewrite(sql, known, false)
+}
+
+// StripComments discards every comment and collapses whitespace, and keeps
+// every literal and every identifier as it is. It is for text a person reads
+// next to the real statement, such as an approval dialog, where a comment can
+// pass as the statement's first words. It reads with the same lexer as
+// [Normalize], so the two cannot disagree about where a comment ends.
+func StripComments(sql string) string {
+	return rewrite(sql, nil, true)
+}
+
+func rewrite(sql string, known func(string) bool, keepLiterals bool) string {
 	var b strings.Builder
 	b.Grow(len(sql))
 	pendingSpace := false
@@ -60,9 +73,18 @@ func Normalize(sql string, known func(string) bool) string {
 		pendingSpace = false
 	}
 
+	literal := func(from, to int) {
+		if keepLiterals {
+			write(sql[from:to])
+		} else {
+			write(Placeholder)
+		}
+	}
+
 	i := 0
 	for i < len(sql) {
 		c := sql[i]
+		start := i
 		switch {
 		case isSpace(c):
 			pendingSpace = true
@@ -84,24 +106,24 @@ func Normalize(sql string, known func(string) bool) string {
 
 		case c == '\'':
 			i = skipQuoted(sql, i, false)
-			write(Placeholder)
+			literal(start, i)
 
 		case (c == 'e' || c == 'E') && i+1 < len(sql) && sql[i+1] == '\'':
 			i = skipQuoted(sql, i+1, true)
-			write(Placeholder)
+			literal(start, i)
 
 		case (c == 'u' || c == 'U') && i+2 < len(sql) && sql[i+1] == '&' && sql[i+2] == '\'':
 			i = skipQuoted(sql, i+2, false)
-			write(Placeholder)
+			literal(start, i)
 
 		case (c == 'b' || c == 'B' || c == 'x' || c == 'X') && i+1 < len(sql) && sql[i+1] == '\'':
 			i = skipQuoted(sql, i+1, false)
-			write(Placeholder)
+			literal(start, i)
 
 		case c == '$':
 			if end, ok := skipDollarQuoted(sql, i); ok {
 				i = end
-				write(Placeholder)
+				literal(start, i)
 				break
 			}
 			if i+1 < len(sql) && isDigit(sql[i+1]) {
@@ -119,7 +141,9 @@ func Normalize(sql string, known func(string) bool) string {
 		case c == '"':
 			ident, end := readQuotedIdent(sql, i)
 			i = end
-			if known != nil && known(ident) {
+			if keepLiterals {
+				write(sql[start:i])
+			} else if known != nil && known(ident) {
 				write(`"` + strings.ReplaceAll(ident, `"`, `""`) + `"`)
 			} else {
 				write(UnknownIdentifier)
@@ -135,7 +159,7 @@ func Normalize(sql string, known func(string) bool) string {
 
 		case isDigit(c) || (c == '.' && i+1 < len(sql) && isDigit(sql[i+1])):
 			i = skipNumber(sql, i)
-			write(Placeholder)
+			literal(start, i)
 
 		default:
 			write(sql[i : i+1])
@@ -143,28 +167,6 @@ func Normalize(sql string, known func(string) bool) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
-}
-
-// hasStrippableLiteral reports whether s still carries something Normalize
-// would have removed. It is the backstop [Log.Write] applies: the audit log
-// must never receive a literal or a comment (R10a, CONTRACT §4 rule 6), and
-// "the caller promised" is not a mechanism.
-//
-// It looks for the shapes that carry free text — quotes, dollar quoting and
-// comment introducers. Normalize's own output contains none of them except the
-// double quotes around a catalogued identifier.
-func hasStrippableLiteral(s string) bool {
-	if strings.ContainsRune(s, '\'') || strings.Contains(s, "--") || strings.Contains(s, "/*") {
-		return true
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] == '$' {
-			if _, ok := skipDollarQuoted(s, i); ok {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func skipBlockComment(s string, i int) int {

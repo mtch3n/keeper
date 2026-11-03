@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,13 +33,48 @@ type fakePipeline struct {
 	err      error
 	auths    []string
 	params   [][]ports.Param
+
+	// hold, when set, parks every authorized run until it is closed or the
+	// run's context ends. ran is told when a run has started, and ctxErr
+	// records how a held run ended.
+	hold      chan struct{}
+	ran       chan struct{}
+	ctxErr    chan error
+	previewed []int64
+}
+
+func (p *fakePipeline) authorized(ctx context.Context) error {
+	p.mu.Lock()
+	hold, ran, ctxErr := p.hold, p.ran, p.ctxErr
+	p.previewed = append(p.previewed, daemon.PreviewedRowsFrom(ctx))
+	p.mu.Unlock()
+	if ran != nil {
+		ran <- struct{}{}
+	}
+	if hold == nil {
+		return nil
+	}
+	select {
+	case <-hold:
+		return nil
+	case <-ctx.Done():
+		if ctxErr != nil {
+			ctxErr <- ctx.Err()
+		}
+		return ctx.Err()
+	}
 }
 
 func (p *fakePipeline) Explain(context.Context, types.Session, string, string, []ports.Param) (*types.ExplainResult, error) {
 	return &types.ExplainResult{StatementType: "SELECT", Outcome: types.OutcomeRun}, nil
 }
 
-func (p *fakePipeline) Query(_ context.Context, _ types.Session, _, _ string, params []ports.Param, maxRows int, auth string) (*types.QueryResult, *types.Ticket, error) {
+func (p *fakePipeline) Query(ctx context.Context, _ types.Session, _, _ string, params []ports.Param, maxRows int, auth string) (*types.QueryResult, *types.Ticket, error) {
+	if auth != "" {
+		if err := p.authorized(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
 	p.mu.Lock()
 	p.auths = append(p.auths, auth)
 	p.params = append(p.params, params)
@@ -68,7 +104,10 @@ func (p *fakePipeline) Facts(context.Context, types.Session, string, string, []p
 	return &f, nil
 }
 
-func (p *fakePipeline) CommitWrite(_ context.Context, _ types.Session, _, _ string, _ []ports.Param, auth string) (*types.QueryResult, error) {
+func (p *fakePipeline) CommitWrite(ctx context.Context, _ types.Session, _, _ string, _ []ports.Param, auth string) (*types.QueryResult, error) {
+	if err := p.authorized(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	p.auths = append(p.auths, auth)
 	p.mu.Unlock()
@@ -156,6 +195,8 @@ type rig struct {
 	// open makes opening one connection's catalog fail or stall, the way an
 	// unreachable or a slow server does.
 	open map[string]func() error
+
+	replaced atomic.Int32
 }
 
 func newRig(t *testing.T) *rig {
@@ -193,12 +234,13 @@ func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 			}
 			return r.cat, nil
 		},
-		CatalogStore: r.cat,
-		Executor:     r.exec,
-		Redactor:     r.red,
-		Audit:        r.alog,
-		Detector:     fakeDetector{},
-		Pipeline:     r.pipe,
+		CatalogStore:  r.cat,
+		Executor:      r.exec,
+		Redactor:      r.red,
+		Audit:         r.alog,
+		Detector:      fakeDetector{},
+		Pipeline:      r.pipe,
+		VaultReplaced: func() { r.replaced.Add(1) },
 	})
 	if err != nil {
 		t.Fatalf("daemon.New: %v", err)

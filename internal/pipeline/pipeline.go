@@ -139,6 +139,7 @@ type state struct {
 	transforms    map[string]types.Transform
 	outputColumns []types.ColumnMeta
 	rowCount      int
+	committed     bool
 	collisions    int
 	authorization string
 	approver      string
@@ -174,7 +175,16 @@ func (p *Pipeline) Query(ctx context.Context, req Request) (*Decision, error) {
 	}
 
 	if err := p.writeAudit(ctx, req, st); err != nil {
-		return nil, err
+		if !st.committed {
+			return nil, err
+		}
+		// The write is committed and its intent is already on record. Telling
+		// the agent it failed would invite a second commit.
+		if dec.Result != nil {
+			dec.Result.Degradations = append(dec.Result.Degradations, types.Degradation{
+				Layer: "audit", Reason: "the write committed, but its final record could not be written",
+			})
+		}
 	}
 	return dec, nil
 }
@@ -263,7 +273,17 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	maxRows := p.rowCeiling(req, conn)
 	var raw *ports.RawResult
 	if plan.Writes {
-		raw, err = p.exec.CommitWrite(ctx, req.ConnID, req.SQL, req.Params)
+		// A commit is never unrecorded: the intent goes down first, under the
+		// final record's id, and the final record replaces it when read back.
+		if err := p.writeAudit(ctx, req, st); err != nil {
+			return refuse(keeperError(types.CodeInternal, "keeper could not record this write, so it did not run", "retry; tell an operator if it persists"))
+		}
+		// Once the commit starts it is not cancelled with the caller: an
+		// interrupted COMMIT leaves the outcome unknown.
+		commitCtx, release := detach(ctx)
+		raw, err = p.exec.CommitWrite(commitCtx, req.ConnID, req.SQL, req.Params)
+		release()
+		st.committed = err == nil
 	} else {
 		raw, err = p.exec.Run(ctx, req.ConnID, req.SQL, req.Params, maxRows)
 	}
@@ -296,6 +316,9 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	}
 
 	st.rowCount = len(rows)
+	if plan.Writes {
+		st.rowCount = int(raw.CommandTag)
+	}
 	st.outputColumns = cols
 
 	result := &types.QueryResult{
@@ -361,7 +384,18 @@ func (p *Pipeline) escalate(ctx context.Context, req Request, st *state) *Decisi
 	st.outputColumns = publicColumns(st.cols)
 	facts := p.approvalFacts(req, st)
 
-	if st.plan.Writes {
+	if st.plan.Writes && st.plan.Uncertain {
+		// A rollback undoes rows, not a sequence, a signal or a remote commit.
+		// A statement that calls a function with such effects is not run for a
+		// preview; the approver gets the planner's estimate and is told so.
+		esc.Write = &types.WritePreview{
+			Operation:   st.plan.StatementType,
+			RowCount:    st.plan.EstimatedRows,
+			PreviewedAt: p.now(),
+			Scope:       st.plan.RelationNames,
+			Unpreviewed: true,
+		}
+	} else if st.plan.Writes {
 		// The statement runs and the transaction rolls back. The
 		// count is exact as of now and is not a lock.
 		raw, err := p.exec.PreviewWrite(ctx, req.ConnID, req.SQL, req.Params)
@@ -470,6 +504,9 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 // writeAudit is G9. It is never skipped, and it never receives a literal, a
 // comment, an unmatched quoted identifier or a result row.
 func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error {
+	// The record is the statement's, not the caller's: a cancelled call still
+	// ran, so it is still recorded.
+	ctx = context.WithoutCancel(ctx)
 	rec := &types.AuditRecord{
 		ID:            st.auditID,
 		At:            st.started,
@@ -477,6 +514,7 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		Client:        req.Session.Client,
 		Connection:    req.ConnID,
 		Statement:     p.audit.Normalize(req.SQL, p.knownIdentifier(st)),
+		Normalized:    true,
 		OutputColumns: st.outputColumns,
 		Transforms:    st.transforms,
 		RowCount:      st.rowCount,
@@ -536,6 +574,15 @@ func asKeeperError(err error) *types.Error {
 	return keeperError(types.CodeInternal, "keeper could not complete this statement", "retry; tell an operator if it persists")
 }
 
+// detach keeps ctx's values and deadline and drops its cancellation.
+func detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	out := context.WithoutCancel(ctx)
+	if dl, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(out, dl)
+	}
+	return out, func() {}
+}
+
 func newAuditID() string { return uuid.NewV7().String() }
 
 // shownChanges keeps the first types.PreviewRows changed rows and counts the
@@ -550,17 +597,11 @@ func shownChanges(c *types.WriteChanges, affected int64) *types.WriteChanges {
 }
 
 // Facts is §9.2's approval payload for a statement, from the dry run: nothing is
-// read and no write is previewed. Like Explain, it is audited.
+// read and no write is previewed. It is not audited: the statement's own Query
+// already was, and a second record would read in Activity as a second run.
 func (p *Pipeline) Facts(ctx context.Context, req Request) (*types.ApprovalFacts, *types.Error, error) {
 	st := &state{auditID: newAuditID(), started: p.now(), transforms: map[string]types.Transform{}}
 	_, ke := p.explain(ctx, req, st)
-	if ke != nil {
-		ke.AuditID = st.auditID
-		st.errCode = ke.Code
-	}
-	if err := p.writeAudit(ctx, req, st); err != nil {
-		return nil, nil, err
-	}
 	if ke != nil {
 		return nil, ke, nil
 	}

@@ -106,24 +106,3 @@ func TestNormalizeIsIdempotentAndCollapsesWhitespace(t *testing.T) {
 		t.Errorf("not idempotent: %q then %q", once, twice)
 	}
 }
-
-func TestHasStrippableLiteral(t *testing.T) {
-	dirty := []string{
-		"SELECT 'x'", "SELECT id -- c", "SELECT /* c */ id", "SELECT $$x$$", "SELECT $t$x$t$",
-	}
-	for _, s := range dirty {
-		if !hasStrippableLiteral(s) {
-			t.Errorf("hasStrippableLiteral(%q) = false", s)
-		}
-	}
-	clean := []string{
-		"SELECT id FROM users WHERE email = ?",
-		`SELECT "Email" FROM "order" WHERE id = $1`,
-		"SELECT count(*) FROM t",
-	}
-	for _, s := range clean {
-		if hasStrippableLiteral(s) {
-			t.Errorf("hasStrippableLiteral(%q) = true", s)
-		}
-	}
-}

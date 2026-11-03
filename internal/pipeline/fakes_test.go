@@ -155,6 +155,8 @@ type fakeExecutor struct {
 	changes    *types.WriteChanges
 
 	calls []string
+	// onCommit runs as the commit starts.
+	onCommit func()
 }
 
 func (e *fakeExecutor) record(name string) { e.calls = append(e.calls, name) }
@@ -218,6 +220,9 @@ func (e *fakeExecutor) PreviewWrite(context.Context, string, string, []ports.Par
 
 func (e *fakeExecutor) CommitWrite(context.Context, string, string, []ports.Param) (*ports.RawResult, error) {
 	e.record("CommitWrite")
+	if e.onCommit != nil {
+		e.onCommit()
+	}
 	if e.commitErr != nil {
 		return nil, e.commitErr
 	}
@@ -241,9 +246,23 @@ func (e *fakeExecutor) CloseIdle() int { return 0 }
 type fakeAudit struct {
 	records  []*types.AuditRecord
 	writeErr error
+	// failFrom, when above zero, fails the write with that number and every
+	// later one. A cancelled context fails a write too, as the real log would
+	// if it honoured it.
+	failFrom  int
+	writes    int
+	cancelled bool
 }
 
-func (a *fakeAudit) Write(_ context.Context, r *types.AuditRecord) error {
+func (a *fakeAudit) Write(ctx context.Context, r *types.AuditRecord) error {
+	a.writes++
+	if ctx.Err() != nil {
+		a.cancelled = true
+		return ctx.Err()
+	}
+	if a.failFrom > 0 && a.writes >= a.failFrom {
+		return errors.New("disk full")
+	}
 	if a.writeErr != nil {
 		return a.writeErr
 	}

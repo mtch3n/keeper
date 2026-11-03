@@ -2,6 +2,7 @@ package redact
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -714,5 +715,22 @@ func TestFamily(t *testing.T) {
 		if got := TextLike(Family(typ)); got != want {
 			t.Errorf("TextLike(Family(%q)) = %v, want %v", typ, got, want)
 		}
+	}
+}
+
+func TestADroppedSessionIsNotRecreatedByALateMintOrApply(t *testing.T) {
+	r := newRedactor(t, fakeCatalog{}, nil)
+	if _, err := r.Mint(t.Context(), "s", "c1", "email", "a@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	r.DropSession("s")
+	if _, err := r.Mint(t.Context(), "s", "c1", "email", "b@example.com"); !errors.Is(err, ErrSessionClosed) {
+		t.Errorf("Mint after the drop: %v", err)
+	}
+	if _, err := r.Apply(t.Context(), "s", nil, nil); !errors.Is(err, ErrSessionClosed) {
+		t.Errorf("Apply after the drop: %v", err)
+	}
+	if _, err := r.Mint(t.Context(), "other", "c1", "email", "c@example.com"); err != nil {
+		t.Errorf("another session was refused: %v", err)
 	}
 }

@@ -89,16 +89,9 @@ type TicketResult struct {
 // GetResult polls a ticket. waitMs is capped at 25000 (R8.7b, §3.2); the
 // agent re-calls while State is not Terminal().
 func (c *Client) GetResult(ctx context.Context, ticket string, waitMillis int) (*TicketResult, error) {
-	q := url.Values{}
-	if waitMillis > 0 {
-		q.Set("wait_ms", fmt.Sprint(waitMs(waitMillis)))
-	}
-	path := "/v1/tickets/" + url.PathEscape(ticket)
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
 	var out TicketResult
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	err := c.poll(ctx, "/v1/tickets/"+url.PathEscape(ticket), waitMillis, &out, func() bool { return out.State.Terminal() })
+	if err != nil {
 		return nil, err
 	}
 	return &out, nil
