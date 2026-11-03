@@ -253,6 +253,8 @@ type Statement struct {
 	// declared persistent and the connection allows it. Otherwise they are
 	// session tokens.
 	Persistent bool
+	// Detection is the connection's detection setting for this statement.
+	Detection types.Detection
 }
 
 type statementKey struct{}

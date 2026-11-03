@@ -15,6 +15,18 @@ const (
 // Valid reports whether r is a setting keeper knows.
 func (r Reads) Valid() bool { return r == ReadsAlways || r == ReadsUncertain || r == ReadsNever }
 
+// Detection is how far a profile's pattern detection reaches. Scan, the default,
+// examines scan columns only; all also examines the text of allow columns; off
+// examines nothing, so scan cells are redacted whole. Anything else, and empty,
+// behaves as scan.
+type Detection string
+
+const (
+	DetectionOff  Detection = "off"
+	DetectionScan Detection = "scan"
+	DetectionAll  Detection = "all"
+)
+
 // StageKind names a detection adapter a stage runs.
 type StageKind string
 
