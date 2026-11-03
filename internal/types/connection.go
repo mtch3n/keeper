@@ -2,6 +2,8 @@ package types
 
 import (
 	"encoding/json"
+	"net/netip"
+	"strings"
 	"time"
 )
 
@@ -101,6 +103,15 @@ type Host struct {
 
 // SSLModes are the sslmode values libpq accepts.
 var SSLModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+
+// DefaultSSLMode is the sslmode keeper uses for a host when none is asked for:
+// require, except on this machine, where the server is reached over loopback.
+func DefaultSSLMode(address string) string {
+	if ip, err := netip.ParseAddr(address); strings.EqualFold(address, "localhost") || err == nil && ip.IsLoopback() {
+		return "prefer"
+	}
+	return "require"
+}
 
 // Connection is one database and role on a Host: what an agent queries. Host,
 // password and connection string never appear in an MCP response; SPEC §6.1
