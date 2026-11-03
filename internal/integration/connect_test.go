@@ -199,3 +199,39 @@ func TestConnectUnreachableNamesReachability(t *testing.T) {
 		t.Errorf("registered something: hosts %d->%d, connections %d->%d", hosts0, h, conns0, c)
 	}
 }
+
+// The README's first-run path: keeper connect, then the agent's first query
+// returns the email as a token with no catalog step. It has no case ID of its own.
+func TestConnect_ThenTheFirstQueryReturnsAnEmailToken(t *testing.T) {
+	e := newLeanEnv(t)
+	bin := buildKeeper(t)
+	alias := otherAddress(e.shop.host)
+	out, err := runKeeper(t, bin, connString(alias, e.shop.port, "shop_eval_ro", e.shop.roPass, "shop")+"\n", "connect", "--name", "first_run")
+	if err != nil {
+		t.Fatalf("connect: %v\n%s", err, out)
+	}
+	conns, err := e.op.ListConnections(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ""
+	for _, c := range conns {
+		if c.Name == "first_run" {
+			id = c.ID
+		}
+	}
+	if id == "" {
+		t.Fatalf("keeper connect did not register first_run: %+v", conns)
+	}
+	body := e.query(t, e.agent, id, "SELECT email FROM customers WHERE id = 4")
+	q := parseBody(t, body)
+	if len(q.Rows) != 1 {
+		t.Fatalf("not one row: %s", body)
+	}
+	if tok, _ := q.Rows[0][0].(string); !strings.Contains(tok, "email") || strings.Contains(tok, "@") {
+		t.Errorf("email = %v, want a token", q.Rows[0][0])
+	}
+	if leaks := e.truth.leaks(body); len(leaks) != 0 {
+		t.Errorf("seeded personal data in the result: %v", leaks)
+	}
+}

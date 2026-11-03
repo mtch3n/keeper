@@ -1,15 +1,15 @@
 ---
 name: keeper
 description: Query a database through keeper, which masks what comes back before it reaches this conversation. Use this whenever your task touches a database at all — reading rows, exploring a schema, checking a count, verifying a migration, debugging against real data — and whenever the user mentions keeper, a masked column, a token, an approval, or a connection. It is the default path to the database, not a special case.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # keeper
 
 keeper is a database proxy that sits between you and the rows. You send SQL, it
 runs it, and it masks the result before you ever see it: an email comes back as a
-token you can still join on, an SSN comes back as nothing, a free-text note comes
-back with the phone number inside it blacked out.
+token you can still join on, a sensitive value comes back redacted, a free-text
+note comes back with the phone number inside it blacked out.
 
 Use it whenever the task touches the database. If you are tempted to reach for a
 connection string, a `psql` invocation, or your own credentials, use keeper
@@ -18,80 +18,53 @@ through them lands in this conversation, gets sent to a model provider, and ends
 up in the transcript, the summary and whatever you write afterwards. That is the
 problem keeper exists to solve, and going around it re-creates it exactly.
 
-## Token scope, and an optional intent
-
-`set_session_intent` is optional; queries run without it. Call it when you want
-tokens that outlive this session, with `token_scope`:
-
-- `session` (the default) — tokens resolve only in this session. Use it for
-  short work: nothing you hold links to anything another session sees.
-- `persistent` — the same value gets the same token in every session and on
-  every machine holding the vault, so you can keep a token in notes and use it
-  next week. Only where the connection allows it; elsewhere you get session
-  tokens and the result says so in `degradations`.
-
-Pick persistent only when the work needs a token to outlive the session, and say
-so to the user.
-
-You may also pass a short `intent` — a ticket id or the question you are
-answering. A human sees it beside anything that waits for approval. Keep
-credentials and personal data out of it: keeper screens it and rejects it if it
-finds any.
-
-## Pick the profile yourself
-
-`list_connections` shows every profile: its name, host, address and port,
-database, username, and whether it allows writes. Each profile is one login. When
-the user names one — "use orders_rw on prod-db" — find it there and send the
-statement on it. keeper never switches profiles for you, and never shows you a
-password.
-
-## The shape of a query
+## The normal path
 
 ```
-explain(connection_id, sql, params?)   what would happen, without spending an approval
+list_connections()                    every profile, with its name and whether it allows writes
 query(connection_id, sql, params?, max_rows?)
 ```
 
-`explain` is worth using before anything expensive or anything you are unsure
-about. It tells you which columns would come back masked and whether the
-statement would stop for a human, and it costs nothing.
+`query` returns rows on the same call. When the profile's settings need a person
+to accept first, the client shows them a dialog and the same call returns the
+rows when they accept, or a refusal when they decline. You wait inside the call;
+you do not poll.
 
-`query` returns one of two things:
+Each profile is one login. When the user names one — "use orders_rw" — find it
+in `list_connections` and send the statement on it. keeper never switches
+profiles for you, and never shows you a password.
 
-- **rows**, with a `transforms` map saying what was done to each column, or
-- **a ticket**, meaning a human has to decide. Then you wait.
+`explain(connection_id, sql, params?)` says what a statement would touch, which
+columns would come back masked, and whether it would run, ask or be refused. It
+costs nothing. `get_schema` and `describe_connection` show the tables and what
+the profile's `reads` and `writes` settings do.
 
-## Waiting for a ticket
+## The fallback: a ticket with a link
+
+If the client cannot show a dialog, or the person pressed Esc, `query` returns a
+**ticket** and a local link instead of rows. Tell the person to open the link
+(or answer the desktop notification), then poll:
 
 ```
 get_result(ticket, wait_ms: 25000)
 ```
 
-`wait_ms` is capped at 25000 and keeper rejects anything larger, so never try to
-wait longer in one call. The call returns the moment a human decides, or after 25
-seconds, whichever comes first — and a call that runs out hands you back the same
-pending state. **That is a checkpoint, not an answer.** Call it again, and keep
-calling until the state is terminal.
+`wait_ms` is capped at 25000. The call returns when a person decides, or after 25
+seconds with the same pending state. **That is a checkpoint, not an answer.**
+Call it again until the state is terminal: `ready`, `approved`, `refused`,
+`expired`, `cancelled` or `failed`.
 
 **Never end your turn while a ticket you opened is still pending.** Once your
-turn is over the human's decision reaches nobody, and in a headless run the
-result is lost for good. If you have other useful work, do it and come back; if
-you do not, roll the 25-second waits.
-
-A human may take minutes. That is normal and it is the design: keeper escalates
-only where a person can actually change the outcome.
-
-If you no longer need the statement, withdraw it with `cancel(ticket)` rather
-than leaving it in the human's Inbox. It is recorded as cancelled.
+turn is over the decision reaches nobody, and in a headless run the result is
+lost. If you no longer need the statement, withdraw it with `cancel(ticket)`.
 
 ## Writes
 
-A write runs only on a profile that allows writes, and every write waits for a
-human, who sees the rows it will change before deciding. On a read-only profile
-it is refused at once with `writes_off`, and the refusal names the profiles on
-the same database that allow writes. Resubmit on one of those only if the user
-meant that login; do not pick one to get past the refusal.
+A write runs only on a profile whose `writes` setting allows it. On a profile
+with `writes` off it is refused at once with `writes_off`. Resubmit on another
+profile only if the user meant that login; do not pick one to get past the
+refusal. When `writes` is `ask`, a person sees the rows the write would change
+and chooses explicitly.
 
 ## Reading what came back
 
@@ -103,34 +76,33 @@ allow      the value, unchanged
 token      ⟨email1:a3f21b4c9d8e7f60⟩ — equal values give equal tokens, so joins,
            GROUP BY and COUNT DISTINCT all still work. You cannot read it, and
            you are not meant to
-partial    one declared component kept: ████@acme.example, 453211██████3333
 redact     present, nothing survived
-drop       the column is not in the response at all
 scan       free text with matched spans blacked out inside it
 ```
 
-Two mistakes to avoid. A masked value is **not** a missing value: `████` means
-there is an SSN there, not that the row lacks one, and a summary that says
-"three customers have no email" when the emails were tokenized is wrong. And a
-count over a masked column is still a real count — masking changes what you can
-read, not what is there.
+A masked value is **not** a missing value: a redacted cell means there is a value
+there, and a summary that says "three customers have no email" when the emails
+were tokenized is wrong. A count over a masked column is still a real count.
 
-If `transforms` says `basis: "unexamined"`, no detection ran over that free
-text and it was redacted whole. Say so if it matters to the conclusion.
+If a result has a `hint`, keeper classified a column by itself. It names the one
+command that changes that, which only the person can run. Pass it on; do not run
+it.
+
+If `transforms` says `basis: "unexamined"`, no detection ran over that free text
+and it was redacted whole. Say so if it matters to the conclusion.
 
 ## Querying by a value you cannot see
 
-You can filter on a token without ever knowing what it stands for:
+You can filter on a token without knowing what it stands for:
 
 ```
 query(conn, "SELECT * FROM orders WHERE email = $1", params: [{"token": "⟨email1:a3f21b…⟩"}])
 ```
 
 keeper resolves it on its side and binds it as a parameter. **Never** paste a
-token into the SQL text — pass it in `params`. A session token works only in the
-session that minted it, and if the daemon restarts every session token you are
-holding becomes unresolvable; re-run the query that produced it. A persistent
-token (`⟨email1=…⟩`) resolves in any session on that connection.
+token into the SQL text — pass it in `params`. A token works only in the session
+that minted it. If the daemon restarts, every token you hold stops resolving
+(`stale_token`); run the query that produced it again.
 
 ## When the task needs a value nobody should type here
 
@@ -138,8 +110,6 @@ A user asking you to "find the orders for this customer's email" has a value you
 must not see and must not ask for. Do not ask them to paste it. Do not accept it
 if they paste it anyway — do not repeat it, do not put it in SQL, and tell them
 to use the form instead.
-
-Instead:
 
 1. `request_input(connection_id, namespace, purpose)` — `purpose` is the
    non-sensitive task description, never a value.
@@ -150,34 +120,25 @@ Instead:
 4. `ready` gives you a **token and a namespace, nothing else**. Use it as a
    parameter, as above.
 
-The value goes from their keyboard to keeper on their machine. It does not pass
-through this conversation, the slash command, a tool argument, or any transcript.
-
 Invoked as `$keeper <task>` (Codex), the text after it describes the task only.
-A value never goes in a `$keeper` argument, a tool argument or any text that is
-logged; `$keeper` with no task means the user wants the dashboard, so tell them
-to run `keeper ui` and do not guess its port.
+A value never goes in a `$keeper` argument or a tool argument. `$keeper` with no
+task means the user wants the dashboard: tell them to run `keeper ui`.
 
-## When keeper says a path needs authorization
+## What keeper will say when it refuses
 
-A blocked `query` may come back with a loopback link of its own: a human has to
-grant that exact relation before it can be read. Surface it the same way — a
-plain link and one line — then poll `get_authorization_result`. That result is a
-**state only and never a token**; nothing comes back into your session except
-permission for the next statement to run.
-
-Each grant covers exactly the path it names. A join reaching one granted relation
-and one ungranted one still stops.
-
-## What keeper will refuse, and what to do about it
-
-| It says | What it means |
+| Code | What it means |
 |---|---|
-| `unclassified` | a column has no policy yet. It came back redacted and the statement still ran. The fix is a human editing the catalog, not a retry |
-| `denylisted` | that relation is off-limits on this connection. No approval overrides it; ask the user to change the list if they meant to allow it |
+| `unclassified` | a column has no policy yet. It came back redacted. The fix is a person editing the catalog, not a retry |
 | `permission_denied` | the database refused. The message names the columns you *may* read — use them |
-| `ddl_refused` | keeper does not run DDL, at any tier. Schema changes belong to the project's migration tooling |
-| `writes_off` | this profile is read-only. The refusal names profiles on the same database that allow writes; use one only if the user meant it |
+| `ddl_refused` | keeper does not run DDL. Schema changes belong to the project's migration tooling |
+| `writes_off` | this profile does not allow writes |
+| `syntax`, `multi_statement` | the statement did not parse, or held more than one statement |
+| `approval_required`, `approval_refused` | a person has to accept first, or they refused |
+| `ticket_unknown`, `timeout` | the ticket is not known, or keeper did not finish in time. Retry once |
+| `row_cap` | more rows than the ceiling allows. Narrow the query or lower `max_rows` |
+| `stale_token` | the daemon restarted; run the query that made the token again |
+| `unreachable` | keeper could not connect to the database. Tell the user |
+| `internal` | a keeper fault. Say so |
 
 Errors never carry the database's own message. keeper composes them, because
 PostgreSQL puts the offending value into its error text and that is an egress
@@ -188,10 +149,11 @@ usually tell you more than a retry will.
 
 - Do not ask for a raw sensitive value in chat, in `/keeper`'s argument, or in
   any tool call. The form is the only place one is typed.
+- Do not ask for or handle a connection string. If no profile exists, the person
+  runs `keeper connect` in their own terminal.
 - Do not try to defeat the masking — no `substr`, `ascii`, `length` or
-  narrowing-range probing of a masked column to recover what is under it. keeper
-  cannot reliably detect that and the user is trusting you not to.
-- Do not register connections, re-run privilege audits, approve, grant or edit
-  the catalog. Those are not exposed to you, deliberately: they are the human's.
+  narrowing-range probing of a masked column to recover what is under it.
+- Do not register connections, approve or edit the catalog. Those are not exposed
+  to you, deliberately: they are the person's.
 - Do not present a masked result as if it were complete, and do not present
   keeper's own summaries as the database's data.

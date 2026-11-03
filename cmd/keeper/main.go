@@ -88,6 +88,10 @@ Usage:
   keeper vault export > file | import [--replace] file
   keeper daemon start | restart | status
   keeper ui
+  keeper hook session-start | pre-tool-use | waiting
+      for the agent plugin's hooks; prints JSON for the client
+  keeper mcp
+      the MCP server on stdio, started by the agent's client
 
 Every command accepts --json for machine-readable output.
 `)
