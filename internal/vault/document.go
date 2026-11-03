@@ -16,6 +16,9 @@ type document struct {
 	Settings    *types.Settings    `json:"settings,omitzero"`
 	Hosts       []types.Host       `json:"hosts,omitzero"`
 	Connections []connectionRecord `json:"connections,omitzero"`
+	// Catalogs is set only in an export: each state-directory profile's catalog
+	// files by connection id. The vault at rest never holds it.
+	Catalogs map[string]catalogFiles `json:"catalogs,omitzero"`
 }
 
 // credential is one role's login at rest.

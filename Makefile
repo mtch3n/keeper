@@ -8,6 +8,10 @@ PNPM    ?= pnpm
 GOFLAGS ?=
 BIN     ?= bin
 PKGS    := ./...
+# The version a build reports: the tag, and how far past it, from git. A tree
+# with no tags reports dev, which `keeper update` treats as older than every release.
+VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --dirty 2>/dev/null | sed 's/^v//' | grep . || echo dev)
+LDFLAGS := -X github.com/mtchen/keeper/internal/build.Version=$(VERSION)
 
 .PHONY: all build ui ui-audit check fmt vet staticcheck test test-race lint-explain plugin-version clean tidy dev changelog
 
@@ -20,13 +24,12 @@ all: check build
 ## being possible to do by halves. It is also one thing to verify, which matters
 ## for software whose subject is holding a database credential.
 build: ui
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o $(BIN)/keeper ./cmd/keeper
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BIN)/keeper ./cmd/keeper
 
 ## ui — build the React app and stage it where //go:embed can see it
 ui:
 	cd web && $(PNPM) install --frozen-lockfile && $(PNPM) build
-	rm -rf internal/api/dist
-	mkdir -p internal/api/dist
+	find internal/api/dist -mindepth 1 ! -name .gitkeep -delete
 	cp -R web/dist/. internal/api/dist/
 
 ui-audit:
@@ -73,4 +76,5 @@ dev:
 	$(GO) run ./cmd/keeper daemon serve --dev
 
 clean:
-	rm -rf $(BIN) internal/api/dist web/dist
+	rm -rf $(BIN) web/dist
+	find internal/api/dist -mindepth 1 ! -name .gitkeep -delete
