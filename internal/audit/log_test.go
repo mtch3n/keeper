@@ -113,6 +113,44 @@ func TestWriteReNormalizesDefensively(t *testing.T) {
 	}
 }
 
+func records(t *testing.T, l *Log, f ports.AuditFilter) ([]types.AuditRecord, error) {
+	t.Helper()
+	page, err := l.Query(t.Context(), f)
+	return page.Records, err
+}
+
+func TestQueryPagesByOffsetAndCountsTheFilteredTotal(t *testing.T) {
+	l := newLog(t)
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	var ids []string
+	for i := range 7 {
+		conn := "c1"
+		if i%2 == 1 {
+			conn = "c2"
+		}
+		r := &types.AuditRecord{At: base.Add(time.Duration(i) * time.Hour), SessionID: "s1", Connection: conn, Statement: "SELECT 1"}
+		if err := l.Write(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	page, err := l.Query(t.Context(), ports.AuditFilter{Limit: 3, Offset: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 7 || len(page.Records) != 3 || page.Records[0].ID != ids[3] || page.Records[2].ID != ids[1] {
+		t.Errorf("page = total %d, %d records, first %v; want 7 and the 4th to 6th newest", page.Total, len(page.Records), page.Records)
+	}
+	filtered, _ := l.Query(t.Context(), ports.AuditFilter{ConnectionID: "c2", Limit: 2, Offset: 2})
+	if filtered.Total != 3 || len(filtered.Records) != 1 {
+		t.Errorf("filtered total %d, %d records; want 3 and the one past the offset", filtered.Total, len(filtered.Records))
+	}
+	past, _ := l.Query(t.Context(), ports.AuditFilter{Limit: 3, Offset: 50})
+	if past.Total != 7 || past.Records == nil || len(past.Records) != 0 {
+		t.Errorf("an offset past the end = %+v, want total 7 and an empty, non-nil list", past)
+	}
+}
+
 func TestQueryAndGet(t *testing.T) {
 	l := newLog(t)
 	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
@@ -132,7 +170,7 @@ func TestQueryAndGet(t *testing.T) {
 		ids = append(ids, r.ID)
 	}
 
-	all, err := l.Query(t.Context(), ports.AuditFilter{})
+	all, err := records(t, l, ports.AuditFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,24 +181,24 @@ func TestQueryAndGet(t *testing.T) {
 		t.Errorf("Query is not most-recent-first: %v", all[0].ID)
 	}
 
-	bySession, _ := l.Query(t.Context(), ports.AuditFilter{SessionID: "s1"})
+	bySession, _ := records(t, l, ports.AuditFilter{SessionID: "s1"})
 	if len(bySession) != 2 {
 		t.Errorf("session filter returned %d", len(bySession))
 	}
-	byConn, _ := l.Query(t.Context(), ports.AuditFilter{ConnectionID: "c2"})
+	byConn, _ := records(t, l, ports.AuditFilter{ConnectionID: "c2"})
 	if len(byConn) != 1 {
 		t.Errorf("connection filter returned %d", len(byConn))
 	}
-	since, _ := l.Query(t.Context(), ports.AuditFilter{Since: base.Add(90 * time.Minute)})
+	since, _ := records(t, l, ports.AuditFilter{Since: base.Add(90 * time.Minute)})
 	if len(since) != 1 {
 		t.Errorf("since filter returned %d", len(since))
 	}
-	limited, _ := l.Query(t.Context(), ports.AuditFilter{Limit: 2})
+	limited, _ := records(t, l, ports.AuditFilter{Limit: 2})
 	if len(limited) != 2 || limited[0].ID != ids[2] {
 		t.Errorf("limit returned %v", limited)
 	}
 	// The next page starts after the last record of this one.
-	older, _ := l.Query(t.Context(), ports.AuditFilter{Limit: 2, Before: limited[1].ID})
+	older, _ := records(t, l, ports.AuditFilter{Limit: 2, Offset: 2})
 	if len(older) != 1 || older[0].ID != ids[0] {
 		t.Errorf("before returned %v", older)
 	}
@@ -194,7 +232,7 @@ func TestQueryFiltersByDecisionAcrossTheWholeLog(t *testing.T) {
 			refusedID = r.ID
 		}
 	}
-	got, err := l.Query(t.Context(), ports.AuditFilter{Decision: types.DecisionRefused, Limit: 2})
+	got, err := records(t, l, ports.AuditFilter{Decision: types.DecisionRefused, Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +253,7 @@ func TestQueryToleratesATruncatedLine(t *testing.T) {
 	}
 	f.WriteString(`{"id":"broken`)
 	f.Close()
-	got, err := l.Query(t.Context(), ports.AuditFilter{})
+	got, err := records(t, l, ports.AuditFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +265,7 @@ func TestQueryToleratesATruncatedLine(t *testing.T) {
 func TestQueryOnAMissingFile(t *testing.T) {
 	l := newLog(t)
 	os.RemoveAll(l.dir)
-	got, err := l.Query(t.Context(), ports.AuditFilter{})
+	got, err := records(t, l, ports.AuditFilter{})
 	if err != nil || len(got) != 0 {
 		t.Errorf("Query on a missing log = %v, %v", got, err)
 	}
@@ -308,7 +346,7 @@ func TestConcurrentWrites(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	got, err := l.Query(t.Context(), ports.AuditFilter{})
+	got, err := records(t, l, ports.AuditFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

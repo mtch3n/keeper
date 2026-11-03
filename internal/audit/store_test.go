@@ -78,7 +78,7 @@ func Test_LOG_C3_ADamagedLineIsReportedAndTheRestStillRead(t *testing.T) {
 	if err := os.WriteFile(file, append(bytes.Join(lines, []byte("\n")), '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := l.Query(context.Background(), ports.AuditFilter{})
+	got, err := records(t, l, ports.AuditFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func Test_LOG_C6_APlaintextLogIsReportedAndNeverRead(t *testing.T) {
 	if got := l.LegacyPlaintext(); got != legacy {
 		t.Errorf("LegacyPlaintext = %q, want %q", got, legacy)
 	}
-	recs, _ := l.Query(context.Background(), ports.AuditFilter{})
+	recs, _ := records(t, l, ports.AuditFilter{})
 	for _, r := range recs {
 		if r.ID == "plain" {
 			t.Error("the plaintext log was read")

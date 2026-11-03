@@ -794,14 +794,20 @@ type decisionRecord struct {
 	Decision   types.Decision `json:"decision"`
 }
 
+type activityPage struct {
+	Records []decisionRecord `json:"records"`
+	Total   int              `json:"total"`
+}
+
 func Test_SHELL_C7_ARefusalIsRecordedWithWhoDecided(t *testing.T) {
 	r := escalatingRig(t)
 	a := r.agent()
 	var tk types.Ticket
 	a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
 	r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "refuse", "actor": "ming"}, nil)
-	var records []decisionRecord
-	r.browser().mustJSON("GET", "/v1/activity", nil, &records)
+	var page activityPage
+	r.browser().mustJSON("GET", "/v1/activity", nil, &page)
+	records := page.Records
 	if !slices.ContainsFunc(records, func(rec decisionRecord) bool {
 		return rec.Decision == types.DecisionRefused && rec.Approver == "ming" && rec.Connection == "c1" && !rec.At.IsZero()
 	}) {
@@ -814,10 +820,10 @@ func TestActivityDecisionParamFiltersOnTheServer(t *testing.T) {
 	var tk types.Ticket
 	r.agent().mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
 	r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "refuse", "actor": "ming"}, nil)
-	var refused, approved []decisionRecord
+	var refused, approved activityPage
 	r.browser().mustJSON("GET", "/v1/activity?decision=refused", nil, &refused)
 	r.browser().mustJSON("GET", "/v1/activity?decision=approved", nil, &approved)
-	if len(refused) != 1 || refused[0].Decision != types.DecisionRefused || len(approved) != 0 {
+	if refused.Total != 1 || len(refused.Records) != 1 || refused.Records[0].Decision != types.DecisionRefused || approved.Total != 0 || len(approved.Records) != 0 {
 		t.Errorf("refused = %+v, approved = %+v", refused, approved)
 	}
 }

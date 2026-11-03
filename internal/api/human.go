@@ -160,7 +160,7 @@ func (s *Server) initCatalog(ctx context.Context, _ *reqInfo, w http.ResponseWri
 
 func (s *Server) activity(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, r *http.Request) (any, error) {
 	q := r.URL.Query()
-	f := ports.AuditFilter{SessionID: q.Get("session"), ConnectionID: q.Get("connection"), Decision: types.Decision(q.Get("decision")), Before: q.Get("before")}
+	f := ports.AuditFilter{SessionID: q.Get("session"), ConnectionID: q.Get("connection"), Decision: types.Decision(q.Get("decision"))}
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
@@ -174,6 +174,13 @@ func (s *Server) activity(ctx context.Context, _ *reqInfo, _ http.ResponseWriter
 			return nil, &types.ValidationError{Field: "limit", Reason: "must be a positive integer"}
 		}
 		f.Limit = n
+	}
+	if v := q.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return nil, &types.ValidationError{Field: "offset", Reason: "must be a non-negative integer"}
+		}
+		f.Offset = n
 	}
 	return s.d.Activity(ctx, f)
 }

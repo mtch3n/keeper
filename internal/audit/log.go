@@ -205,27 +205,26 @@ func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 }
 
 // Query reads the log back for the Activity screen, most recent first. The log
-// is in write order, so f.Before ends the read at that record: everything
-// collected so far is older than it.
-func (l *Log) Query(ctx context.Context, f ports.AuditFilter) ([]types.AuditRecord, error) {
-	var out []types.AuditRecord
+// is encrypted per record, so a page and its total cost one read and decrypt of
+// every retained day file; the total counts the records matching the filter.
+func (l *Log) Query(ctx context.Context, f ports.AuditFilter) (ports.AuditPage, error) {
+	out := []types.AuditRecord{}
 	err := l.each(ctx, func(r types.AuditRecord) bool {
-		if f.Before != "" && r.ID == f.Before {
-			return false
-		}
 		if matches(r, f) {
 			out = append(out, r)
 		}
 		return true
 	})
 	if err != nil {
-		return nil, err
+		return ports.AuditPage{}, err
 	}
 	slices.Reverse(out)
+	total := len(out)
+	out = out[min(max(f.Offset, 0), total):]
 	if f.Limit > 0 && len(out) > f.Limit {
 		out = out[:f.Limit]
 	}
-	return out, nil
+	return ports.AuditPage{Records: out, Total: total}, nil
 }
 
 // Get returns one record in full.
