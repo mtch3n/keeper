@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-const fixtureBinary = "#!/bin/sh\necho \"fixture keeper $*\"\n"
+const fixtureBinary = "#!/bin/sh\nif [ \"$1\" = version ]; then echo \"client   9.9.9\"; exit 0; fi\necho \"fixture keeper $*\"\n"
 
 type launcherEnv struct {
 	home, bin, release string
@@ -205,5 +205,43 @@ func TestPlg_PLG_C6_TwoLaunchersAtOnceLeaveOneGoodBinary(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(e.installed()))
 	if len(entries) != 1 {
 		t.Errorf("install folder holds %d entries, want only keeper", len(entries))
+	}
+}
+
+func TestPlg_LauncherRefusesAKeeperOlderThanTheManifestNeeds(t *testing.T) {
+	const oldKeeper = "#!/bin/sh\nif [ \"$1\" = version ]; then echo \"client   0.0.1\"; exit 0; fi\necho \"keeper: unknown command $1\" >&2\nexit 2\n"
+	cases := []struct {
+		name string
+		path func(e *launcherEnv) string
+	}{
+		{"on PATH", func(e *launcherEnv) string { return filepath.Join(e.bin, "keeper") }},
+		{"in ~/.local/bin", func(e *launcherEnv) string { return e.installed() }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newLauncherEnv(t)
+			e.publish(t, false)
+			must(t, os.MkdirAll(filepath.Dir(c.path(e)), 0o755))
+			must(t, os.WriteFile(c.path(e), []byte(oldKeeper), 0o755))
+			out, errOut, err := e.run()
+			if err == nil {
+				t.Fatal("want a non-zero exit")
+			}
+			if out != "" || strings.Contains(errOut, "unknown command") {
+				t.Errorf("the old keeper ran: stdout %q, stderr %q", out, errOut)
+			}
+			for _, want := range []string{"0.0.1", "keeper update"} {
+				if !strings.Contains(errOut, want) {
+					t.Errorf("stderr %q does not mention %q", errOut, want)
+				}
+			}
+		})
+	}
+
+	e := newLauncherEnv(t)
+	e.publish(t, false)
+	must(t, os.WriteFile(filepath.Join(e.bin, "keeper"), []byte(fixtureBinary), 0o755))
+	if out, errOut, err := e.run(); err != nil || out != "fixture keeper mcp version\n" {
+		t.Errorf("a new enough keeper must run: %q, %q, %v", out, errOut, err)
 	}
 }

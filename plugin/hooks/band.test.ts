@@ -13,6 +13,8 @@ const PROMPT = {
 
 const URL = 'http://127.0.0.1:7773/?t=x'
 
+const WAITING = 'sh -c PATH="$PATH:$HOME/.local/bin"; command -v keeper >/dev/null 2>&1 || exit 0; exec keeper hook waiting'
+
 type World = { waiting: number; isServing: boolean }
 
 function exited(exitCode: number, stdout: string) {
@@ -28,7 +30,7 @@ function fakeKeeper(on: On, world: World) {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ key: 'engine' }))
   on('process.run', (_$, e) => {
     ran.push([...e.argv])
-    if (e.argv.join(' ') !== 'keeper hook waiting') {
+    if (e.argv.join(' ') !== WAITING) {
       return { deny: `unexpected ${e.argv.join(' ')}` }
     }
     return { value: exited(0, world.isServing ? JSON.stringify({ waiting: world.waiting, url: URL }) : '') }
@@ -72,5 +74,5 @@ test('PLG-C15 a daemon that is down draws no band and nothing but the read runs'
     expect(await drawn.find({ key: 'engine' })).toBeDefined()
     expect(await drawn.find({ type: 'Text' })).toBeUndefined()
   }
-  expect(ran.every(argv => argv.join(' ') === 'keeper hook waiting')).toBe(true)
+  expect(ran.every(argv => argv.join(' ') === WAITING)).toBe(true)
 })

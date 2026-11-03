@@ -14,6 +14,36 @@ fail() {
 bindir="${HOME:?}/.local/bin"
 dest="$bindir/keeper"
 
+# keeper_min_version in the plugin manifest is the oldest keeper this plugin
+# works with. An older one would fail on `keeper mcp` with "unknown command".
+manifest="$(dirname "$0")/../.claude-plugin/plugin.json"
+
+# older_than A B succeeds when version A is lower than version B. Only the
+# leading digits and dots count, so a build like 0.1.0-3-gabc1234 is 0.1.0.
+older_than() {
+    a="${1%%[!0-9.]*}.0.0.0"
+    b="${2%%[!0-9.]*}.0.0.0"
+    for _ in 1 2 3; do
+        x="${a%%.*}"
+        y="${b%%.*}"
+        a="${a#*.}"
+        b="${b#*.}"
+        [ "$x" -lt "$y" ] && return 0
+        [ "$x" -gt "$y" ] && return 1
+    done
+    return 1
+}
+
+check_version() {
+    min="$(sed -n 's/.*"keeper_min_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" 2>/dev/null | head -n 1)"
+    have="$("$1" version 2>/dev/null | awk '$1 == "client" { print $2; exit }')" || have=""
+    have="${have#v}"
+    [ -n "$min" ] && [ -n "$have" ] || return 0
+    if older_than "$have" "$min"; then
+        fail "keeper $have at $1 is older than the $min this plugin needs. Run \`keeper update\`, or download a release from https://github.com/mtch3n/keeper/releases, then restart."
+    fi
+}
+
 # ~/.local/bin is where this launcher installs keeper, and it is often not on
 # PATH. Run keeper from there anyway, and say how to put it on PATH so that
 # `keeper connect` works in a terminal.
@@ -24,6 +54,7 @@ run() {
     esac
     bin="$1"
     shift
+    check_version "$bin"
     exec "$bin" mcp "$@"
 }
 
