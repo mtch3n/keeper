@@ -55,10 +55,12 @@ func releaseBase() string {
 	return defaultReleaseBase
 }
 
+var restartDaemon = client.RestartDaemon
+
 func runUpdate(args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	check := fs.Bool("check", false, "report what is published and change nothing")
-	force := fs.Bool("force", false, "restart even though live sessions or pending work would be lost")
+	force := fs.Bool("force", false, "restart even though live sessions or pending work would be lost, and install a release that is not newer")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -74,8 +76,15 @@ func runUpdate(args []string) error {
 		return nil
 	}
 	fmt.Printf("published %s · running %s\n", published, build.Version)
+	direction := checkDirection(published, build.Version, *force)
 	if *check {
+		if direction != nil {
+			fmt.Println(direction)
+		}
 		return nil
+	}
+	if direction != nil {
+		return direction
 	}
 
 	// What the restart would cost, decided before anything is touched.
@@ -126,6 +135,15 @@ func runUpdate(args []string) error {
 	fmt.Printf("installed %s at %s\n", published, target)
 
 	return restartOntoNewBinary(ctx, loss)
+}
+
+// checkDirection refuses to install a release that is not newer than the
+// running build unless force is set.
+func checkDirection(published, running string, force bool) error {
+	if force || build.Compare(published, running) > 0 {
+		return nil
+	}
+	return fmt.Errorf("the published %s is not newer than the running %s, so updating would install an older keeper. Nothing has been changed; --force installs it anyway", published, running)
 }
 
 // fetchChecksums reads SHA256SUMS and returns it keyed by asset name, along
@@ -360,13 +378,14 @@ func replaceBinary(path string, data []byte) error {
 func restartOntoNewBinary(ctx context.Context, loss string) error {
 	sock := client.DefaultSocketPath()
 	cli, err := dialOnly(ctx, sock)
-	if err != nil {
+	if err == nil {
+		cli.Close()
+	} else if _, mismatch := errors.AsType[*client.VersionMismatchError](err); !mismatch {
 		fmt.Println("no daemon was running; the next thing that needs one starts it on the new binary")
 		return nil
 	}
-	cli.Close()
 
-	if err := client.RestartDaemon(ctx, sock); err != nil {
+	if err := restartDaemon(ctx, sock); err != nil {
 		return fmt.Errorf("the binary was replaced but the daemon did not restart: %w.\nRun `keeper daemon restart`", err)
 	}
 	if loss == "" {

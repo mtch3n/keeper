@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "keeper": {
+      "command": "./bin/keeper-mcp-launch",
+      "args": [],
+      "cwd": "."
+    }
+  }
+}

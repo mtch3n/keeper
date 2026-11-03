@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mtchen/keeper/internal/client"
 )
 
 func buildKeeper(t *testing.T) string {
@@ -272,5 +274,23 @@ func TestConnectDefaultsToTLSOnARemoteHost(t *testing.T) {
 	}
 	if h, c := e.counts(t); h != hosts0 || c != conns0 {
 		t.Errorf("registered something: hosts %d->%d, connections %d->%d", hosts0, h, conns0, c)
+	}
+}
+
+func TestHostDefaultsToRequireUnlessLoopback(t *testing.T) {
+	sock := startDaemon(t)
+	op, err := client.DialHuman(t.Context(), sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { op.Close() })
+	for address, want := range map[string]string{"db.example.com": "require", "10.1.2.3": "require", "localhost": "prefer", "127.0.0.1": "prefer", "::1": "prefer"} {
+		h, err := op.RegisterHost(t.Context(), client.RegisterHostParams{Name: address, Address: address})
+		if err != nil {
+			t.Fatalf("%s: %v", address, err)
+		}
+		if h.SSLMode != want {
+			t.Errorf("%s: sslmode %q, want %q", address, h.SSLMode, want)
+		}
 	}
 }

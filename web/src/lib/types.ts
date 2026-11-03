@@ -23,7 +23,6 @@ export interface Limits {
   max_bytes: number
   /** nanoseconds */
   statement_timeout: number
-  scan_sample: number
 }
 
 /** Mirrors types.Host: one server, entered once, shared by every connection
@@ -79,7 +78,6 @@ export interface Profile {
   username: string
   reads: Reads
   writes: Writes
-  detection: Detection
 }
 
 /** The list-view shape `GET /v1/connections` returns — a narrower projection
@@ -129,6 +127,7 @@ export interface QueryResult {
   columns: ColumnMeta[]
   row_count: number
   truncated?: boolean
+  truncated_by?: 'rows' | 'size'
   transforms: Record<string, Transform>
   audit_id: string
   degradations?: Degradation[]

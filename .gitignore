@@ -8,11 +8,11 @@
 web/node_modules/
 web/dist/
 
-# The embedded UI is build output. internal/api/dist/index.html is committed as a
-# placeholder so //go:embed has something to find and `go build ./...` works on a
-# fresh clone; `make ui` replaces it with the real bundle.
+# The embedded UI is build output. internal/api/dist/.gitkeep is committed so
+# //go:embed has something to find and `go build ./...` works on a fresh clone;
+# until `make ui` fills the folder the daemon serves internal/api/placeholder.html.
 internal/api/dist/*
-!internal/api/dist/index.html
+!internal/api/dist/.gitkeep
 
 # Local state
 .keeper/catalog.local.yaml

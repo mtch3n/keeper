@@ -379,7 +379,7 @@ type AuditLog interface {
 	// Write appends one record. It is never skipped: G9.
 	Write(ctx context.Context, r *types.AuditRecord) error
 	// Query reads the log back for the Activity screen.
-	Query(ctx context.Context, f AuditFilter) ([]types.AuditRecord, error)
+	Query(ctx context.Context, f AuditFilter) (AuditPage, error)
 	Get(ctx context.Context, id string) (*types.AuditRecord, error)
 	// Normalize strips literals and comments from a statement and keeps quoted
 	// identifiers only where they match the catalog. SPEC R10a and R10c.
@@ -394,13 +394,21 @@ type AuditLog interface {
 	LegacyPlaintext() string
 }
 
+// AuditPage is one page of the log and how many records match the filter in all.
+type AuditPage struct {
+	Records []types.AuditRecord `json:"records"`
+	Total   int                 `json:"total"`
+}
+
 // AuditFilter narrows the Activity screen.
 type AuditFilter struct {
 	SessionID    string
 	ConnectionID string
-	Since        time.Time
-	// Before is an audit id: only records written before it are returned. It
-	// is how the Activity screen pages back through a log longer than Limit.
-	Before string
+	// Decision keeps only records an escalated statement settled this way.
+	Decision types.Decision
+	Since    time.Time
+	// Offset skips that many matching records, newest first. With Limit it
+	// is how the Activity screen pages through a log longer than one page.
+	Offset int
 	Limit  int
 }

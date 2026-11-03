@@ -9,6 +9,17 @@ import App from '@/App'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { LiveStatusProvider } from '@/components/wrappers/LiveStatus'
 
+/** What GET /v1/activity does with a list of records: filter by decision, count,
+ * then take the window `offset` and `limit` name. */
+function activityPage(all: { decision?: string }[], url: string) {
+  const q = new URLSearchParams(url.split('?')[1] ?? '')
+  const decision = q.get('decision')
+  const matching = decision ? all.filter((r) => r.decision === decision) : all
+  const offset = Number(q.get('offset') ?? 0)
+  const limit = Number(q.get('limit') ?? matching.length)
+  return { records: matching.slice(offset, offset + limit), total: matching.length }
+}
+
 /** A route answers with [status, body]; `null` body is an empty 204. */
 export type Handler = (body: unknown) => [number, unknown]
 
@@ -27,7 +38,8 @@ export function fakeDaemon(): FakeDaemon {
     const path = input.split('?')[0]
     calls.push(`${method} ${input}`)
     const handler = routes.get(`${method} ${path}`)
-    const [status, body] = handler ? handler(init?.body ? JSON.parse(String(init.body)) : undefined) : [200, []]
+    const [status, raw] = handler ? handler(init?.body ? JSON.parse(String(init.body)) : undefined) : [200, []]
+    const body = path === '/v1/activity' && Array.isArray(raw) ? activityPage(raw, input) : raw
     return new Response(body === null ? null : JSON.stringify(body), { status: body === null ? 204 : status })
   })
   return { calls, on: (method, path, handler) => routes.set(`${method} ${path}`, handler) }
@@ -44,8 +56,6 @@ export function renderApp(path: string) {
     </MemoryRouter>,
   )
 }
-
-export const NEVER = '0001-01-01T00:00:00Z'
 
 export function summary(id: string, name: string) {
   return {
@@ -67,7 +77,7 @@ export function detail(id: string, name: string, extra: Record<string, unknown> 
     ...summary(id, name),
     catalog_status: { path: '.keeper/catalog.yaml', fresh: true, freshness_known: true, unclassified: 0 },
     detection: 'scan',
-    limits: { max_rows_ceiling: 1000, max_bytes: 1048576, statement_timeout: 30000000000, scan_sample: 300 },
+    limits: { max_rows_ceiling: 1000, max_bytes: 1048576, statement_timeout: 30000000000 },
     ...extra,
   }
 }

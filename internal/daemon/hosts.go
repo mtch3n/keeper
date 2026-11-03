@@ -62,7 +62,7 @@ func (d *Daemon) RegisterHost(ctx context.Context, spec HostSpec) (*types.Host, 
 		return nil, errValidation("port", "must be between 1 and 65535")
 	}
 	if spec.SSLMode == "" {
-		spec.SSLMode = "prefer"
+		spec.SSLMode = types.DefaultSSLMode(spec.Address)
 	}
 	if !slices.Contains(types.SSLModes, spec.SSLMode) {
 		return nil, errValidation("sslmode", "must be one of "+strings.Join(types.SSLModes, ", "))

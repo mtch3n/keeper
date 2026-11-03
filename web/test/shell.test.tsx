@@ -1,8 +1,8 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
-import { detail, doctorReport, emit, fakeDaemon, renderApp, session, summary } from './daemon'
+import { detail, doctorReport, fakeDaemon, renderApp, session, summary } from './daemon'
 
 const s1 = session('s1', 'claude-code', '/home/u/shop')
 const s2 = session('s2', 'codex', '/home/u/billing')

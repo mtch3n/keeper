@@ -43,8 +43,11 @@ under GDPR Article 4(11).
    Paste a PostgreSQL connection string at the hidden prompt, for example
    `postgres://app_ro:...@db.internal/app?sslmode=require`. keeper makes one
    profile for that login. The profile reads and masks. It cannot write. With no
-   `sslmode` in the string, keeper requires TLS unless the host is loopback, and an
-   explicit `sslmode`, including `disable`, is always used.
+   `sslmode` in the string, keeper requires TLS unless the host is loopback. An
+   explicit `sslmode`, including `disable`, is used for a new host. A host that
+   keeper already holds keeps its own `sslmode`: a string that asks for a weaker
+   mode does not lower it, and keeper refuses a string that would send the login
+   with less TLS than it asked for or than its default.
 
 3. Ask the agent a question about your data. The agent calls `query`, and the
    rows come back on the same call.

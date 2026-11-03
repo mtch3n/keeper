@@ -347,10 +347,11 @@ func runActivity(args []string) error {
 	if *since > 0 {
 		f.Since = time.Now().Add(-*since)
 	}
-	recs, err := cli.ListActivity(ctx, f)
+	page, err := cli.ListActivity(ctx, f)
 	if err != nil {
 		return err
 	}
+	recs := page.Records
 	if *asJSON {
 		return printJSON(recs)
 	}
@@ -366,6 +367,9 @@ func runActivity(args []string) error {
 			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
 	}
 	w.Flush()
+	if page.Total > len(recs) {
+		fmt.Printf("\nShowing the newest %d of %d records. Raise --limit to see more.\n", len(recs), page.Total)
+	}
 	// R10d: the log records what keeper intended to emit. Saying "values masked"
 	// here would claim something the log cannot establish.
 	fmt.Println("\nPolicies applied, not bytes verified: the log records the decision,")
@@ -600,7 +604,7 @@ func runVault(args []string) error {
 			return err
 		}
 		fmt.Println("vault imported")
-		return nil
+		return warnMissingCatalogs(ctx, cli)
 
 	default:
 		return fmt.Errorf("vault: unknown subcommand %q", args[0])
@@ -843,4 +847,37 @@ func presence(ok bool) string {
 		return "present"
 	}
 	return "absent"
+}
+
+// missingCatalogs names each profile whose catalog is a shared file that does
+// not exist on this machine. An export carries the catalog of a profile that
+// keeps it in keeper's state directory and leaves a shared path where it is, so
+// on a new machine such a profile starts with no declared columns.
+func missingCatalogs(details []*client.ConnectionDetail) []string {
+	var out []string
+	for _, d := range details {
+		if p := d.CatalogStatus.Path; p != "" {
+			if _, err := os.Stat(p); err != nil {
+				out = append(out, d.Name+" ("+p+")")
+			}
+		}
+	}
+	return out
+}
+
+func warnMissingCatalogs(ctx context.Context, cli *client.Client) error {
+	conns, err := cli.ListConnections(ctx)
+	if err != nil {
+		return err
+	}
+	var details []*client.ConnectionDetail
+	for _, c := range conns {
+		if d, err := cli.DescribeConnection(ctx, c.ID); err == nil {
+			details = append(details, d)
+		}
+	}
+	if missing := missingCatalogs(details); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: these profiles keep their catalog in a shared file that is absent here, so their declared columns are not applied until it is restored: %s\n", strings.Join(missing, ", "))
+	}
+	return nil
 }

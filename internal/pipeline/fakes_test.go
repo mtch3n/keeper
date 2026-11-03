@@ -242,8 +242,8 @@ func (a *fakeAudit) Write(_ context.Context, r *types.AuditRecord) error {
 	return nil
 }
 
-func (a *fakeAudit) Query(context.Context, ports.AuditFilter) ([]types.AuditRecord, error) {
-	return nil, nil
+func (a *fakeAudit) Query(context.Context, ports.AuditFilter) (ports.AuditPage, error) {
+	return ports.AuditPage{}, nil
 }
 
 func (a *fakeAudit) Get(context.Context, string) (*types.AuditRecord, error) { return nil, nil }

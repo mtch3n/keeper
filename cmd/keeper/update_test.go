@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/mtchen/keeper/internal/build"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -198,5 +200,70 @@ func TestReplaceableAllowsAWritableUserPath(t *testing.T) {
 	}
 	if err := replaceable(path); err != nil {
 		t.Errorf("replaceable(%q) = %v, want nil", path, err)
+	}
+}
+
+func serveRelease(t *testing.T, version string) *[]string {
+	t.Helper()
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path)
+		if r.URL.Path == "/SHA256SUMS" {
+			w.Write([]byte("aaa  ./keeper_" + version + "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz\n"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("KEEPER_RELEASE_BASE", srv.URL)
+	return &asked
+}
+
+func TestUpdateRefusesADowngradeWithoutForce(t *testing.T) {
+	old := build.Version
+	t.Cleanup(func() { build.Version = old })
+	build.Version = "0.5.0"
+	asked := serveRelease(t, "0.1.0")
+	t.Setenv("KEEPER_SOCKET", filepath.Join(t.TempDir(), "absent.sock"))
+
+	err := runUpdate(nil)
+	if err == nil || !strings.Contains(err.Error(), "not newer") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("want a refusal naming --force, got %v", err)
+	}
+	if len(*asked) != 1 {
+		t.Errorf("requests %v: only SHA256SUMS may be read before the refusal", *asked)
+	}
+	if err := runUpdate([]string{"--check"}); err != nil {
+		t.Errorf("--check only reports: %v", err)
+	}
+}
+
+func TestUpdateOffersAnUpgradeToADevBuild(t *testing.T) {
+	for _, running := range []string{"dev", "0.0.9", "0.0.1-2-gabc1234"} {
+		if err := checkDirection("0.1.0", running, false); err != nil {
+			t.Errorf("running %s: published 0.1.0 is newer, got %v", running, err)
+		}
+	}
+	if err := checkDirection("0.1.0", "0.1.0-2-gabc1234", true); err != nil {
+		t.Errorf("--force installs a release that is not newer: %v", err)
+	}
+}
+
+func TestRestartAfterUpdateReplacesADaemonOfAnotherVersion(t *testing.T) {
+	serveFake(t, fakeDaemon{})
+	old := build.Version
+	t.Cleanup(func() { build.Version = old })
+	build.Version = "9.9.9"
+
+	var restarted bool
+	oldRestart := restartDaemon
+	t.Cleanup(func() { restartDaemon = oldRestart })
+	restartDaemon = func(context.Context, string) error { restarted = true; return nil }
+
+	if err := restartOntoNewBinary(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if !restarted {
+		t.Error("a daemon of another version was left running, and the command said none was")
 	}
 }

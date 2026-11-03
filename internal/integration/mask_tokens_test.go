@@ -115,3 +115,48 @@ func TestMaskTokens_MASK_C14_a_wrong_passphrase_is_refused_and_the_vault_is_unch
 		t.Errorf("the vault does not run after a refused import: %s", body)
 	}
 }
+
+func TestMaskTokens_a_declared_column_is_still_masked_after_a_vault_move(t *testing.T) {
+	e := newLeanEnv(t)
+	hosts, err := e.op.ListHosts(t.Context())
+	if err != nil || len(hosts) != 1 {
+		t.Fatalf("hosts: %v %v", hosts, err)
+	}
+	local, err := e.op.RegisterConnection(t.Context(), client.RegisterConnectionParams{
+		Name: "shop_local", HostID: hosts[0].ID, Database: "shop", Writes: types.WritesOff,
+		Credential: client.Credential{User: "shop_eval_ro", Password: e.shop.roPass},
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	priceOf := func(a *agentSession) any {
+		t.Helper()
+		q := parseBody(t, e.query(t, a, local.ID, "SELECT price FROM products WHERE id = 1"))
+		if len(q.Rows) != 1 {
+			t.Fatalf("no row: %+v", q)
+		}
+		return q.Rows[0][0]
+	}
+	isToken := func(v any) bool { s, _ := v.(string); return strings.HasPrefix(s, "⟨") }
+	if plain := priceOf(e.agent); isToken(plain) {
+		t.Fatalf("price is masked with nothing declared, so this test shows nothing: %v", plain)
+	}
+	e.declare(t, local.ID, map[string]types.ColumnPolicy{"public.products.price": token("price")})
+	if before := priceOf(e.agent); !isToken(before) {
+		t.Fatalf("price is not a token before the export: %v", before)
+	}
+	data := exportShop(t, e, "pass")
+
+	sock := startDaemon(t)
+	op2, err := client.DialHuman(t.Context(), sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { op2.Close() })
+	if err := op2.ImportVault(t.Context(), data, "pass"); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if got := priceOf(mcpAgent(t)); !isToken(got) {
+		t.Errorf("a declared column came back unmasked after the import: %v", got)
+	}
+}

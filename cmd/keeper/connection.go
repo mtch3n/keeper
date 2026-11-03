@@ -137,7 +137,6 @@ func connectionSet(ctx context.Context, args []string) error {
 	maxRows := fs.Int("max-rows", 0, "operator ceiling for query(max_rows); the agent cannot raise it")
 	maxBytes := fs.Int("max-bytes", 0, "size cap on a result's row data, in bytes")
 	timeout := fs.Duration("timeout", 0, "SET LOCAL statement_timeout for every statement")
-	scanSample := fs.Int("scan-sample", 0, "sample size catalog init examines per column")
 	detection := fs.String("detection", "", "off | scan | all: what pattern detection examines. scan: scan columns only. all: also the text of allow columns. off: scan cells are redacted whole")
 	writes := fs.String("writes", "", "off | ask | allow: whether this profile's sessions may write, and whether a person accepts each write")
 	jsonOut := fs.Bool("json", false, "JSON output")
@@ -166,7 +165,7 @@ func connectionSet(ctx context.Context, args []string) error {
 		return err
 	}
 	params := client.PatchConnectionParams{Reads: types.Reads(*reads), Writes: types.Writes(*writes)}
-	if *maxRows != 0 || *maxBytes != 0 || *timeout != 0 || *scanSample != 0 {
+	if *maxRows != 0 || *maxBytes != 0 || *timeout != 0 {
 		// The daemon replaces limits whole, so the ones not named keep their
 		// current values.
 		detail, err := cli.DescribeConnection(ctx, id)
@@ -177,7 +176,6 @@ func connectionSet(ctx context.Context, args []string) error {
 		lim.MaxRowsCeiling = cmp.Or(*maxRows, lim.MaxRowsCeiling)
 		lim.MaxBytes = cmp.Or(*maxBytes, lim.MaxBytes)
 		lim.StatementTimeout = cmp.Or(*timeout, lim.StatementTimeout)
-		lim.ScanSample = cmp.Or(*scanSample, lim.ScanSample)
 		params.Limits = &lim
 	}
 	if *detection != "" && !types.Detection(*detection).Valid() {
@@ -191,8 +189,8 @@ func connectionSet(ctx context.Context, args []string) error {
 	if *jsonOut {
 		return printJSON(conn)
 	}
-	fmt.Printf("%q updated: reads=%s writes=%s detection=%s max_rows_ceiling=%d max_bytes=%d statement_timeout=%s scan_sample=%d\n",
-		conn.Name, conn.Reads, conn.Writes, conn.Detection, conn.Limits.MaxRowsCeiling, conn.Limits.MaxBytes, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
+	fmt.Printf("%q updated: reads=%s writes=%s detection=%s max_rows_ceiling=%d max_bytes=%d statement_timeout=%s\n",
+		conn.Name, conn.Reads, conn.Writes, conn.Detection, conn.Limits.MaxRowsCeiling, conn.Limits.MaxBytes, conn.Limits.StatementTimeout)
 	return nil
 }
 
