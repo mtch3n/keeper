@@ -8,7 +8,7 @@ const REDACTION_CHAR = '█' // █ FULL BLOCK
 
 /**
  * Splits a string into readable text and solid-run segments. Exported so
- * `Cell` can render `redacted` and `partial` with the exact same solid glyph
+ * `Cell` can render `redacted` with the exact same solid glyph
  * `scanned` uses inline — UI.md §3.3: a redacted cell must look identical
  * everywhere.
  */

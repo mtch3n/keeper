@@ -186,8 +186,7 @@ func (r *Redactor) Mint(ctx context.Context, sessionID, connID, namespace, value
 	stored := Normalize(value, NamespaceRule{})
 	normalized := Normalize(value, r.rule(namespace))
 	now := r.now()
-	st, _ := StatementFrom(ctx)
-	token, err := r.mintToken(key, sessionID, st.Persistent, namespace, version, normalized)
+	token, err := r.mintToken(key, sessionID, namespace, version, normalized)
 	if err != nil {
 		return "", err
 	}
@@ -230,35 +229,7 @@ func (r *Redactor) Resolve(ctx context.Context, sessionID, connID, token string)
 		}
 		return b.value, b.policy, nil
 	}
-	// A persistent token carries its value: it resolves in any session, on
-	// any machine holding the connection's key.
-	ns, version, sealed, ok := parsePersistent(token)
-	if !ok || connID == "" || r.keys == nil {
-		return "", "", ErrUnknownToken
-	}
-	key, _, err := r.keys.TokenKey(ctx, connID, version)
-	if err != nil || len(key) == 0 {
-		return "", "", ErrUnknownToken
-	}
-	v, ok := open(key, ns, sealed)
-	if !ok {
-		return "", "", ErrUnknownToken
-	}
-	now := r.now()
-	r.sessionFor(sessionID).bind(&binding{
-		token: token, value: v, normalized: v, namespace: ns, version: version,
-		policy: types.PolicyToken, expires: now.Add(r.ttl),
-	}, now)
-	return v, types.PolicyToken, nil
-}
-
-// mintToken is a value's token: sealed when it persists, otherwise an HMAC
-// under the session's own key.
-func (r *Redactor) mintToken(connKey []byte, sessionID string, persistent bool, namespace string, version int, normalized string) (string, error) {
-	if persistent {
-		return seal(connKey, namespace, version, normalized)
-	}
-	return FormatToken(namespace, version, hmacTag(sessionKey(connKey, sessionID), namespace, normalized, r.hexLen)), nil
+	return "", "", ErrUnknownToken
 }
 
 func (r *Redactor) key(ctx context.Context, connID string) ([]byte, int, error) {
@@ -288,12 +259,11 @@ type columnPlan struct {
 	// examineAllow is set under detection=all: allow text is examined too.
 	examineAllow bool
 
-	// key is the connection's token key; sessionID and persistent say which
+	// key is the connection's token key; sessionID says which session's
 	// token it mints.
-	key        []byte
-	version    int
-	sessionID  string
-	persistent bool
+	key       []byte
+	version   int
+	sessionID string
 
 	spans      int
 	collisions int
@@ -459,7 +429,6 @@ func (r *Redactor) plan(ctx context.Context, st Statement, sessionID string, col
 		for j := range plans {
 			plans[j].key = key
 			plans[j].version = version
-			plans[j].persistent = st.Persistent
 			plans[j].sessionID = sessionID
 		}
 	}
@@ -517,7 +486,7 @@ func (r *Redactor) tokenize(sess *session, pl *columnPlan, value string, now tim
 		return RedactedMarker
 	}
 	normalized := Normalize(value, r.rule(pl.namespace))
-	token, err := r.mintToken(pl.key, pl.sessionID, pl.persistent, pl.namespace, pl.version, normalized)
+	token, err := r.mintToken(pl.key, pl.sessionID, pl.namespace, pl.version, normalized)
 	if err != nil {
 		return RedactedMarker
 	}

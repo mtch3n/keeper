@@ -56,13 +56,12 @@ type ConnectionDetail struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version,omitzero"`
 	Profile
-	Schemas          []string             `json:"schemas,omitzero"`
-	CatalogStatus    CatalogStatus        `json:"catalog_status"`
-	PolicySummary    map[types.Policy]int `json:"policy_summary,omitzero"`
-	Limits           types.Limits         `json:"limits"`
-	PersistentTokens bool                 `json:"persistent_tokens"`
-	Detection        types.Detection      `json:"detection"`
-	Degradations     []types.Degradation  `json:"degradations,omitzero"`
+	Schemas       []string             `json:"schemas,omitzero"`
+	CatalogStatus CatalogStatus        `json:"catalog_status"`
+	PolicySummary map[types.Policy]int `json:"policy_summary,omitzero"`
+	Limits        types.Limits         `json:"limits"`
+	Detection     types.Detection      `json:"detection"`
+	Degradations  []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // DescribeConnection returns describe_connection's field set for one
@@ -107,10 +106,9 @@ func (c *Client) RegisterConnection(ctx context.Context, p RegisterConnectionPar
 type PatchConnectionParams struct {
 	Reads types.Reads `json:"reads,omitzero"`
 	// Limits replaces all of the connection's limits when set.
-	Limits           *types.Limits   `json:"limits,omitzero"`
-	Detection        types.Detection `json:"detection,omitzero"`
-	Writes           types.Writes    `json:"writes,omitzero"`
-	PersistentTokens *bool           `json:"persistent_tokens,omitzero"`
+	Limits    *types.Limits   `json:"limits,omitzero"`
+	Detection types.Detection `json:"detection,omitzero"`
+	Writes    types.Writes    `json:"writes,omitzero"`
 }
 
 // PatchConnection updates a connection's settings.

@@ -1,10 +1,8 @@
 /** The tabs of a connection's page, in the order they read. */
 export const TABS = [
   { tab: 'overview', label: 'Overview' },
-  { tab: 'detection', label: 'Detection' },
+  { tab: 'settings', label: 'Settings' },
   { tab: 'catalog', label: 'Catalog' },
-  { tab: 'limits', label: 'Limits' },
-  { tab: 'privileges', label: 'Privileges' },
 ] as const
 
 export type Tab = (typeof TABS)[number]['tab']

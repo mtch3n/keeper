@@ -39,7 +39,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, func(), e
 
 	v := vault.New(dir)
 
-	// One patterns engine, shared: it screens every session intent and is the
+	// One patterns engine, shared: it screens task text and is the
 	// patterns pass of every connection that lists it. Each connection's chain
 	// is built from its own passes and terms when a statement needs it.
 	patterns := detect.NewPatterns()

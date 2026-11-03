@@ -9,7 +9,6 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -483,53 +482,8 @@ func (v *Vault) Export(ctx context.Context) ([]byte, error) {
 	return json.Marshal(v.doc, opts...)
 }
 
-// RotateMaster generates a new master key, re-encrypts the vault under it,
-// and persists the new key to the same source currently in use. It supports
-// the keychain and key.age sources, which it can rewrite itself. It refuses
-// for the env source: KEEPER_MASTER_KEY is owned by whatever set the process
-// environment, and a rotation keeper cannot persist is a vault nothing can
-// open afterwards. SPEC §4.3.
-func (v *Vault) RotateMaster(ctx context.Context) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.open {
-		return errNotOpen()
-	}
-	if v.source == sourceEnv {
-		return errors.New("vault: cannot rotate the master key while the key source is KEEPER_MASTER_KEY; set a new value out of band")
-	}
-
-	newKey := make([]byte, masterKeyLen)
-	if _, err := rand.Read(newKey); err != nil {
-		return fmt.Errorf("vault: generate new master key: %w", err)
-	}
-	ciphertext, err := encryptDocument(newKey, v.doc)
-	if err != nil {
-		return fmt.Errorf("vault: encrypt with new master key: %w", err)
-	}
-
-	switch v.source {
-	case sourceKeychain:
-		if err := keychainSet(keyringService, keyringUser, base64.StdEncoding.EncodeToString(newKey)); err != nil {
-			return fmt.Errorf("vault: store new key in keychain: %w", err)
-		}
-	case sourceKeyFile:
-		if err := atomicWrite(keyFilePath(v.dir), newKey, 0o600); err != nil {
-			return fmt.Errorf("vault: write %s: %w", keyFileName, err)
-		}
-	default:
-		return fmt.Errorf("vault: unknown key source %q", v.source)
-	}
-
-	if err := atomicWrite(v.vaultPath(), ciphertext, 0o600); err != nil {
-		return fmt.Errorf("vault: write %s: %w", vaultFileName, err)
-	}
-	v.key = newKey
-	return nil
-}
-
 // Import replaces this vault with an export sealed under passphrase, keys and
-// all, so a persistent token minted where it was exported resolves here. The
+// all. The
 // vault is left as it was unless the export opens, parses, and is whole: every
 // connection on a host it carries, with a login and a token key.
 func (v *Vault) Import(ctx context.Context, data []byte, passphrase string) error {

@@ -125,9 +125,6 @@ type Connection struct {
 	Writes    Writes    `json:"writes"`
 	Limits    Limits    `json:"limits"`
 	Detection Detection `json:"detection,omitzero"`
-	// PersistentTokens lets an agent that declares persistent scope receive
-	// tokens that outlive its session. Off, it gets session tokens.
-	PersistentTokens bool `json:"persistent_tokens,omitzero"`
 }
 
 // Writes is a profile's write setting. Off is the default: its sessions are

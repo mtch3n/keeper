@@ -12,27 +12,6 @@
 
 // ── connection.go ──────────────────────────────────────────────────────────
 
-export type Mode = 'strict' | 'assisted'
-
-type FindingKind =
-  | 'attribute'
-  | 'membership'
-  | 'relation-write'
-  | 'schema-create'
-  | 'function-exec'
-  | 'security-definer'
-
-/** One thing the privilege audit found. Advice, not a gate: no finding stops
- * a connection from running (SPEC R4.1). `narrower` is the statement that
- * would remove it, copyable as-is, and is empty where no single one would. */
-export interface Finding {
-  id: string
-  kind: FindingKind
-  subject: string
-  detail: string
-  narrower?: string
-}
-
 export interface RelationRef {
   schema: string
   relation: string
@@ -66,18 +45,6 @@ export interface HostView extends Host {
   connections: string[]
 }
 
-/** Mirrors types.StageKind: a detection adapter a stage runs. */
-export type StageKind = 'patterns' | 'list'
-
-/** Mirrors types.Stage: one step of a connection's detection pipeline. */
-export interface Stage {
-  kind: StageKind
-  /** When set, only this stage's hits of these entity types are kept. */
-  entities?: string[]
-  /** Sends the stage unmasked text, earlier stages' hits left in place. */
-  raw?: boolean
-}
-
 export interface Connection {
   id: string
   host_id: string
@@ -87,19 +54,21 @@ export interface Connection {
   role: string
   version?: string
   catalog_path: string
-  mode: Mode
-  detection?: Stage[]
-  limits: Limits
-  denylist?: RelationRef[]
-  findings?: Finding[]
-  audited_at: string
+  reads: Reads
   writes: Writes
-  persistent_tokens?: boolean
+  detection: Detection
+  limits: Limits
 }
 
-/** A profile's write setting: off makes its sessions read-only; approve lets
- * an agent send writes, each of which waits for a human. */
-export type Writes = 'off' | 'approve'
+/** When a read asks a human: every read, only an uncertain one, or none. The
+ * transaction is read-only under all three. */
+export type Reads = 'always' | 'uncertain' | 'never'
+
+/** Whether a profile's writes are refused, wait for a human, or commit at once. */
+export type Writes = 'off' | 'ask' | 'allow'
+
+/** What scans text for personal data: nothing, scan columns, or every column. */
+export type Detection = 'off' | 'scan' | 'all'
 
 /** Where a profile logs in and as whom. Never a password. */
 export interface Profile {
@@ -108,7 +77,9 @@ export interface Profile {
   port: number
   database: string
   username: string
+  reads: Reads
   writes: Writes
+  detection: Detection
 }
 
 /** The list-view shape `GET /v1/connections` returns — a narrower projection
@@ -117,33 +88,25 @@ export interface ConnectionSummary extends Profile {
   id: string
   name: string
   engine: string
-  mode: Mode
 }
 
 // ── policy.go ───────────────────────────────────────────────────────────────
 
-export type Policy = 'allow' | 'scan' | 'partial' | 'token' | 'redact' | 'drop'
-
-export type PartialForm = 'email_domain' | 'card_bin_last4' | 'phone_country_area' | 'ip_network'
+export type Policy = 'allow' | 'token' | 'redact' | 'scan'
 
 export interface ColumnPolicy {
   policy: Policy
   namespace?: string
-  form?: PartialForm
-  hide_name?: boolean
   paths?: Record<string, ColumnPolicy>
 }
 
 // ── result.go ───────────────────────────────────────────────────────────────
-
-type Tier = 0 | 1 | 2 | 3 | 4
 
 type Basis = 'catalog' | 'rules' | 'inherited' | 'parameter' | 'unknown' | 'unexamined'
 
 export interface Transform {
   policy: Policy
   namespace?: string
-  form?: PartialForm
   basis: Basis
   spans_redacted?: number
   collisions?: number
@@ -167,11 +130,7 @@ export interface QueryResult {
   row_count: number
   truncated?: boolean
   transforms: Record<string, Transform>
-  tier: Tier
   audit_id: string
-  mode: Mode
-  /** "tier0" | "grant:<id>" | "ticket:<id>" */
-  authorization?: string
   degradations?: Degradation[]
   executed_rows?: number
   previewed_rows?: number
@@ -182,7 +141,6 @@ type Code =
   | 'multi_statement'
   | 'permission_denied'
   | 'unclassified'
-  | 'denylisted'
   | 'ddl_refused'
   | 'writes_off'
   | 'approval_required'
@@ -215,16 +173,13 @@ export interface AuditRecord {
   at: string
   session_id: string
   client: ClientInfo
-  intent?: string
   connection: string
   statement: string
   statement_type: string
   relations?: RelationRef[]
   output_columns?: ColumnMeta[]
-  tier: Tier
   transforms?: Record<string, Transform>
   row_count: number
-  authorization?: string
   approver?: string
   degradations?: Degradation[]
   collisions?: number
@@ -233,7 +188,6 @@ export interface AuditRecord {
   error_code?: Code
   /** How an escalated statement was settled; absent when it never waited. */
   decision?: 'approved' | 'refused' | 'expired' | 'cancelled'
-  token_scope?: TokenScope
 }
 
 /**
@@ -251,12 +205,8 @@ export interface Session {
   id: string
   client: ClientInfo
   intent?: string
-  /** How long the agent declared its tokens live. */
-  token_scope?: TokenScope
   connected_at: string
 }
-
-export type TokenScope = 'session' | 'persistent'
 
 export type RequestKind = 'input' | 'authorization'
 
@@ -282,7 +232,6 @@ export interface Grant {
 }
 
 export interface ApprovalFacts {
-  intent: string
   statement_type: string
   relations: RelationRef[]
   estimated_rows: number
@@ -294,7 +243,6 @@ export interface ApprovalFacts {
   unreadable?: boolean
   /** The relations a write changes. */
   targets?: RelationRef[]
-  protection?: Protection
   /** Output columns, SELECT * expanded. */
   columns?: string[]
   /** Sensitive or uncatalogued columns the statement filters or joins on. */
@@ -302,11 +250,6 @@ export interface ApprovalFacts {
 }
 
 export type Risk = 'read' | 'write' | 'destructive'
-
-export interface Protection {
-  writes: Writes
-  role_writes: 'yes' | 'no' | 'unknown'
-}
 
 export interface FilterColumn {
   relation: RelationRef
@@ -338,7 +281,6 @@ export interface ApprovalItem {
   ticket_id: string
   session: Session
   connection: string
-  tier: Tier
   facts: ApprovalFacts
   sql: string
   created_at: string

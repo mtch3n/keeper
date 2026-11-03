@@ -47,13 +47,12 @@ type ConnectionDetail struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version,omitzero"`
 	Profile
-	Schemas          []string             `json:"schemas,omitzero"`
-	CatalogStatus    CatalogStatus        `json:"catalog_status"`
-	PolicySummary    map[types.Policy]int `json:"policy_summary,omitzero"`
-	Detection        types.Detection      `json:"detection"`
-	Limits           types.Limits         `json:"limits"`
-	PersistentTokens bool                 `json:"persistent_tokens"`
-	Degradations     []types.Degradation  `json:"degradations,omitzero"`
+	Schemas       []string             `json:"schemas,omitzero"`
+	CatalogStatus CatalogStatus        `json:"catalog_status"`
+	PolicySummary map[types.Policy]int `json:"policy_summary,omitzero"`
+	Detection     types.Detection      `json:"detection"`
+	Limits        types.Limits         `json:"limits"`
+	Degradations  []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // Connections lists what is registered.
@@ -98,11 +97,10 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 	}
 	det := &ConnectionDetail{
 		ID: c.ID, Name: c.Name, Engine: c.Engine, Version: c.Version,
-		Profile:          d.profile(ctx, c),
-		CatalogStatus:    CatalogStatus{Path: c.CatalogPath},
-		Detection:        c.Detection.Effective(),
-		Limits:           c.Limits,
-		PersistentTokens: c.PersistentTokens,
+		Profile:       d.profile(ctx, c),
+		CatalogStatus: CatalogStatus{Path: c.CatalogPath},
+		Detection:     c.Detection.Effective(),
+		Limits:        c.Limits,
 	}
 
 	// Every catalog layer needs the catalog open, and opening is what an
@@ -292,11 +290,10 @@ func (d *Daemon) TestConnection(ctx context.Context, id string) (*ports.PingResu
 // Patch is §4.5's operator limits. Unreachable from MCP (§6.3), which the api
 // enforces by refusing the route to a request carrying a session.
 type Patch struct {
-	Reads            *types.Reads
-	Limits           *types.Limits
-	Detection        *types.Detection
-	Writes           *types.Writes
-	PersistentTokens *bool
+	Reads     *types.Reads
+	Limits    *types.Limits
+	Detection *types.Detection
+	Writes    *types.Writes
 }
 
 // validWrites accepts off, ask and allow; empty is off.
@@ -328,9 +325,6 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 			return nil, err
 		}
 		c.Writes = w
-	}
-	if p.PersistentTokens != nil {
-		c.PersistentTokens = *p.PersistentTokens
 	}
 	if p.Detection != nil {
 		if !p.Detection.Valid() {
@@ -389,19 +383,13 @@ func (d *Daemon) ExportVault(ctx context.Context, passphrase string) ([]byte, er
 	return sealed.Seal(plain, passphrase)
 }
 
-// ImportVault replaces this daemon's vault with an export, keys included, so a
-// persistent token minted on another machine resolves here.
+// ImportVault replaces this daemon's vault with an export, keys included.
 func (d *Daemon) ImportVault(ctx context.Context, data []byte, passphrase string) error {
 	if err := d.deps.Vault.Import(ctx, data, passphrase); err != nil {
 		return err
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "imported"}})
 	return nil
-}
-
-// RotateMaster re-encrypts the vault under a fresh master key, in place.
-func (d *Daemon) RotateMaster(ctx context.Context) error {
-	return d.deps.Vault.RotateMaster(ctx)
 }
 
 // Remove deletes a connection and its credentials.

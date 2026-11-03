@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Separator } from '@/components/ui/separator'
@@ -11,24 +11,14 @@ import type { ConnectionSummary } from '@/lib/types'
 import { CatalogTab } from '@/pages/connection/CatalogTab'
 import { OverviewTab } from '@/pages/connection/OverviewTab'
 import { TABS, tabPath, type Tab } from '@/pages/connection/tabs'
-import {
-  DenylistEditor,
-  DetectionEditor,
-  LimitsForm,
-  ModeSelector,
-  Privileges,
-  TokensSetting,
-  WritesSelector,
-} from '@/pages/connection/sections'
+import { DetectionSetting, LimitsForm, ReadsSetting, WritesSetting } from '@/pages/connection/sections'
 
 /**
- * Everything about one database, on one page (UI.md §2.3). It replaces the
- * Catalog and Policy screens, which were each a view of one connection picked
- * again on every visit; the header picker now chooses the connection and the tabs say
+ * Everything about one database, on one page. The header picker now chooses the connection and the tabs say
  * which part of it is open. Every tab is a route, so each one can be linked to.
  */
-export function ConnectionPage() {
-  const { id = '', tab = 'overview' } = useParams()
+export function ConnectionPage({ tab }: { tab: Tab }) {
+  const { id = '' } = useParams()
   const [detail, setDetail] = useState<ConnectionDetail | null>(null)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -53,7 +43,6 @@ export function ConnectionPage() {
     void reload()
   }, [reload])
 
-  if (!TABS.some((t) => t.tab === tab)) return <Navigate to={tabPath(id, 'overview')} replace />
   if (missing) {
     return (
       <Empty>
@@ -89,7 +78,7 @@ export function ConnectionPage() {
         </div>
         {/* Switching connection keeps the tab open, so comparing one setting
             across databases is one choice per database, not two. */}
-        <Select value={id} onValueChange={(next) => next && navigate(tabPath(next, tab as Tab))}>
+        <Select value={id} onValueChange={(next) => next && navigate(tabPath(next, tab))}>
           <SelectTrigger aria-label="Connection" className="w-64">
             <SelectValue>{(v: string) => all.find((c) => c.id === v)?.name ?? detail.name}</SelectValue>
           </SelectTrigger>
@@ -118,22 +107,18 @@ export function ConnectionPage() {
 
       <div className="flex flex-col gap-8 pt-6">
         {tab === 'overview' ? <OverviewTab detail={detail} onError={setError} /> : null}
-        {tab === 'detection' ? <DetectionEditor key={id} detail={detail} onChanged={changed} /> : null}
         {tab === 'catalog' ? <CatalogTab key={id} connId={id} /> : null}
-        {tab === 'limits' ? (
+        {tab === 'settings' ? (
           <>
-            <ModeSelector detail={detail} onChanged={changed} />
+            <ReadsSetting detail={detail} onChanged={changed} />
             <Separator />
-            <WritesSelector detail={detail} onChanged={changed} />
+            <WritesSetting detail={detail} onChanged={changed} />
             <Separator />
-            <TokensSetting detail={detail} onChanged={changed} />
+            <DetectionSetting detail={detail} onChanged={changed} />
             <Separator />
             <LimitsForm detail={detail} onChanged={changed} />
-            <Separator />
-            <DenylistEditor detail={detail} onChanged={changed} />
           </>
         ) : null}
-        {tab === 'privileges' ? <Privileges detail={detail} onChanged={reload} onError={setError} /> : null}
       </div>
     </div>
   )

@@ -80,7 +80,6 @@ type Vault interface {
 	// Import replaces this vault with an export sealed under passphrase,
 	// refusing anything it cannot open or that is not a whole vault.
 	Import(ctx context.Context, data []byte, passphrase string) error
-	RotateMaster(ctx context.Context) error
 }
 
 // CatalogFor resolves the catalog for one connection.
@@ -226,10 +225,6 @@ type ResolvedParam struct {
 type Statement struct {
 	ConnectionID string
 	Params       []ResolvedParam
-	// Persistent is set when this statement's tokens persist: the session
-	// declared persistent and the connection allows it. Otherwise they are
-	// session tokens.
-	Persistent bool
 	// Detection is the connection's detection setting for this statement.
 	Detection types.Detection
 }
@@ -391,9 +386,9 @@ type AuditLog interface {
 	// Normalize strips literals and comments from a statement and keeps quoted
 	// identifiers only where they match the catalog. SPEC R10a and R10c.
 	Normalize(sql string, known func(string) bool) string
-	// ScreenIntent rejects a session intent that carries PII, using the same rule
-	// pass as a scan column. SPEC R10c.
-	ScreenIntent(ctx context.Context, intent string) error
+	// ScreenText rejects user-visible task text that carries PII, using the same
+	// rule pass as a scan column. SPEC R10c.
+	ScreenText(ctx context.Context, text string) error
 	// Prune deletes every record older than the retention, in whole days.
 	Prune(ctx context.Context, retentionDays int) error
 	// LegacyPlaintext is the path of a plaintext log an earlier keeper left, or

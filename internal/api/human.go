@@ -78,11 +78,10 @@ func defaultVia(sf surface) string {
 }
 
 type patchRequest struct {
-	Reads            *types.Reads     `json:"reads,omitzero"`
-	Limits           *types.Limits    `json:"limits,omitzero"`
-	Detection        *types.Detection `json:"detection,omitzero"`
-	Writes           *types.Writes    `json:"writes,omitzero"`
-	PersistentTokens *bool            `json:"persistent_tokens,omitzero"`
+	Reads     *types.Reads     `json:"reads,omitzero"`
+	Limits    *types.Limits    `json:"limits,omitzero"`
+	Detection *types.Detection `json:"detection,omitzero"`
+	Writes    *types.Writes    `json:"writes,omitzero"`
 }
 
 func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
@@ -90,7 +89,7 @@ func (s *Server) patchConnection(ctx context.Context, _ *reqInfo, w http.Respons
 	if err := s.readJSON(w, r, &req); err != nil {
 		return nil, err
 	}
-	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Reads: req.Reads, Limits: req.Limits, Detection: req.Detection, Writes: req.Writes, PersistentTokens: req.PersistentTokens})
+	return s.d.Update(ctx, r.PathValue("id"), daemon.Patch{Reads: req.Reads, Limits: req.Limits, Detection: req.Detection, Writes: req.Writes})
 }
 
 // listApprovals is the shared queue, oldest first, always (R9.1).
@@ -215,14 +214,6 @@ func (s *Server) importVault(ctx context.Context, _ *reqInfo, w http.ResponseWri
 		return nil, err
 	}
 	if err := s.d.ImportVault(ctx, req.Data, req.Passphrase); err != nil {
-		return nil, err
-	}
-	return okResponse{OK: true}, nil
-}
-
-// rotateMaster re-encrypts the vault under a fresh master key.
-func (s *Server) rotateMaster(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
-	if err := s.d.RotateMaster(ctx); err != nil {
 		return nil, err
 	}
 	return okResponse{OK: true}, nil

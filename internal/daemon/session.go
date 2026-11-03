@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/mtchen/keeper/internal/types"
@@ -43,10 +42,6 @@ type Session struct {
 	client      types.ClientInfo
 	connectedAt time.Time
 	conn        net.Conn
-
-	mu     sync.Mutex
-	intent string
-	scope  types.TokenScope
 }
 
 // ID is the session identifier clients send in X-Keeper-Session.
@@ -57,15 +52,7 @@ func (s *Session) Conn() net.Conn { return s.conn }
 
 // Info is the snapshot the approval queue, the audit log and the pipeline read.
 func (s *Session) Info() types.Session {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return types.Session{ID: s.id, Client: s.client, Intent: s.intent, TokenScope: s.scope, ConnectedAt: s.connectedAt}
-}
-
-func (s *Session) setIntent(v string, scope types.TokenScope) {
-	s.mu.Lock()
-	s.intent, s.scope = v, scope
-	s.mu.Unlock()
+	return types.Session{ID: s.id, Client: s.client, ConnectedAt: s.connectedAt}
 }
 
 // OpenSession is the handshake. The session binds to the connection the request
@@ -133,27 +120,6 @@ func (d *Daemon) Sessions() []types.Session {
 	d.mu.Unlock()
 	sortByTime(out, func(s types.Session) time.Time { return s.ConnectedAt })
 	return out
-}
-
-// SetIntent records set_session_intent. R10c screens it with the patterns
-// stage, in process, because the intent is user-supplied text that reaches the
-// approval queue and the audit log.
-func (d *Daemon) SetIntent(ctx context.Context, s *Session, intent string, scope types.TokenScope) error {
-	switch scope {
-	case "":
-		scope = types.ScopeSession
-	case types.ScopeSession, types.ScopePersistent:
-	default:
-		return errValidation("token_scope", "must be session or persistent")
-	}
-	if intent != "" {
-		if err := d.deps.Audit.ScreenIntent(ctx, intent); err != nil {
-			return errIntentScreened
-		}
-	}
-	s.setIntent(intent, scope)
-	d.hub.Publish(Event{Type: EventSession, Data: SessionEvent{Action: "intent", Session: s.Info()}})
-	return nil
 }
 
 // CloseConn ends the session bound to a connection and drops everything scoped

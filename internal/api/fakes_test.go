@@ -138,7 +138,6 @@ func (v *fakeVault) TokenKey(context.Context, string, int) ([]byte, int, error) 
 }
 func (v *fakeVault) Export(context.Context) ([]byte, error)       { return nil, nil }
 func (v *fakeVault) Import(context.Context, []byte, string) error { return nil }
-func (v *fakeVault) RotateMaster(context.Context) error           { return nil }
 
 // ---------------------------------------------------------------- catalog
 
@@ -343,7 +342,6 @@ func (r *fakeRedactor) droppedSessions() []string {
 type fakeAuditLog struct {
 	mu      sync.Mutex
 	records []types.AuditRecord
-	reject  string
 }
 
 func (a *fakeAuditLog) Write(_ context.Context, r *types.AuditRecord) error {
@@ -372,14 +370,7 @@ func (a *fakeAuditLog) Get(_ context.Context, id string) (*types.AuditRecord, er
 
 func (a *fakeAuditLog) Normalize(sql string, _ func(string) bool) string { return sql }
 
-func (a *fakeAuditLog) ScreenIntent(_ context.Context, intent string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.reject != "" && intent == a.reject {
-		return errors.New("intent carries identifying text")
-	}
-	return nil
-}
+func (a *fakeAuditLog) ScreenText(context.Context, string) error { return nil }
 
 // ---------------------------------------------------------------- detector
 

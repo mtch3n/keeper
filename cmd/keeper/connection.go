@@ -140,7 +140,6 @@ func connectionSet(ctx context.Context, args []string) error {
 	scanSample := fs.Int("scan-sample", 0, "sample size catalog init examines per column")
 	detection := fs.String("detection", "", "off | scan | all: what pattern detection examines. scan: scan columns only. all: also the text of allow columns. off: scan cells are redacted whole")
 	writes := fs.String("writes", "", "off | ask | allow: whether this profile's sessions may write, and whether a person accepts each write")
-	persistent := fs.String("persistent-tokens", "", "on | off: whether an agent declaring persistent scope gets tokens that outlive its session")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -167,14 +166,6 @@ func connectionSet(ctx context.Context, args []string) error {
 		return err
 	}
 	params := client.PatchConnectionParams{Reads: types.Reads(*reads), Writes: types.Writes(*writes)}
-	switch *persistent {
-	case "":
-	case "on", "off":
-		on := *persistent == "on"
-		params.PersistentTokens = &on
-	default:
-		return fmt.Errorf("connection set: --persistent-tokens must be on or off")
-	}
 	if *maxRows != 0 || *maxBytes != 0 || *timeout != 0 || *scanSample != 0 {
 		// The daemon replaces limits whole, so the ones not named keep their
 		// current values.

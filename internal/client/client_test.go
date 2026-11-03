@@ -112,9 +112,9 @@ func TestSessionHeaderCarried(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
 	})
 	var gotHeader string
-	mux.HandleFunc("POST /v1/session/intent", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		gotHeader = r.Header.Get("X-Keeper-Session")
-		writeJSON(t, w, http.StatusOK, okResponse{OK: true})
+		writeJSON(t, w, http.StatusOK, []ConnectionSummary{})
 	})
 	sock, _ := newTestServer(t, mux)
 
@@ -124,8 +124,8 @@ func TestSessionHeaderCarried(t *testing.T) {
 	}
 	defer c.Close()
 
-	if err := c.SetSessionIntent(t.Context(), "reconciliation OPS-441", ""); err != nil {
-		t.Fatalf("SetSessionIntent: %v", err)
+	if _, err := c.ListConnections(t.Context()); err != nil {
+		t.Fatalf("ListConnections: %v", err)
 	}
 	if gotHeader != "sess-1" {
 		t.Errorf("X-Keeper-Session = %q, want sess-1", gotHeader)

@@ -114,3 +114,16 @@ func validNamespace(ns string) error {
 	}
 	return nil
 }
+
+// sessionKey is the HMAC key for one session's tokens: the same value gets a
+// different token in another session, so short-lived work links nothing.
+func sessionKey(connKey []byte, sessionID string) []byte {
+	m := hmac.New(sha256.New, connKey)
+	m.Write([]byte("keeper session token v1\x00"))
+	m.Write([]byte(sessionID))
+	return m.Sum(nil)
+}
+
+func (r *Redactor) mintToken(connKey []byte, sessionID, namespace string, version int, normalized string) (string, error) {
+	return FormatToken(namespace, version, hmacTag(sessionKey(connKey, sessionID), namespace, normalized, r.hexLen)), nil
+}
