@@ -12,10 +12,10 @@ import { Lamp } from '@/components/wrappers/Lamp'
 import { decideApproval, listConnections, listHosts, type PendingRequest } from '@/lib/api'
 import { useInbox } from '@/lib/inbox'
 import { age, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
-import type { ApprovalItem, ConnectionSummary, HostView, Protection, Risk, WriteChanges, Writes } from '@/lib/types'
+import type { ApprovalItem, ConnectionSummary, HostView, Risk, WriteChanges } from '@/lib/types'
 
 /**
- * Everything waiting on a human (SPEC R9.1), oldest first. Each item is a card
+ * Everything waiting on a human, oldest first. Each item is a card
  * that says, without a click, who is asking, on which profile, why it waited
  * and what it would do — the SQL comes last, as evidence.
  *
@@ -57,7 +57,7 @@ export function InboxPage() {
           <EmptyHeader>
             <EmptyTitle>Nothing is waiting</EmptyTitle>
             <EmptyDescription>
-              When an agent's statement needs a decision, or it asks for a value only you should type, it arrives
+              When a statement needs your answer, or an agent asks for a value only you should type, it arrives
               here, oldest first.
             </EmptyDescription>
           </EmptyHeader>
@@ -69,7 +69,7 @@ export function InboxPage() {
   const profile = (id: string) => {
     const c = connections.find((x) => x.id === id)
     const h = hosts.find((x) => x.connections.includes(id))
-    return { name: c?.name ?? id, username: c?.username, database: c?.database, writes: c?.writes, host: h }
+    return { name: c?.name ?? id, username: c?.username, database: c?.database, host: h }
   }
 
   return (
@@ -92,7 +92,7 @@ export function InboxPage() {
   )
 }
 
-type Profile = { name: string; username?: string; database?: string; writes?: Writes; host?: HostView }
+type Profile = { name: string; username?: string; database?: string; host?: HostView }
 
 function ProfileFact({ profile }: { profile: Profile }) {
   return (
@@ -107,22 +107,8 @@ function ProfileFact({ profile }: { profile: Profile }) {
 
 const RISK_BADGE = { read: 'outline', write: 'secondary', destructive: 'destructive' } as const
 
-/** What would stop a write on this profile, in one sentence. */
-function protectionLine(p?: Protection) {
-  if (!p) return 'not known'
-  const setting =
-    p.writes === 'approve' ? 'writes are allowed on this profile, each approved here' : 'writes are off on this profile'
-  const role =
-    p.role_writes === 'yes'
-      ? 'its role can write'
-      : p.role_writes === 'no'
-        ? 'its role cannot write'
-        : 'whether its role can write is not known'
-  return `${setting}; ${role}`
-}
-
 /**
- * One statement waiting for approval: facts first, SQL last (SPEC §9.2). A
+ * One statement waiting for approval: facts first, SQL last. A
  * human cannot tell from the text of a query that it returns 50,000 SSNs, so the
  * impact is what is decided on and the statement is the evidence.
  */
@@ -145,19 +131,17 @@ function ApprovalCard({
   const who = item.session.client.name
 
   return (
-    <article aria-label={`${who} — ${f.intent || 'no intent'}`} className="flex flex-col gap-4 border border-border p-6">
+    <article aria-label={`${who} — ${f.statement_type || 'unknown statement'}`} className="flex flex-col gap-4 border border-border p-6">
       <div className="flex flex-wrap items-center gap-3">
         <Lamp state="waiting" label="waiting for you" />
         <Badge variant={RISK_BADGE[risk]}>{risk}</Badge>
         <span className="text-sm">{who}</span>
         <span className="text-meta text-muted-foreground">{item.session.client.workspace ?? 'unknown workspace'}</span>
         <span className="ml-auto text-meta text-muted-foreground">
-          tier {item.tier} · waiting {age(item.created_at)}
+          waiting {age(item.created_at)}
         </span>
       </div>
       <Facts>
-        <Fact label="intent">{f.intent || '—'}</Fact>
-        <Fact label="tokens">{item.session.token_scope ?? 'session'}</Fact>
         <ProfileFact profile={profile} />
         {f.reasons?.length ? <Fact label="why it waits">{f.reasons.join(', ')}</Fact> : null}
         {f.unreadable || !f.risk ? (
@@ -187,7 +171,6 @@ function ApprovalCard({
             </span>
           </Fact>
         ) : null}
-        <Fact label="protection">{protectionLine(f.protection)}</Fact>
         {f.egress?.length ? <Fact label="masked">{f.egress.join(', ')}</Fact> : null}
         {homoglyph ? (
           <Fact label="warning">
@@ -259,23 +242,18 @@ function ChangedRows({ changes }: { changes: WriteChanges }) {
   )
 }
 
-/** A request for a value or an authorization, answered on its own page. */
+/** A request for a value, answered on its own page. */
 function RequestCard({ request, profile }: { request: PendingRequest; profile: Profile }) {
   const path = new URL(request.url, window.location.origin).pathname
   return (
-    <article aria-label={`${request.kind} request`} className="flex flex-col gap-4 border border-border p-6">
+    <article aria-label="input request" className="flex flex-col gap-4 border border-border p-6">
       <div className="flex items-center gap-3">
         <Lamp state="waiting" label="waiting for you" />
-        <span className="text-sm">{request.kind === 'input' ? 'Asks you to type a value' : 'Asks for access'}</span>
+        <span className="text-sm">Asks you to type a value</span>
       </div>
       <Facts>
         <Fact label="purpose">{request.purpose || '—'}</Fact>
         <ProfileFact profile={profile} />
-        {request.path ? (
-          <Fact label="path">
-            {request.path.relation.schema}.{request.path.relation.relation}
-          </Fact>
-        ) : null}
       </Facts>
       <div>
         <Link to={path} className="text-sm underline underline-offset-4">

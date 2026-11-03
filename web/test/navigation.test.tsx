@@ -2,30 +2,20 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test } from 'vitest'
 
-import { detail, fakeDaemon, finding, renderApp, summary } from './daemon'
+import { detail, fakeDaemon, renderApp, summary } from './daemon'
 
-const AUDITED = '2026-10-06T12:00:00Z'
-
-/** Two connections on one host; c1 has 3 findings and 7 unclassified columns. */
+/** Three connections on one host; c1 has 7 unclassified columns. */
 function daemon() {
   const d = fakeDaemon()
   d.on('GET', '/v1/connections', () => [200, [summary('c1', 'one'), summary('c2', 'two'), summary('c3', 'ccpg')]])
   for (const [id, name] of [['c1', 'one'], ['c2', 'two'], ['c3', 'ccpg']]) {
-    const findings = id === 'c1' ? [finding('a', 'A.', 'SELECT 1;'), finding('b', 'B.', 'SELECT 2;'), finding('c', 'C.', 'SELECT 3;')] : []
-    d.on('GET', `/v1/connections/${id}`, () => [200, detail(id, name, AUDITED, findings)])
+    d.on('GET', `/v1/connections/${id}`, () => [200, detail(id, name)])
     d.on('GET', `/v1/catalog/${id}`, () => [
       200,
       { connection_id: id, entries: {}, unclassified: id === 'c1' ? ['public.t.a', 'public.t.b'] : [], unclassified_count: id === 'c1' ? 7 : 0 },
     ])
   }
   d.on('GET', '/v1/hosts', () => [200, [{ id: 'h1', name: 'db1', address: 'db.internal', port: 5432, sslmode: 'require', connections: ['c1', 'c2', 'c3'] }]])
-  d.on('GET', '/v1/doctor', () => [
-    200,
-    {
-      version: 'test', key_source: 'test', pending_approvals: 0, open_tickets: 0, open_requests: 0, grants: 0, suspended_grants: 0,
-      connections: [{ id: 'c1', name: 'one', findings: 3, unclassified_columns: 7, catalog_fresh: true, catalog_freshness_known: true, mode: 'assisted', limits: { max_rows_ceiling: 1000, statement_timeout: 30000000000, scan_sample: 300 } }],
-    },
-  ])
   return d
 }
 
@@ -42,9 +32,9 @@ describe('one page per connection', () => {
 
   test('NAV-C5 a deep link opens that tab with the database selected', async () => {
     daemon()
-    renderApp('/connections/c1/privileges')
-    expect((await tabs()).getByRole('link', { name: 'Privileges' }).getAttribute('aria-current')).toBe('page')
-    expect(await screen.findByRole('region', { name: 'Privileges' })).toBeTruthy()
+    renderApp('/connections/c1/settings')
+    expect((await tabs()).getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe('page')
+    expect(await screen.findByRole('region', { name: 'Reads' })).toBeTruthy()
     expect(screen.getByRole('combobox', { name: 'Connection' }).textContent).toContain('one')
   })
 
@@ -58,31 +48,31 @@ describe('one page per connection', () => {
 
   test('NAV-C7 each tab shows that connection\'s existing editor', async () => {
     daemon()
-    renderApp('/connections/c1/detection')
-    expect(await screen.findByRole('button', { name: 'Remove Patterns' })).toBeTruthy()
+    renderApp('/connections/c1/settings')
+    expect(await screen.findByRole('radio', { name: /^All columns/ })).toBeTruthy()
     await userEvent.click((await tabs()).getByRole('link', { name: 'Catalog' }))
-    expect(await screen.findByText(/7 column\(s\) unclassified/)).toBeTruthy()
-    await userEvent.click((await tabs()).getByRole('link', { name: 'Limits' }))
-    expect(await screen.findByRole('radio', { name: /Assisted/ })).toBeTruthy()
+    expect(await screen.findByText(/2 column\(s\) unclassified/)).toBeTruthy()
+    await userEvent.click((await tabs()).getByRole('link', { name: 'Overview' }))
+    expect(await screen.findByRole('button', { name: 'Test connection' })).toBeTruthy()
   })
 
   test('NAV-C8 Overview shows the counts and links each to its tab', async () => {
     daemon()
     renderApp('/connections/c1')
-    const findings = await screen.findByRole('link', { name: /3 privilege findings/i })
-    expect(findings.getAttribute('href')).toBe('/connections/c1/privileges')
+    const reads = await screen.findByRole('link', { name: /ask when a read is uncertain/i })
+    expect(reads.getAttribute('href')).toBe('/connections/c1/settings')
     const unclassified = await screen.findByRole('link', { name: /7 unclassified columns/i })
     expect(unclassified.getAttribute('href')).toBe('/connections/c1/catalog')
   })
 
-  test('NAV-C9 Connections rows and Settings counts open the connection', async () => {
+  test('NAV-C9 Connections rows open the connection and Settings links to Connections', async () => {
     daemon()
     renderApp('/connections')
     const main = within(await screen.findByRole('main'))
     expect((await main.findByRole('link', { name: 'one' })).getAttribute('href')).toBe('/connections/c1')
     renderApp('/settings')
-    const counts = await screen.findAllByRole('link', { name: '3' })
-    expect(counts[0].getAttribute('href')).toBe('/connections/c1/privileges')
+    const links = await screen.findAllByRole('link', { name: 'Connections' })
+    expect(links.some((l) => l.getAttribute('href') === '/connections')).toBe(true)
   })
 })
 

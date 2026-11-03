@@ -8,7 +8,7 @@ import type { Session } from '@/lib/types'
 
 /**
  * The agents connected right now: a lamp and a count in the top bar, opening to
- * who they are — client, workspace and the intent each stated. It replaces the
+ * who they are — client and workspace. It replaces the
  * sidebar's agent list, which took a column of the screen to say one number.
  */
 export function AgentsIndicator() {
@@ -51,7 +51,6 @@ export function AgentsIndicator() {
               <div key={s.id} className="flex flex-col gap-1">
                 <span className="text-sm">{s.client.name}</span>
                 <span className="text-meta text-muted-foreground">{s.client.workspace ?? 'unknown workspace'}</span>
-                <span className="text-sm">{s.intent ?? 'no intent stated'}</span>
               </div>
             ))
           )}

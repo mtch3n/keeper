@@ -8,7 +8,6 @@ import { streams } from './setup'
 import App from '@/App'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { LiveStatusProvider } from '@/components/wrappers/LiveStatus'
-import type { Finding } from '@/lib/types'
 
 /** A route answers with [status, body]; `null` body is an empty 204. */
 export type Handler = (body: unknown) => [number, unknown]
@@ -53,7 +52,7 @@ export function summary(id: string, name: string) {
     id,
     name,
     engine: 'postgres',
-    mode: 'assisted',
+    reads: 'uncertain',
     host: 'db1',
     address: 'db1.internal',
     port: 5432,
@@ -63,19 +62,14 @@ export function summary(id: string, name: string) {
   }
 }
 
-export function detail(id: string, name: string, auditedAt: string, findings: Finding[]) {
+export function detail(id: string, name: string, extra: Record<string, unknown> = {}) {
   return {
     ...summary(id, name),
-    audited_privileges: { audited_at: auditedAt, findings },
     catalog_status: { path: '.keeper/catalog.yaml', fresh: true, freshness_known: true, unclassified: 0 },
-    detection: [{ kind: 'patterns' }],
-    persistent_tokens: false,
+    detection: 'scan',
     limits: { max_rows_ceiling: 1000, max_bytes: 1048576, statement_timeout: 30000000000, scan_sample: 300 },
+    ...extra,
   }
-}
-
-export function finding(id: string, detailText: string, narrower: string): Finding {
-  return { id, kind: 'relation-write', subject: id, detail: detailText, narrower }
 }
 
 /** Pushes one daemon event to every open event stream, as keeperd would. */
@@ -87,13 +81,13 @@ export function emit(kind: string, data: unknown) {
   })
 }
 
-export function session(id: string, name: string, workspace: string, intent: string) {
-  return { id, client: { name, version: '1', pid: 1, workspace }, intent, connected_at: '2026-10-06T12:00:00Z' }
+export function session(id: string, name: string, workspace: string) {
+  return { id, client: { name, version: '1', pid: 1, workspace }, connected_at: '2026-10-06T12:00:00Z' }
 }
 
 export function doctorReport(extra: Record<string, unknown> = {}) {
   return {
-    version: 'test', key_source: 'test', pending_approvals: 0, open_tickets: 0, open_requests: 0, grants: 0,
-    suspended_grants: 0, log_retention_days: 30, connections: [], sessions: [], ...extra,
+    version: 'test', key_source: 'test', pending_approvals: 0, open_tickets: 0, open_requests: 0,
+    log_retention_days: 30, sessions: [], ...extra,
   }
 }

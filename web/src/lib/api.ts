@@ -16,7 +16,6 @@
 
 import type {
   ApprovalFacts,
-  Finding,
   Degradation,
   ApprovalItem,
   ActivityDetail,
@@ -33,13 +32,12 @@ import type {
   KeeperEvent,
   KeeperEventKind,
   Limits,
-  Mode,
   Profile,
+  Reads,
   Writes,
-  Stage,
+  Detection,
   Session,
   PathRef,
-  RelationRef,
   RequestKind,
 } from '@/lib/types'
 
@@ -123,7 +121,7 @@ export function listConnections() {
 }
 
 /** Mirrors daemon.ConnectionDetail. Deliberately not `Connection`:
- * describe_connection returns what SPEC §6.1 lists and no more, so host,
+ * describe_connection returns what it lists and no more, so host,
  * password and connection string have nowhere to appear. */
 export interface ConnectionDetail extends Profile {
   id: string
@@ -131,25 +129,10 @@ export interface ConnectionDetail extends Profile {
   engine: string
   version?: string
   schemas?: string[]
-  audited_privileges: AuditedPrivileges
   catalog_status: CatalogStatus
   policy_summary?: Record<string, number>
-  mode: Mode
-  /** The connection's detection pipeline, in order. Empty is off. */
-  detection: Stage[]
   limits: Limits
-  /** Whether an agent declaring persistent scope gets tokens that outlive its session. */
-  persistent_tokens: boolean
-  denylist?: RelationRef[]
   degradations?: Degradation[]
-}
-
-/** The G0 half of describe_connection: what the last privilege audit found,
- * and when. Nothing in it gates the connection (SPEC R4.1) — the
- * connection's Privileges tab is where these are read. */
-interface AuditedPrivileges {
-  audited_at: string
-  findings?: Finding[]
 }
 
 interface CatalogStatus {
@@ -178,7 +161,7 @@ export interface LocalRequestView {
   session: Session
   state: string
   expires_at: string
-  mode?: Mode
+  mode?: string
   /** The path was already granted, in another window a moment ago. */
   already_granted?: boolean
   grants?: Grant[]
@@ -246,38 +229,17 @@ export function registerConnection(body: {
   return post<Connection>('/v1/connections', body)
 }
 
-/** Deletes a connection, its credentials, its acceptances and every allow rule
- * naming it. The catalog file on disk stays: it lives in the project repo and is
+/** Deletes a connection and its credentials. The catalog file on disk stays: it lives in the project repo and is
  * reviewed like code. */
 export function removeConnection(id: string) {
   return del<{ state: string }>(`/v1/connections/${id}`)
 }
 
-export function auditConnection(id: string) {
-  return post<Connection>(`/v1/connections/${id}/audit`)
-}
-
 export function updateConnection(
   id: string,
-  body: { mode?: Mode; limits?: Limits; detection?: Stage[]; writes?: Writes; persistent_tokens?: boolean },
+  body: { reads?: Reads; writes?: Writes; detection?: Detection; limits?: Limits },
 ) {
   return patch<Connection>(`/v1/connections/${id}`, body)
-}
-
-/** One operator expression the list stage matches. */
-export interface Pattern {
-  label?: string
-  expr: string
-}
-
-/** Replaces the list stage's terms and expressions. Only counts come back:
- * none is ever sent out of the daemon again. */
-export function setTerms(id: string, body: { deny: string[]; allow: string[]; patterns: Pattern[] }) {
-  return put<{ deny: number; allow: number; patterns: number }>(`/v1/connections/${id}/terms`, body)
-}
-
-export function setDenylist(id: string, relations: RelationRef[]) {
-  return put<Connection>(`/v1/connections/${id}/denylist`, { relations })
 }
 
 /** Every local request still waiting on a human, for the Inbox. */
@@ -292,7 +254,6 @@ export interface PendingRequest {
   connection_id: string
   namespace?: string
   purpose?: string
-  path?: PathRef
   url: string
   state: string
   expires_at: string
@@ -331,19 +292,8 @@ export function listApprovals() {
   return get<ApprovalItem[]>('/v1/approvals')
 }
 
-export function decideApproval(
-  ticket: string,
-  body: { decision: 'approve' | 'refuse'; grant?: { lifetime: GrantLifetime; row_ceiling: number } },
-) {
+export function decideApproval(ticket: string, body: { decision: 'approve' | 'refuse' }) {
   return post<{ ok: boolean }>(`/v1/approvals/${ticket}/decide`, body)
-}
-
-export function listGrants() {
-  return get<Grant[]>('/v1/grants')
-}
-
-export function revokeGrant(id: string) {
-  return del<void>(`/v1/grants/${id}`)
 }
 
 export interface CatalogResponse {
@@ -374,14 +324,9 @@ export function initCatalog(connection: string, sample?: number) {
   return post<InitProposal>(`/v1/catalog/${connection}/init`, { sample })
 }
 
-export function getCatalogGrantStatements(connection: string) {
-  return post<{ statements: string[] }>(`/v1/catalog/${connection}/grants`)
-}
-
 export function listActivity(params?: {
   session?: string
   connection?: string
-  tier?: number
   since?: string
   before?: string
   limit?: number
@@ -402,9 +347,6 @@ export interface DoctorReport {
   pending_approvals: number
   open_tickets: number
   open_requests: number
-  grants: number
-  suspended_grants: number
-  connections?: ConnectionHealth[]
   /** How many days the activity log keeps a record. */
   log_retention_days: number
   /** How long a database's connections stay open with nobody using them. */
@@ -413,18 +355,6 @@ export interface DoctorReport {
   legacy_audit_log?: string
   /** What was examining the data, and whether it could reach the network. */
   detector?: { name: string; version?: string; network_posture: string }
-}
-
-/** One connection as doctor reports it: what the vault holds. doctor never
- * connects to a database, so there is no reachability here. */
-interface ConnectionHealth {
-  id: string
-  name: string
-  /** How many the last privilege audit reported. A pointer at Privileges, not
-   * a state: none of them stop this connection (SPEC R4.1). */
-  findings: number
-  mode: Mode
-  limits: Limits
 }
 
 export function getDoctor() {

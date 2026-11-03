@@ -6,9 +6,12 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { getCatalog, listHosts, removeConnection, testConnection, type ConnectionDetail, type PingResult } from '@/lib/api'
-import { auditedAge } from '@/lib/render'
 import type { HostView } from '@/lib/types'
 import { tabPath } from '@/pages/connection/tabs'
+
+const READS = { always: 'ask before every read', uncertain: 'ask when a read is uncertain', never: 'never ask' } as Record<string, string>
+const WRITES = { off: 'off, read-only', ask: 'ask before each write', allow: 'allowed, no question' } as Record<string, string>
+const DETECTION = { off: 'off', scan: 'scan columns', all: 'all columns' } as Record<string, string>
 
 /**
  * A connection in one screen: where it is, who it connects as, and every count
@@ -32,9 +35,6 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
       .catch(() => setUnclassified('unavailable'))
   }, [id, onError])
 
-  const findings = detail.audited_privileges.findings?.length ?? 0
-  const never = auditedAge(detail.audited_privileges.audited_at) === 'never'
-  const stages = detail.detection ?? []
   const link = 'underline underline-offset-4 hover:text-foreground'
 
   return (
@@ -43,14 +43,19 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
         <Fact label="host">{host ? `${host.name} · ${host.address}:${host.port} · sslmode ${host.sslmode}` : '—'}</Fact>
         <Fact label="database">{detail.database}</Fact>
         <Fact label="username">{detail.username}</Fact>
-        <Fact label="mode">
-          <Link to={tabPath(id, 'limits')} className={link}>
-            {detail.mode}
+        <Fact label="reads">
+          <Link to={tabPath(id, 'settings')} className={link}>
+            {READS[detail.reads] ?? READS.always}
+          </Link>
+        </Fact>
+        <Fact label="writes">
+          <Link to={tabPath(id, 'settings')} className={link}>
+            {WRITES[detail.writes] ?? WRITES.off}
           </Link>
         </Fact>
         <Fact label="detection">
-          <Link to={tabPath(id, 'detection')} className={link}>
-            {stages.length === 0 ? 'off — free text is redacted whole' : stages.map((s) => s.kind).join(' → ')}
+          <Link to={tabPath(id, 'settings')} className={link}>
+            {DETECTION[detail.detection] ?? DETECTION.scan}
           </Link>
         </Fact>
         <Fact label="catalog">
@@ -63,22 +68,6 @@ export function OverviewTab({ detail, onError }: { detail: ConnectionDetail; onE
               {unclassified} unclassified columns
             </Link>
           )}
-        </Fact>
-        <Fact label="privileges">
-          {never ? (
-            <Link to={tabPath(id, 'privileges')} className={link}>
-              not audited yet
-            </Link>
-          ) : (
-            <Link to={tabPath(id, 'privileges')} className={link}>
-              {findings} privilege findings
-            </Link>
-          )}
-        </Fact>
-        <Fact label="writes">
-          <Link to={tabPath(id, 'limits')} className={link}>
-            {detail.writes === 'approve' ? 'allowed, each one approved in the Inbox' : 'off — read-only'}
-          </Link>
         </Fact>
       </Facts>
 
@@ -142,9 +131,7 @@ function TestConnection({ id }: { id: string }) {
 }
 
 /**
- * Removing a connection takes its credential and every allow rule naming it. The name is retyped rather than confirmed with a click,
- * because a grant naming a connection that no longer exists is a rule nobody
- * can read and nobody can revoke.
+ * Removing a connection takes its credential with it. The name is retyped rather than confirmed with a click.
  *
  * The catalog file stays. It lives in the project repo and is reviewed like
  * code; deleting it is not this button's business.
@@ -198,7 +185,7 @@ function RemoveConnection({
         </Button>
       </div>
       <span className="text-meta text-muted-foreground">
-        Its credential and every allow rule naming it go with it. The catalog file stays.
+        Its credential goes with it. The catalog file stays.
       </span>
     </div>
   )
