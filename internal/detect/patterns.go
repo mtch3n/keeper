@@ -1,7 +1,9 @@
 package detect
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/hoophq/alcatraz"
@@ -38,9 +40,27 @@ func (p *Patterns) Detect(ctx context.Context, texts []string) ([][]ports.Span, 
 		for _, r := range p.engine.Analyze(t, alcatraz.Options{}) {
 			spans = append(spans, ports.Span{Start: r.Start, End: r.End, Type: strings.ToLower(r.EntityType), Score: r.Score})
 		}
-		out[i] = spans
+		out[i] = merge(spans)
 	}
 	return out, nil
+}
+
+// merge joins overlapping hits into one covering span, so a text is never
+// redacted twice over the same bytes. The earliest hit keeps its label.
+func merge(spans []ports.Span) []ports.Span {
+	if len(spans) < 2 {
+		return spans
+	}
+	slices.SortFunc(spans, func(a, b ports.Span) int { return cmp.Compare(a.Start, b.Start) })
+	out := spans[:1]
+	for _, sp := range spans[1:] {
+		if last := &out[len(out)-1]; sp.Start < last.End {
+			last.End = max(last.End, sp.End)
+			continue
+		}
+		out = append(out, sp)
+	}
+	return out
 }
 
 // Identity names the library and its version.

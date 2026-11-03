@@ -33,12 +33,12 @@ var (
 
 // PolicyLookup is the slice of ports.Catalog this package needs: the arguments a
 // policy carries that types.ColumnMeta does not. ColumnMeta says *which* policy
-// applies; the namespace a token hashes under, the component a partial keeps and
+// applies; the namespace a token hashes under and
 // the key paths of a json column live in the catalog entry, and they are
 // resolved by the server's own column identity, never by output name (R7.5a).
 type PolicyLookup interface {
-	// Lookup resolves one column's policy arguments — namespace, partial form,
-	// JSON paths — for a connection. The connection is a parameter because a
+	// Lookup resolves one column's policy arguments — namespace and JSON
+	// paths — for a connection. The connection is a parameter because a
 	// (tableOID, attnum) pair means nothing without it: two databases reuse OIDs
 	// freely, and the daemon serves all of them.
 	Lookup(connID string, tableOID uint32, attNum uint16) (types.ColumnPolicy, bool)
@@ -48,9 +48,9 @@ type PolicyLookup interface {
 type Config struct {
 	// Keys supplies the per-connection HMAC key. Required for token policies.
 	Keys KeySource
-	// Detectors returns the chain of passes a connection's scan columns run.
-	// Optional: without it, and for a connection that runs no passes, no free
-	// text is examined and every scan cell is redacted whole.
+	// Detectors returns the detector a connection's text runs through.
+	// Optional: without it, and for a connection with detection off, no free
+	// text is examined and every cell that needs examining is redacted whole.
 	Detectors ports.DetectorFor
 	// Policies resolves a column's policy arguments. Optional; without it a
 	// token column has no namespace and falls back to redact.
@@ -280,12 +280,13 @@ type columnPlan struct {
 	name      string
 	policy    types.Policy
 	namespace string
-	form      types.PartialForm
 	paths     map[string]types.ColumnPolicy
 	family    ports.TypeFamily
 	basis     types.Basis
 	// floor is R8.4b's inherited policy, kept so json key paths inherit it too.
 	floor types.Policy
+	// examineAllow is set under detection=all: allow text is examined too.
+	examineAllow bool
 
 	// key is the connection's token key; sessionID and persistent say which
 	// token it mints.
@@ -315,10 +316,6 @@ type columnPlan struct {
 // that map and re-tokenizes any resolved value it finds (R8.4a, R8.4c). Doing
 // the scan second means a value tokenized in one column is also caught where it
 // appears in cleartext in another column of the same result.
-//
-// A `drop` column's cells are set to nil here and its transform reports
-// `drop`; removing the column from the response is [DropColumns], because the
-// ports.Redactor signature cannot shorten the caller's column slice.
 func (r *Redactor) Apply(ctx context.Context, sessionID string, cols []types.ColumnMeta, rows [][]any) (map[string]types.Transform, error) {
 	st, _ := StatementFrom(ctx)
 	now := r.now()
@@ -361,9 +358,6 @@ func (r *Redactor) Apply(ctx context.Context, sessionID string, cols []types.Col
 		if rt.active() {
 			for _, row := range rows {
 				for j := range row {
-					if j < len(plans) && plans[j].policy == types.PolicyDrop {
-						continue
-					}
 					// A re-tokenized value is counted in SpansRedacted
 					// alongside the detection stages' hits. Both are "a value
 					// replaced inside this column's text", and the frozen
@@ -406,7 +400,6 @@ func (r *Redactor) plan(ctx context.Context, st Statement, sessionID string, col
 		if r.policies != nil && c.TableOID != 0 && st.ConnectionID != "" {
 			if cp, ok := r.policies.Lookup(st.ConnectionID, c.TableOID, c.AttNum); ok {
 				pl.namespace = cp.Namespace
-				pl.form = cp.Form
 				pl.paths = cp.Paths
 				pl.basis = types.BasisCatalog
 			} else {
@@ -428,30 +421,29 @@ func (r *Redactor) plan(ctx context.Context, st Statement, sessionID string, col
 		}
 
 		pl.floor = floor
-		if floor != types.PolicyAllow && pl.policy != types.PolicyDrop && TextLike(pl.family) {
+		pl.examineAllow = st.Detection == types.DetectionAll
+		if !pl.policy.Valid() {
+			pl.policy = types.PolicyRedact
+		}
+		if floor != types.PolicyAllow && TextLike(pl.family) {
 			if raised := types.Strictest(pl.policy, floor); raised != pl.policy {
 				pl.policy = raised
 				pl.basis = types.BasisParameter
 			}
 		}
 
-		// A token needs a namespace and a partial needs a form. R5.2b and R5.2d
-		// make their absence a catalog validation error, so reaching here means
-		// something upstream let one through — or the floor above raised a
-		// column that has no namespace of its own. Either way the value does
-		// not survive: tokenizing under a borrowed namespace would put two
-		// different classifications in one token space, and R7.6b already
-		// resolves an un-namespaceable token to redact.
+		// A token needs a namespace. Its absence is a catalog validation error,
+		// so reaching here means something upstream let one through, or the
+		// floor above raised a column that has no namespace of its own. Either
+		// way the value does not survive: tokenizing under a borrowed namespace
+		// would put two classifications in one token space.
 		if pl.policy == types.PolicyToken && pl.namespace == "" {
-			pl.policy = types.PolicyRedact
-		}
-		if pl.policy == types.PolicyPartial && !pl.form.Valid() {
 			pl.policy = types.PolicyRedact
 		}
 		if pl.policy == types.PolicyScan && pl.basis == types.BasisCatalog {
 			pl.basis = types.BasisRules
 		}
-		if pl.policy == types.PolicyToken || pathsNeedKey(pl.paths, pl.policy) {
+		if pl.policy == types.PolicyToken || pathsNeedKey(pl.paths) {
 			needKey = true
 		}
 	}
@@ -474,10 +466,7 @@ func (r *Redactor) plan(ctx context.Context, st Statement, sessionID string, col
 	return plans, nil
 }
 
-func pathsNeedKey(paths map[string]types.ColumnPolicy, colPolicy types.Policy) bool {
-	if colPolicy == types.PolicyDrop {
-		return false
-	}
+func pathsNeedKey(paths map[string]types.ColumnPolicy) bool {
 	for _, p := range paths {
 		if p.Policy == types.PolicyToken {
 			return true
@@ -487,9 +476,6 @@ func pathsNeedKey(paths map[string]types.ColumnPolicy, colPolicy types.Policy) b
 }
 
 func (r *Redactor) applyCell(ctx context.Context, sess *session, pl *columnPlan, v any, now time.Time) any {
-	if pl.policy == types.PolicyDrop {
-		return nil
-	}
 	if v == nil {
 		return nil
 	}
@@ -499,15 +485,14 @@ func (r *Redactor) applyCell(ctx context.Context, sess *session, pl *columnPlan,
 		}
 	}
 	switch pl.policy {
-	case types.PolicyAllow:
-		return v
 	case types.PolicyRedact:
 		return RedactedMarker
 	case types.PolicyToken:
 		return r.tokenize(sess, pl, stringOf(v), now)
-	case types.PolicyPartial:
-		return Partial(pl.form, stringOf(v))
-	case types.PolicyScan:
+	case types.PolicyAllow, types.PolicyScan:
+		if !pl.examinesText(pl.policy) {
+			return v
+		}
 		return rewriteStrings(v, func(s string) string {
 			out, n := r.redactSpans(pl, s)
 			pl.spans += n
@@ -551,6 +536,13 @@ func (r *Redactor) tokenize(sess *session, pl *columnPlan, value string, now tim
 		return RedactedMarker
 	}
 	return bound.token
+}
+
+// examinesText reports whether a column's text under policy goes through the
+// detector: scan columns always, allow text only under detection=all. A token or
+// redact column is never read.
+func (pl *columnPlan) examinesText(policy types.Policy) bool {
+	return policy == types.PolicyScan || (policy == types.PolicyAllow && pl.examineAllow && TextLike(pl.family))
 }
 
 // redactSpans replaces the spans the connection's passes found and nothing
@@ -632,9 +624,6 @@ func transformsOf(plans []columnPlan) map[string]types.Transform {
 		if pl.policy == types.PolicyToken {
 			t.Namespace = pl.namespace
 		}
-		if pl.policy == types.PolicyPartial {
-			t.Form = pl.form
-		}
 		if prev, ok := out[pl.name]; ok {
 			t = mergeTransform(prev, t)
 		}
@@ -645,10 +634,9 @@ func transformsOf(plans []columnPlan) map[string]types.Transform {
 
 func mergeTransform(a, b types.Transform) types.Transform {
 	out := a
-	if b.Policy == types.PolicyDrop || b.Policy.Rank() > a.Policy.Rank() {
+	if b.Policy.Rank() > a.Policy.Rank() {
 		out.Policy = b.Policy
 		out.Namespace = b.Namespace
-		out.Form = b.Form
 		out.Basis = b.Basis
 	}
 	out.SpansRedacted = a.SpansRedacted + b.SpansRedacted

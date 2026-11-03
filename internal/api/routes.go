@@ -30,7 +30,6 @@ func (s *Server) routes() {
 	s.handle("POST /v1/connections", accessHuman, s.registerConnection)
 	s.handle("PATCH /v1/connections/{id}", accessHuman, s.patchConnection)
 	s.handle("DELETE /v1/connections/{id}", accessHuman, s.removeConnection)
-	s.handle("PUT /v1/connections/{id}/terms", accessHuman, s.putTerms)
 	s.handle("POST /v1/connections/{id}/test", accessHuman, s.testConnection)
 
 	s.handle("GET /v1/approvals", accessHuman, s.listApprovals)
@@ -40,7 +39,6 @@ func (s *Server) routes() {
 	s.handle("GET /v1/catalog/{connection}", accessHuman, s.getCatalog)
 	s.handle("PUT /v1/catalog/{connection}/columns", accessHuman, s.putCatalogColumns)
 	s.handle("POST /v1/catalog/{connection}/init", accessHuman, s.initCatalog)
-	s.handle("POST /v1/catalog/{connection}/grants", accessHuman, s.suggestGrants)
 
 	s.handle("GET /v1/activity", accessHuman, s.activity)
 	s.handle("GET /v1/activity/{audit_id}", accessHuman, s.activityRecord)

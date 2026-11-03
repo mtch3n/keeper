@@ -3,9 +3,6 @@
 package integration
 
 import (
-	"context"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,21 +15,8 @@ import (
 
 func (e *leanEnv) setDetection(t *testing.T, conn string, d types.Detection) {
 	t.Helper()
-	hc := http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", e.sock)
-	}}}
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPatch, "http://keeper/v1/connections/"+conn, strings.NewReader(`{"detection":"`+string(d)+`"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := hc.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("set detection=%s: status %d", d, resp.StatusCode)
+	if _, err := e.op.PatchConnection(t.Context(), conn, client.PatchConnectionParams{Detection: d}); err != nil {
+		t.Fatalf("set detection=%s: %v", d, err)
 	}
 }
 

@@ -15,7 +15,6 @@ import (
 // the pipeline itself.
 const (
 	ReasonMasked         = "masked_output"
-	ReasonDropped        = "dropped_column"
 	ReasonUnresolved     = "unresolved_column"
 	ReasonStaleCatalog   = "stale_catalog"
 	ReasonWrite          = "write"
@@ -35,11 +34,6 @@ type column struct {
 	meta  types.ColumnMeta
 	entry types.ColumnPolicy
 	basis types.Basis
-	// hidden marks a column whose name is disclosive independently of its value
-	// (R6.4b). The name is replaced on every response surface; the value still
-	// follows the column's own policy.
-	hidden  bool
-	dropped bool
 }
 
 // resolveColumns is G5. Every output column is matched by the server's own
@@ -79,18 +73,15 @@ func (p *Pipeline) resolveColumns(cat ports.Catalog, raw []types.ColumnMeta, pla
 		// Numeric, boolean, date/time and uuid columns cannot carry a text value
 		// and do not inherit, which is what keeps count(*) usable.
 		if paramPolicy != types.PolicyAllow &&
-			c.entry.Policy != types.PolicyDrop &&
 			pgdb.TextLike(pgdb.FamilyForName(rc.Type)) {
 			if raised := types.Strictest(c.entry.Policy, types.Inherited(paramPolicy)); raised.Rank() > c.entry.Policy.Rank() {
-				c.entry = types.ColumnPolicy{Policy: raised, HideName: c.entry.HideName}
+				c.entry = types.ColumnPolicy{Policy: raised}
 				c.basis = types.BasisParameter
 			}
 		}
 
-		c.hidden = c.entry.HideName
-		c.dropped = c.entry.Policy == types.PolicyDrop
 		c.meta.Policy = c.entry.Policy
-		c.meta.Name = uniqueName(used, displayName(rc.Name, i, c.hidden))
+		c.meta.Name = uniqueName(used, displayName(rc.Name, i))
 		cols[i] = c
 	}
 	return cols
@@ -122,12 +113,6 @@ func (p *Pipeline) inherit(cat ports.Catalog, col types.ColumnMeta, plan *ports.
 			switch fp.Policy.Policy {
 			case types.PolicyAllow:
 				continue
-			case types.PolicyDrop:
-				// R7.6b: drop is not in the ordering and is never inherited.
-				// Dropping a computed column deletes it from the response —
-				// measured, SELECT upper(status), count(*) ... GROUP BY 1
-				// returned counts with no group key.
-				continue
 			}
 			if broad || fp.Family == family {
 				candidates = append(candidates, fp.Policy.Policy)
@@ -139,7 +124,7 @@ func (p *Pipeline) inherit(cat ports.Catalog, col types.ColumnMeta, plan *ports.
 		return types.PolicyAllow, types.BasisInherited
 	}
 	// Inherited caps at redact: token under someone else's namespace produces an
-	// HMAC where a month label belongs, and partial has no domain to keep.
+	// HMAC where a month label belongs.
 	return types.Inherited(types.Strictest(candidates...)), types.BasisInherited
 }
 
@@ -149,8 +134,6 @@ func (p *Pipeline) inherit(cat ports.Catalog, col types.ColumnMeta, plan *ports.
 func (p *Pipeline) noteColumns(ctx context.Context, st *state) {
 	for _, c := range st.cols {
 		switch {
-		case c.dropped:
-			st.reason(ReasonDropped)
 		case c.basis == types.BasisUnknown:
 			st.reason(ReasonUnresolved)
 		case c.entry.Policy.Masks():
@@ -178,8 +161,7 @@ func (r Request) paramPolicies() []types.Policy {
 }
 
 // applyRedaction is G7. Every value leaving keeper passes through the Redactor;
-// this function only decides what it is handed and what happens to a drop column
-// afterwards.
+// this function only decides what it is handed.
 func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, rows [][]any) ([]types.ColumnMeta, [][]any, error) {
 	metas := make([]types.ColumnMeta, len(st.cols))
 	for i, c := range st.cols {
@@ -204,7 +186,11 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 		persistent = false
 		st.degrade("token", "persistent tokens are off for this connection; these are session tokens")
 	}
-	ctx = ports.WithStatement(ctx, ports.Statement{ConnectionID: req.ConnID, Params: resolved, Persistent: persistent})
+	detection := types.DetectionScan
+	if st.conn != nil {
+		detection = st.conn.Detection.Effective()
+	}
+	ctx = ports.WithStatement(ctx, ports.Statement{ConnectionID: req.ConnID, Params: resolved, Persistent: persistent, Detection: detection})
 
 	transforms, err := p.redactor.Apply(ctx, req.Session.ID, metas, rows)
 	if err != nil {
@@ -212,9 +198,8 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 	}
 
 	st.transforms = make(map[string]types.Transform, len(st.cols))
-	keep := make([]int, 0, len(st.cols))
 	unexamined := false
-	for i, c := range st.cols {
+	for _, c := range st.cols {
 		t := transforms[c.meta.Name]
 		if t.Basis == types.BasisUnexamined && !unexamined {
 			unexamined = true
@@ -227,34 +212,10 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 		if c.entry.Policy == types.PolicyToken && t.Namespace == "" {
 			t.Namespace = c.entry.Namespace
 		}
-		if c.entry.Policy == types.PolicyPartial && t.Form == "" {
-			t.Form = c.entry.Form
-		}
 		st.collisions += t.Collisions
 		st.transforms[c.meta.Name] = t
-		if !c.dropped {
-			keep = append(keep, i)
-		}
 	}
-
-	// A drop column is absent from the response; transforms still reports the
-	// removal, which is what tells the agent the column exists and why it is not
-	// here (R7.7a).
-	outCols := make([]types.ColumnMeta, len(keep))
-	for j, i := range keep {
-		outCols[j] = st.cols[i].meta
-	}
-	outRows := make([][]any, len(rows))
-	for r, row := range rows {
-		nr := make([]any, len(keep))
-		for j, i := range keep {
-			if i < len(row) {
-				nr[j] = row[i]
-			}
-		}
-		outRows[r] = nr
-	}
-	return outCols, outRows, nil
+	return publicColumns(st.cols), rows, nil
 }
 
 // rowCeiling is the operator bound of §4.5, narrowed by the agent's request.
@@ -273,8 +234,7 @@ func (p *Pipeline) rowCeiling(req Request, conn *types.Connection) int {
 // permissionError is R5.5's middle rule. R6.4a discards every PostgreSQL error
 // field, so without this the agent learns only that something was denied and
 // retries blindly. The readable column list is composed by keeper from the
-// catalog, never copied from the server message, and hidden names stay hidden
-// (R6.4b).
+// catalog, never copied from the server message.
 func (p *Pipeline) permissionError(ctx context.Context, cat ports.Catalog, plan *ports.PlanFacts) *types.Error {
 	var b strings.Builder
 	b.WriteString("the database refused this statement for this connection's role")
@@ -285,20 +245,13 @@ func (p *Pipeline) permissionError(ctx context.Context, cat ports.Catalog, plan 
 			if err != nil {
 				continue
 			}
-			visible := readable[:0:0]
-			for _, name := range readable {
-				if entry, ok := cat.LookupName(rel, name); ok && entry.HideName {
-					continue
-				}
-				visible = append(visible, name)
-			}
-			if len(visible) == 0 {
+			if len(readable) == 0 {
 				continue
 			}
 			b.WriteString("; on ")
 			b.WriteString(rel.String())
 			b.WriteString(" it may read ")
-			b.WriteString(strings.Join(visible, ", "))
+			b.WriteString(strings.Join(readable, ", "))
 		}
 	}
 
@@ -310,19 +263,17 @@ func (p *Pipeline) permissionError(ctx context.Context, cat ports.Catalog, plan 
 func egressSummary(cols []column) []string {
 	counts := map[types.Policy]int{}
 	for _, c := range cols {
-		if c.entry.Policy.Masks() || c.dropped {
+		if c.entry.Policy.Masks() {
 			counts[c.entry.Policy]++
 		}
 	}
 	phrase := map[types.Policy]string{
-		types.PolicyDrop:    "dropped",
-		types.PolicyRedact:  "redacted",
-		types.PolicyToken:   "tokenized",
-		types.PolicyPartial: "partially masked",
-		types.PolicyScan:    "scanned for PII spans",
+		types.PolicyRedact: "redacted",
+		types.PolicyToken:  "tokenized",
+		types.PolicyScan:   "scanned for PII spans",
 	}
 	var out []string
-	for _, pol := range []types.Policy{types.PolicyDrop, types.PolicyRedact, types.PolicyToken, types.PolicyPartial, types.PolicyScan} {
+	for _, pol := range []types.Policy{types.PolicyRedact, types.PolicyToken, types.PolicyScan} {
 		if n := counts[pol]; n > 0 {
 			out = append(out, strconv.Itoa(n)+" column(s) "+phrase[pol])
 		}
@@ -330,27 +281,17 @@ func egressSummary(cols []column) []string {
 	return out
 }
 
-// publicColumns is what any response surface may show: the resolved metadata,
-// minus the columns a drop policy removes.
+// publicColumns is what any response surface may show: the resolved metadata.
 func publicColumns(cols []column) []types.ColumnMeta {
-	out := make([]types.ColumnMeta, 0, len(cols))
-	for _, c := range cols {
-		if c.dropped {
-			continue
-		}
-		out = append(out, c.meta)
+	out := make([]types.ColumnMeta, len(cols))
+	for i, c := range cols {
+		out[i] = c.meta
 	}
 	return out
 }
 
-// displayName suppresses a hide_name column's name on every response surface. A
-// name hidden in one surface and disclosed in another is not hidden (R6.4b). The
-// column keeps its position and its value still follows its own policy, which is
-// the difference between hiding a name and dropping a column.
-func displayName(name string, index int, hidden bool) string {
-	if hidden {
-		return "keeper_hidden_" + strconv.Itoa(index+1)
-	}
+// displayName names an output column that the server left unnamed.
+func displayName(name string, index int) string {
 	if name == "" {
 		return "column_" + strconv.Itoa(index+1)
 	}

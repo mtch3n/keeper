@@ -11,13 +11,12 @@ import (
 	"time"
 
 	"github.com/mtchen/keeper/internal/client"
-	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
 func runConnection(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("connection: expected a subcommand (ls, show, set, terms, rm)")
+		return fmt.Errorf("connection: expected a subcommand (ls, show, set, rm)")
 	}
 	ctx := context.Background()
 	sub, rest := args[0], args[1:]
@@ -28,8 +27,6 @@ func runConnection(args []string) error {
 		return connectionShow(ctx, rest)
 	case "set":
 		return connectionSet(ctx, rest)
-	case "terms":
-		return connectionTerms(ctx, rest)
 	case "rm":
 		return connectionRemove(ctx, rest)
 	case "test":
@@ -126,7 +123,7 @@ func connectionShow(ctx context.Context, args []string) error {
 	fmt.Printf("username:  %s\n", detail.Username)
 	fmt.Printf("reads:     %s\n", detail.Reads)
 	fmt.Printf("writes:    %s\n", detail.Writes)
-	fmt.Printf("detection: %s\n", stageList(detail.Detection))
+	fmt.Printf("detection: %s\n", detail.Detection)
 	fmt.Printf("catalog:   %s\n", detail.CatalogStatus.Path)
 	if detail.CatalogStatus.Unclassified > 0 {
 		fmt.Printf("           %d unclassified column(s)\n", detail.CatalogStatus.Unclassified)
@@ -141,7 +138,7 @@ func connectionSet(ctx context.Context, args []string) error {
 	maxBytes := fs.Int("max-bytes", 0, "size cap on a result's row data, in bytes")
 	timeout := fs.Duration("timeout", 0, "SET LOCAL statement_timeout for every statement")
 	scanSample := fs.Int("scan-sample", 0, "sample size catalog init examines per column")
-	detection := fs.String("detection", "", "detection stages in order, comma-separated, or off: kind[:entity+entity][@raw], kinds patterns and list")
+	detection := fs.String("detection", "", "off | scan | all: what pattern detection examines. scan: scan columns only. all: also the text of allow columns. off: scan cells are redacted whole")
 	writes := fs.String("writes", "", "off | ask | allow: whether this profile's sessions may write, and whether a person accepts each write")
 	persistent := fs.String("persistent-tokens", "", "on | off: whether an agent declaring persistent scope gets tokens that outlive its session")
 	jsonOut := fs.Bool("json", false, "JSON output")
@@ -192,10 +189,10 @@ func connectionSet(ctx context.Context, args []string) error {
 		lim.ScanSample = cmp.Or(*scanSample, lim.ScanSample)
 		params.Limits = &lim
 	}
-	if *detection != "" {
-		stages := parseStages(*detection)
-		params.Detection = &stages
+	if *detection != "" && !types.Detection(*detection).Valid() {
+		return fmt.Errorf("connection set: --detection must be off, scan or all")
 	}
+	params.Detection = types.Detection(*detection)
 	conn, err := cli.PatchConnection(ctx, id, params)
 	if err != nil {
 		return err
@@ -204,102 +201,8 @@ func connectionSet(ctx context.Context, args []string) error {
 		return printJSON(conn)
 	}
 	fmt.Printf("%q updated: reads=%s writes=%s detection=%s max_rows_ceiling=%d max_bytes=%d statement_timeout=%s scan_sample=%d\n",
-		conn.Name, conn.Reads, conn.Writes, stageList(conn.Detection), conn.Limits.MaxRowsCeiling, conn.Limits.MaxBytes, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
+		conn.Name, conn.Reads, conn.Writes, conn.Detection, conn.Limits.MaxRowsCeiling, conn.Limits.MaxBytes, conn.Limits.StatementTimeout, conn.Limits.ScanSample)
 	return nil
-}
-
-// parseStages reads --detection: "off", or stages like
-// "patterns:email_address+credit_card,list@raw". The daemon validates them.
-func parseStages(spec string) []types.Stage {
-	stages := []types.Stage{}
-	if spec == "off" {
-		return stages
-	}
-	for part := range strings.SplitSeq(spec, ",") {
-		part = strings.TrimSpace(part)
-		var st types.Stage
-		part, st.Raw = strings.CutSuffix(part, "@raw")
-		kind, entities, _ := strings.Cut(part, ":")
-		st.Kind = types.StageKind(kind)
-		if entities != "" {
-			st.Entities = strings.Split(entities, "+")
-		}
-		stages = append(stages, st)
-	}
-	return stages
-}
-
-// stageList renders a connection's pipeline, or off when it runs none.
-func stageList(stages []types.Stage) string {
-	if len(stages) == 0 {
-		return "off (scan columns are redacted whole)"
-	}
-	parts := make([]string, len(stages))
-	for i, st := range stages {
-		p := string(st.Kind)
-		if len(st.Entities) > 0 {
-			p += ":" + strings.Join(st.Entities, "+")
-		}
-		if st.Raw {
-			p += "@raw"
-		}
-		parts[i] = p
-	}
-	return strings.Join(parts, ", ")
-}
-
-// connectionTerms replaces the list stage's terms and expressions. They go in
-// and never come back out: the daemon answers with counts, so this command
-// cannot show the current set and every run states the whole of it.
-func connectionTerms(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("connection terms", flag.ExitOnError)
-	var deny, allow stringList
-	fs.Var(&deny, "deny", "a term that is always PII, matched case-insensitively (repeatable)")
-	fs.Var(&allow, "allow", "a value that is never redacted, e.g. support@yourco.com (repeatable)")
-	var exprs stringList
-	fs.Var(&exprs, "regex", "an expression to redact, as label=expr or just expr (repeatable), e.g. employee_id=EMP-\\d{6}")
-	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	name := fs.Arg(0)
-	if name == "" {
-		return fmt.Errorf("connection terms: expected a connection name")
-	}
-
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	id, err := resolveConnectionID(ctx, cli, name)
-	if err != nil {
-		return err
-	}
-	terms := ports.Terms{Deny: deny, Allow: allow, Patterns: []ports.Pattern{}}
-	for _, e := range exprs {
-		terms.Patterns = append(terms.Patterns, parsePattern(e))
-	}
-	counts, err := cli.SetTerms(ctx, id, terms)
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return printJSON(counts)
-	}
-	fmt.Printf("%q now holds %d deny term(s), %d allow term(s) and %d expression(s). They take effect where its stages include list.\n",
-		name, counts.Deny, counts.Allow, counts.Patterns)
-	return nil
-}
-
-// parsePattern splits "label=expr". An expression may itself contain '=', so
-// the text before the first '=' is a label only when it looks like one.
-func parsePattern(s string) ports.Pattern {
-	if label, expr, ok := strings.Cut(s, "="); ok && label != "" && strings.Trim(label, "abcdefghijklmnopqrstuvwxyz0123456789_") == "" {
-		return ports.Pattern{Label: label, Expr: expr}
-	}
-	return ports.Pattern{Expr: s}
 }
 
 func connectionRemove(ctx context.Context, args []string) error {

@@ -67,10 +67,6 @@ type Vault interface {
 	Settings(ctx context.Context) (types.Settings, error)
 	SetSettings(ctx context.Context, s types.Settings) error
 
-	// Terms returns a connection's list-pass terms; SetTerms replaces them.
-	Terms(ctx context.Context, id string) (Terms, error)
-	SetTerms(ctx context.Context, id string, t Terms) error
-
 	// DSN assembles the connection string from the connection's host and its
 	// credential.
 	DSN(ctx context.Context, id string) (string, error)
@@ -152,8 +148,6 @@ type CatalogStore interface {
 	// Init proposes a policy for every column, grouped by how safe the proposal
 	// is to accept without reading it. sample is 0 for no row sampling.
 	Init(ctx context.Context, connID string, sample int) (*InitProposal, error)
-	// SuggestGrants emits GRANT SELECT (...) per table, omitting drop columns.
-	SuggestGrants(ctx context.Context, connID string) ([]string, error)
 	// Unclassified is the Catalog screen's backlog.
 	Unclassified(ctx context.Context, connID string) ([]string, error)
 }
@@ -189,27 +183,10 @@ type Detector interface {
 	Identity() DetectorIdentity
 }
 
-// DetectorFor returns a connection's detector: the chain of passes its
-// operator chose. It is nil, with no error, when the connection runs no
-// passes, and a nil detector examines nothing.
+// DetectorFor returns a connection's detector: the detector its
+// detection setting allows. It is nil, with no error, when detection is off,
+// and a nil detector examines nothing.
 type DetectorFor func(ctx context.Context, connID string) (Detector, error)
-
-// Terms are a connection's list-pass terms: deny terms are always PII, and a
-// span whose text equals an allow term is never redacted. They exist between
-// the human surface, the vault and the list pass and are never returned by
-// any API.
-type Terms struct {
-	Deny     []string
-	Allow    []string
-	Patterns []Pattern
-}
-
-// Pattern is one operator regular expression the list pass matches. A hit is
-// labelled Label, or "custom" when Label is empty.
-type Pattern struct {
-	Label string `json:"label,omitzero"`
-	Expr  string `json:"expr"`
-}
 
 // Span is one detected range, half-open.
 type Span struct {

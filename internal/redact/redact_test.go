@@ -452,24 +452,19 @@ func TestParameterFloorAppliesToTextLikeColumnsOnly(t *testing.T) {
 	}
 }
 
-func TestParameterFloorNeverWeakensOrDrops(t *testing.T) {
+func TestParameterFloorNeverWeakens(t *testing.T) {
 	cat := fakeCatalog{
-		{1, 1}: {Policy: types.PolicyDrop},
 		{1, 2}: {Policy: types.PolicyRedact},
 	}
 	r := newRedactor(t, cat, nil)
 	cols := []types.ColumnMeta{
-		col("ssn", "text", types.PolicyDrop, 1, 1),
 		col("dob", "text", types.PolicyRedact, 1, 2),
 	}
 	ctx := stmt(t.Context(), "c1", ResolvedParam{Policy: types.PolicyScan})
-	rows := [][]any{{"123-45-6789", "1980-01-01"}}
+	rows := [][]any{{"1980-01-01"}}
 	tr, err := r.Apply(ctx, "s", cols, rows)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if tr["ssn"].Policy != types.PolicyDrop || rows[0][0] != nil {
-		t.Errorf("drop was weakened: %+v %v", tr["ssn"], rows[0][0])
 	}
 	if tr["dob"].Policy != types.PolicyRedact {
 		t.Errorf("redact was weakened: %+v", tr["dob"])
@@ -551,57 +546,6 @@ func findCollision(t *testing.T, r *Redactor, namespace string) (string, string)
 }
 
 // --- policies ---------------------------------------------------------------
-
-func TestPartialForms(t *testing.T) {
-	cases := []struct {
-		form types.PartialForm
-		in   string
-		want string
-	}{
-		{types.FormEmailDomain, "jane.doe@acme.example", "████@acme.example"},
-		{types.FormEmailDomain, "not an email", RedactedMarker},
-		{types.FormCardBINLast4, "4532114322333338", "453211██████3338"},
-		{types.FormCardBINLast4, "4532 1143 2233 3338", "453211██████3338"},
-		{types.FormCardBINLast4, "378282246310005", "378282█████0005"},
-		{types.FormCardBINLast4, "123", RedactedMarker},
-		{types.FormPhoneCountryArea, "+1-978-555-0134", "+1-978-████"},
-		{types.FormPhoneCountryArea, "(978) 555-0134", "+1-978-████"},
-		{types.FormPhoneCountryArea, "+44 20 7946 0958", "+44-████"},
-		{types.FormPhoneCountryArea, "nope", RedactedMarker},
-		{types.FormIPNetwork, "192.168.2.44", "192.168.2.███"},
-		{types.FormIPNetwork, "2001:db8:1:2:3:4:5:6", "2001:db8:1::███"},
-		{types.FormIPNetwork, "not-an-ip", RedactedMarker},
-		{"unknown_form", "anything", RedactedMarker},
-	}
-	for _, tc := range cases {
-		if got := Partial(tc.form, tc.in); got != tc.want {
-			t.Errorf("Partial(%s, %q) = %q, want %q", tc.form, tc.in, got, tc.want)
-		}
-	}
-	// Every declared form is implemented.
-	for _, f := range types.PartialForms {
-		if got := Partial(f, ""); got != RedactedMarker {
-			t.Errorf("Partial(%s, \"\") = %q, want a redaction", f, got)
-		}
-	}
-}
-
-func TestPartialAppliedThroughApply(t *testing.T) {
-	cat := fakeCatalog{{1, 1}: {Policy: types.PolicyPartial, Form: types.FormEmailDomain}}
-	r := newRedactor(t, cat, nil)
-	cols := []types.ColumnMeta{col("email", "text", types.PolicyPartial, 1, 1)}
-	rows := [][]any{{"jane@acme.example"}}
-	tr, err := r.Apply(stmt(t.Context(), "c1"), "s", cols, rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rows[0][0] != "████@acme.example" {
-		t.Errorf("cell = %v", rows[0][0])
-	}
-	if tr["email"].Form != types.FormEmailDomain {
-		t.Errorf("transform does not declare the form: %+v", tr["email"])
-	}
-}
 
 func TestScanRedactsSpansNotColumns(t *testing.T) {
 	cat := fakeCatalog{{1, 1}: {Policy: types.PolicyScan}}

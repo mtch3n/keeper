@@ -158,33 +158,6 @@ func TestListConnections(t *testing.T) {
 	}
 }
 
-// The daemon answers catalog grants with {"statements": [...]}, the shape the UI
-// reads. The client decoded a bare array, so `keeper catalog grants` failed on
-// every connection.
-func TestCatalogGrantsReadsTheDaemonsShape(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
-	})
-	mux.HandleFunc("POST /v1/catalog/c1/grants", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, map[string][]string{"statements": {"GRANT SELECT (id) ON public.users TO app_ro;"}})
-	})
-	sock, _ := newTestServer(t, mux)
-	c, err := Dial(t.Context(), sock, types.ClientInfo{Name: "keeper"})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer c.Close()
-
-	stmts, err := c.CatalogGrants(t.Context(), "c1")
-	if err != nil {
-		t.Fatalf("CatalogGrants: %v", err)
-	}
-	if len(stmts) != 1 {
-		t.Errorf("statements = %q", stmts)
-	}
-}
-
 func TestQueryResultVsTicket(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {

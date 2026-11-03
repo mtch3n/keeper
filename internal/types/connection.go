@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Reads is when a profile's reads ask a person first: always, only when the
 // statement is uncertain, or never. Anything else behaves as ReadsAlways.
@@ -27,27 +30,27 @@ const (
 	DetectionAll  Detection = "all"
 )
 
-// StageKind names a detection adapter a stage runs.
-type StageKind string
+// Valid reports whether d is a setting keeper knows.
+func (d Detection) Valid() bool { return d == DetectionOff || d == DetectionScan || d == DetectionAll }
 
-const (
-	// KindPatterns is in-process pattern and checksum detection.
-	KindPatterns StageKind = "patterns"
-	// KindList matches the connection's own deny terms and expressions.
-	KindList StageKind = "list"
-)
+// Effective is the setting keeper acts on: scan for an empty or unknown value.
+func (d Detection) Effective() Detection {
+	if d.Valid() {
+		return d
+	}
+	return DetectionScan
+}
 
-// StageKinds are the kinds keeper can run, in the order a description lists them.
-var StageKinds = []StageKind{KindPatterns, KindList}
-
-// Stage is one step of a connection's detection pipeline: an adapter and the
-// options that shape what it keeps and what it is sent.
-type Stage struct {
-	Kind StageKind `json:"kind"`
-	// Entities, when set, keeps only this stage's hits of these entity types.
-	Entities []string `json:"entities,omitzero"`
-	// Raw sends the stage unmasked text: earlier stages' hits left in place.
-	Raw bool `json:"raw,omitzero"`
+// UnmarshalJSON reads a string and treats any other value, such as the stage
+// list an earlier version stored, as unset.
+func (d *Detection) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		*d = ""
+		return nil
+	}
+	*d = Detection(s)
+	return nil
 }
 
 // RelationRef names a relation. keeper stores names and resolves them to OIDs at
@@ -118,12 +121,10 @@ type Connection struct {
 	// a path shared by several profiles is always explicit.
 	CatalogPath string `json:"catalog_path"`
 
-	Reads  Reads  `json:"reads"`
-	Writes Writes `json:"writes"`
-	Limits Limits `json:"limits"`
-	// Detection is the ordered pipeline a scan column's free text runs through.
-	// Empty is off: free text is redacted whole.
-	Detection []Stage `json:"detection,omitzero"`
+	Reads     Reads     `json:"reads"`
+	Writes    Writes    `json:"writes"`
+	Limits    Limits    `json:"limits"`
+	Detection Detection `json:"detection,omitzero"`
 	// PersistentTokens lets an agent that declares persistent scope receive
 	// tokens that outlive its session. Off, it gets session tokens.
 	PersistentTokens bool `json:"persistent_tokens,omitzero"`

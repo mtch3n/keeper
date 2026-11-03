@@ -27,7 +27,7 @@ import (
 
 func runCatalog(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("catalog: expected a subcommand (init, ls, edit, grants)")
+		return fmt.Errorf("catalog: expected a subcommand (init, ls, edit)")
 	}
 	ctx := context.Background()
 	sub, rest := args[0], args[1:]
@@ -38,8 +38,6 @@ func runCatalog(args []string) error {
 		return catalogLs(ctx, rest)
 	case "edit":
 		return catalogEdit(ctx, rest)
-	case "grants":
-		return catalogGrants(ctx, rest)
 	default:
 		return fmt.Errorf("catalog: unknown subcommand %q", sub)
 	}
@@ -75,12 +73,12 @@ func catalogInit(ctx context.Context, args []string) error {
 	}
 
 	// The grouping is the point. "Typed scalars → allow" and a column whose
-	// samples the stages found PII in at the threshold rate are safe to accept
+	// samples the detector found PII in at the threshold rate are safe to accept
 	// without reading; other text is the review task, because that is where
-	// name and address columns live and no rule-based stage can find them.
+	// name and address columns live and pattern detection cannot find them.
 	if len(prop.SafeToBulkAccept)+len(prop.NeedsReview) == 0 {
-		fmt.Println("no proposals: this connection runs no detection stages, or none could examine its samples.")
-		fmt.Println("classify columns with `keeper catalog edit`, or add stages with `keeper connection set --detection`.")
+		fmt.Println("no proposals: this connection has detection off, or the detector could not examine its samples.")
+		fmt.Println("classify columns with `keeper catalog edit`, or turn detection on with `keeper connection set --detection scan`.")
 	}
 	for _, d := range prop.Degradations {
 		fmt.Printf("degraded: %s — %s\n", d.Layer, d.Reason)
@@ -90,8 +88,8 @@ func catalogInit(ctx context.Context, args []string) error {
 		fmt.Printf("  %-50s %s%s\n", key, p.Policy, policyArgs(p))
 	}
 	fmt.Printf("\nneeds review: %d column(s)\n", len(prop.NeedsReview))
-	fmt.Println("  these are free-text columns no stage matched at the threshold rate. A name or")
-	fmt.Println("  an address here is invisible to rule-based stages, so a human decides each one.")
+	fmt.Println("  these are free-text columns the detector did not match at the threshold rate. A name or")
+	fmt.Println("  an address here is invisible to pattern detection, so a human decides each one.")
 	for key, p := range sortedEntries(prop.NeedsReview) {
 		rate := ""
 		if r, ok := prop.SampleRates[key]; ok && r > 0 {
@@ -150,10 +148,8 @@ func catalogLs(ctx context.Context, args []string) error {
 
 func catalogEdit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("catalog edit", flag.ContinueOnError)
-	policy := fs.String("policy", "", "allow, scan, partial, token, redact or drop")
-	namespace := fs.String("namespace", "", "token namespace; mandatory for token (R5.2b)")
-	form := fs.String("form", "", "partial form; mandatory for partial (R5.2d)")
-	hideName := fs.Bool("hide-name", false, "suppress the column name on every response surface")
+	policy := fs.String("policy", "", "allow, scan, token or redact")
+	namespace := fs.String("namespace", "", "token namespace; mandatory for token")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -166,8 +162,6 @@ func catalogEdit(ctx context.Context, args []string) error {
 	entry := types.ColumnPolicy{
 		Policy:    types.Policy(*policy),
 		Namespace: *namespace,
-		Form:      types.PartialForm(*form),
-		HideName:  *hideName,
 	}
 	// Validate before the round trip so the error names the field rather than
 	// arriving as a 400 from the other end.
@@ -192,41 +186,6 @@ func catalogEdit(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("%s → %s%s\n", fs.Arg(1), entry.Policy, policyArgs(entry))
 	fmt.Printf("%d unclassified column(s) remain\n", len(res.Unclassified))
-	return nil
-}
-
-func catalogGrants(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("catalog grants", flag.ContinueOnError)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("catalog grants: expected a connection name")
-	}
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	// The catalog routes are keyed by id; the command line takes a name.
-	id, err := resolveConnectionID(ctx, cli, fs.Arg(0))
-	if err != nil {
-		return err
-	}
-	stmts, err := cli.CatalogGrants(ctx, id)
-	if err != nil {
-		return err
-	}
-	// §2.4: for a column the agent never needs, the correct control is not
-	// keeper. These statements move those columns out of keeper's reach
-	// entirely, and survive keeper being wrong about everything else.
-	fmt.Println("-- applying these revokes every `drop` column from the role's reach.")
-	fmt.Println("-- `SELECT *` then fails for the whole statement rather than omitting the column;")
-	fmt.Println("-- get_schema already reports only what the role may read (SPEC R5.5).")
-	for _, s := range stmts {
-		fmt.Println(s)
-	}
 	return nil
 }
 
@@ -759,12 +718,6 @@ func policyArgs(p types.ColumnPolicy) string {
 	if p.Namespace != "" {
 		parts = append(parts, "namespace="+p.Namespace)
 	}
-	if p.Form != "" {
-		parts = append(parts, "form="+string(p.Form))
-	}
-	if p.HideName {
-		parts = append(parts, "hide_name")
-	}
 	if len(parts) == 0 {
 		return ""
 	}
@@ -785,7 +738,7 @@ func transformSummary(m map[string]types.Transform) string {
 		return "-"
 	}
 	var parts []string
-	for _, p := range []types.Policy{types.PolicyToken, types.PolicyPartial, types.PolicyRedact, types.PolicyDrop, types.PolicyScan} {
+	for _, p := range []types.Policy{types.PolicyToken, types.PolicyRedact, types.PolicyScan} {
 		if n := counts[p]; n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", n, p))
 		}

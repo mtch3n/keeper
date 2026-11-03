@@ -22,7 +22,7 @@ func TestMergeOverlayPrecedence(t *testing.T) {
 
 	committed := map[columnKey]types.ColumnPolicy{
 		{Schema: "public", Table: "users", Column: "email"}: {Policy: types.PolicyScan},
-		{Schema: "public", Table: "users", Column: "ssn"}:   {Policy: types.PolicyDrop},
+		{Schema: "public", Table: "users", Column: "ssn"}:   {Policy: types.PolicyRedact},
 	}
 	overlay := map[columnKey]types.ColumnPolicy{
 		{Schema: "public", Table: "users", Column: "email"}: {Policy: types.PolicyToken, Namespace: "email"},
@@ -54,7 +54,7 @@ func TestMergeOverlayPrecedence(t *testing.T) {
 	if !ok {
 		t.Fatal("ssn: not found")
 	}
-	if got.Policy != types.PolicyDrop {
+	if got.Policy != types.PolicyRedact {
 		t.Errorf("committed-only entry should survive the merge: got %+v", got)
 	}
 
