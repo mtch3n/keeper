@@ -191,7 +191,10 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	// freely. Resolving here rather than holding one is what keeps a statement
 	// against staging from being masked by production's classifications.
 	cat, err := p.catalogs(req.ConnID)
-	if err != nil || cat == nil {
+	if err != nil {
+		return refuse(asKeeperError(err))
+	}
+	if cat == nil {
 		return refuse(
 			keeperError(types.CodeInternal, "this connection has no catalog",
 				"run keeper catalog init for this connection"))
@@ -427,7 +430,10 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 	// freely. Resolving here rather than holding one is what keeps a statement
 	// against staging from being masked by production's classifications.
 	cat, err := p.catalogs(req.ConnID)
-	if err != nil || cat == nil {
+	if err != nil {
+		return nil, asKeeperError(err)
+	}
+	if cat == nil {
 		return nil, keeperError(types.CodeInternal, "this connection has no catalog",
 			"run keeper catalog init for this connection")
 	}

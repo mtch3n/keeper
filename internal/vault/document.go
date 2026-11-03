@@ -3,7 +3,6 @@ package vault
 import (
 	"slices"
 
-	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -31,11 +30,6 @@ type connectionRecord struct {
 	Conn types.Connection `json:"conn"`
 	// Credential is the profile's one login; its writes setting is on Conn.
 	Credential credential `json:"credential"`
-	// Deny, Allow and Patterns are the list stage's terms and expressions. They are as sensitive as the
-	// data they describe and never leave the vault except through Export.
-	Deny     []string        `json:"deny,omitzero"`
-	Allow    []string        `json:"allow,omitzero"`
-	Patterns []ports.Pattern `json:"patterns,omitzero"`
 	// TokenKeys holds every HMAC key ever minted for this connection, oldest
 	// first. Old keys are never deleted so historical tokens stay interpretable;
 	// the highest Version is current.

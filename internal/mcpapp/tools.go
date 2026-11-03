@@ -26,7 +26,7 @@ func registerTools(s *mcp.Server, h *daemonHolder) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_schema",
-		Description: "Get a connection's schema, filterable by schema and table pattern. Columns whose names are marked sensitive are omitted and counted, not listed.",
+		Description: "Get a connection's schema, filterable by schema and table pattern.",
 	}, h.getSchema)
 
 	mcp.AddTool(s, &mcp.Tool{

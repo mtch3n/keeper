@@ -5,10 +5,11 @@
 // # Policies (§8.2)
 //
 // allow passes; token replaces the value with a keyed HMAC so equality — joins,
-// GROUP BY, COUNT DISTINCT — survives and the value does not; partial keeps
-// exactly one declared component and nothing else; redact keeps the cell and
-// nothing in it; drop removes the column; scan runs the connection's detection
-// stages and redacts the matched spans only, never the whole column (R8.5a).
+// GROUP BY, COUNT DISTINCT — survives and the value does not; redact keeps the
+// cell and nothing in it; scan runs the connection's detector and redacts the
+// matched spans only, never the whole column (R8.5a). Under detection=all the
+// same examination also covers the text of allow columns, and never a token or
+// redact column.
 //
 // # Tokens (§8.3)
 //

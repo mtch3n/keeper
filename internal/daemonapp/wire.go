@@ -303,13 +303,6 @@ func (s openingStore) Init(ctx context.Context, connID string, sample int) (*por
 	return s.c.store.Init(ctx, connID, sample)
 }
 
-func (s openingStore) SuggestGrants(ctx context.Context, connID string) ([]string, error) {
-	if _, err := s.c.For(connID); err != nil {
-		return nil, err
-	}
-	return s.c.store.SuggestGrants(ctx, connID)
-}
-
 func (s openingStore) Unclassified(ctx context.Context, connID string) ([]string, error) {
 	if _, err := s.c.For(connID); err != nil {
 		return nil, err
@@ -318,7 +311,7 @@ func (s openingStore) Unclassified(ctx context.Context, connID string) ([]string
 }
 
 // Lookup satisfies redact.PolicyLookup. The Redactor needs a column's namespace
-// and partial form, and it knows which connection it is masking for because the
+// and JSON paths, and it knows which connection it is masking for because the
 // pipeline attached it to the context (ports.Statement).
 func (c *catalogs) Lookup(connID string, tableOID uint32, attNum uint16) (types.ColumnPolicy, bool) {
 	cat, err := c.For(connID)

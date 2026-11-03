@@ -471,9 +471,9 @@ func TestLocalPageIsNoStore(t *testing.T) {
 	}
 }
 
-// R6.4b: a column whose name is disclosive is omitted from get_schema and
-// counted, and an unreadable column is not listed either (R5.5).
-func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
+// An unreadable column is not listed in get_schema and is counted (R5.5); a
+// readable one is listed with its policy.
+func TestSchemaOmitsAndCountsUnreadableColumns(t *testing.T) {
 	r := newRig(t)
 	users := types.RelationRef{Schema: "public", Relation: "users"}
 	r.exec.rels = []ports.Relation{{
@@ -488,15 +488,14 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 	r.cat.readable[users.String()] = []string{"id", "email", "has_hiv_diagnosis"}
 	r.cat.byName[users.String()+".id"] = types.ColumnPolicy{Policy: types.PolicyAllow}
 	r.cat.byName[users.String()+".email"] = types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "email"}
-	r.cat.byName[users.String()+".has_hiv_diagnosis"] = types.ColumnPolicy{Policy: types.PolicyDrop, HideName: true}
+	r.cat.byName[users.String()+".has_hiv_diagnosis"] = types.ColumnPolicy{Policy: types.PolicyRedact}
 
 	a := r.agent()
 	var out struct {
 		Tables []struct {
-			Name          string                  `json:"name"`
-			Columns       []struct{ Name string } `json:"columns"`
-			HiddenColumns int                     `json:"hidden_columns"`
-			Unreadable    int                     `json:"unreadable_columns"`
+			Name       string                  `json:"name"`
+			Columns    []struct{ Name string } `json:"columns"`
+			Unreadable int                     `json:"unreadable_columns"`
 		} `json:"tables"`
 	}
 	a.mustJSON("GET", "/v1/connections/c1/schema?schema=public&table=users", nil, &out)
@@ -504,12 +503,12 @@ func TestSchemaOmitsAndCountsHiddenColumns(t *testing.T) {
 		t.Fatalf("want one table, got %d", len(out.Tables))
 	}
 	tbl := out.Tables[0]
-	if tbl.HiddenColumns != 1 || tbl.Unreadable != 1 {
-		t.Fatalf("hidden/unreadable not counted: %+v", tbl)
+	if tbl.Unreadable != 1 || len(tbl.Columns) != 3 {
+		t.Fatalf("unreadable column not counted, or a readable one hidden: %+v", tbl)
 	}
 	for _, c := range tbl.Columns {
-		if c.Name == "has_hiv_diagnosis" || c.Name == "secret" {
-			t.Fatalf("a suppressed column name was disclosed: %s", c.Name)
+		if c.Name == "secret" {
+			t.Fatalf("an unreadable column name was disclosed: %s", c.Name)
 		}
 	}
 }
@@ -722,65 +721,7 @@ func TestHostCarriesSeveralConnections(t *testing.T) {
 	}
 }
 
-func Test_DET_C1_DescribeShowsAConnectionsPassesInOrder(t *testing.T) {
-	r := newRig(t)
-	b := r.browser()
-	b.mustJSON("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "list"}, {"kind": "patterns"}}}, nil)
-	var d struct {
-		Detection []types.Stage `json:"detection"`
-	}
-	b.mustJSON("GET", "/v1/connections/c1", nil, &d)
-	if !slices.Equal(stageKinds(d.Detection), []types.StageKind{"list", "patterns"}) {
-		t.Errorf("detection = %v, want [list patterns]", d.Detection)
-	}
-}
-
-func Test_DET_C2_AnAgentCannotChangeDetection(t *testing.T) {
-	r := newRig(t)
-	before := stageKinds(r.vault.conns["c1"].Detection)
-	a := r.agent()
-	for _, req := range []struct {
-		method, path string
-		body         any
-	}{
-		{"PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{}}},
-		{"PUT", "/v1/connections/c1/terms", map[string]any{"allow": []string{"jane@example.com"}}},
-	} {
-		if resp, _ := a.do(req.method, req.path, req.body); resp.StatusCode == http.StatusOK {
-			t.Errorf("%s %s succeeded from an MCP session", req.method, req.path)
-		}
-	}
-	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) {
-		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
-	}
-	if len(r.vault.terms["c1"].Allow) != 0 {
-		t.Errorf("terms changed to %+v", r.vault.terms["c1"])
-	}
-}
-
-func Test_DET_C3_AnUnknownPassIsRejected(t *testing.T) {
-	r := newRig(t)
-	before := stageKinds(r.vault.conns["c1"].Detection)
-	resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "patterns"}, {"kind": "magic"}}})
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("an unknown pass was accepted: %s", raw)
-	}
-	if !strings.Contains(string(raw), "patterns") || !strings.Contains(string(raw), "list") {
-		t.Errorf("the error does not name the known stage kinds: %s", raw)
-	}
-	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) {
-		t.Errorf("detection changed to %v", r.vault.conns["c1"].Detection)
-	}
-}
-
-func Test_DET_C37_PresidioIsNotAPassYet(t *testing.T) {
-	r := newRig(t)
-	if resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "presidio"}}}); resp.StatusCode == http.StatusOK {
-		t.Fatalf("presidio was accepted as a pass: %s", raw)
-	}
-}
-
-func Test_DET_C26_ANewConnectionStartsWithPatterns(t *testing.T) {
+func TestDetectionIsAnOperatorSetting(t *testing.T) {
 	r := newRig(t)
 	b := r.browser()
 	var c struct {
@@ -790,106 +731,33 @@ func Test_DET_C26_ANewConnectionStartsWithPatterns(t *testing.T) {
 		"name": "new", "host_id": "h1", "database": "db", "credential": map[string]any{"user": "u"},
 	}, &c)
 	var d struct {
-		Detection []types.Stage `json:"detection"`
+		Detection types.Detection `json:"detection"`
 	}
 	b.mustJSON("GET", "/v1/connections/"+c.ID, nil, &d)
-	if !slices.Equal(stageKinds(d.Detection), []types.StageKind{"patterns"}) {
-		t.Errorf("detection = %v, want [patterns]", d.Detection)
+	if d.Detection != types.DetectionScan {
+		t.Errorf("a new connection's detection = %q, want scan", d.Detection)
 	}
-}
-
-func Test_DET_C31_TermsNeverComeBackOut(t *testing.T) {
-	r := newRig(t)
-	b := r.browser()
-	const deny, allow = "Acme Corp Secret", "support@yourco.example"
-	var put map[string]any
-	b.mustJSON("PUT", "/v1/connections/c1/terms", map[string]any{"deny": []string{deny}, "allow": []string{allow}}, &put)
-	if got := r.vault.terms["c1"]; !slices.Equal(got.Deny, []string{deny}) || !slices.Equal(got.Allow, []string{allow}) {
-		t.Fatalf("terms were not stored: %+v", got)
+	b.mustJSON("PATCH", "/v1/connections/c1", map[string]any{"detection": "all"}, nil)
+	b.mustJSON("GET", "/v1/connections/c1", nil, &d)
+	if d.Detection != types.DetectionAll {
+		t.Errorf("detection = %q, want all", d.Detection)
 	}
-	_, patch := b.do("PATCH", "/v1/connections/c1", map[string]any{"detection": []map[string]any{{"kind": "patterns"}, {"kind": "list"}}})
-	_, desc := b.do("GET", "/v1/connections/c1", nil)
-	_, list := b.do("GET", "/v1/connections", nil)
-	putRaw, _ := json.Marshal(put)
-	for name, raw := range map[string][]byte{"terms response": putRaw, "patch": patch, "describe": desc, "list": list} {
-		if strings.Contains(string(raw), deny) || strings.Contains(string(raw), allow) {
-			t.Errorf("%s carries a term: %s", name, raw)
+	for _, bad := range []any{"sometimes", []map[string]any{{"kind": "patterns"}}} {
+		if resp, raw := b.do("PATCH", "/v1/connections/c1", map[string]any{"detection": bad}); resp.StatusCode == http.StatusOK {
+			t.Errorf("detection %v was accepted: %s", bad, raw)
 		}
 	}
-}
-
-func stageKinds(stages []types.Stage) []types.StageKind {
-	out := make([]types.StageKind, len(stages))
-	for i, st := range stages {
-		out[i] = st.Kind
+	a := r.agent()
+	if resp, _ := a.do("PATCH", "/v1/connections/c1", map[string]any{"detection": "off"}); resp.StatusCode == http.StatusOK {
+		t.Error("an MCP session changed detection")
 	}
-	return out
-}
-
-func Test_DET_C46_ABadEntityNameIsRefused(t *testing.T) {
-	r := newRig(t)
-	before := stageKinds(r.vault.conns["c1"].Detection)
-	for _, bad := range []string{"", "email⟩", "Email Address"} {
-		resp, raw := r.browser().do("PATCH", "/v1/connections/c1", map[string]any{
-			"detection": []map[string]any{{"kind": "patterns", "entities": []string{bad}}},
-		})
-		if resp.StatusCode == http.StatusOK {
-			t.Errorf("entity %q was accepted: %s", bad, raw)
+	if got := r.vault.conns["c1"].Detection; got != types.DetectionAll {
+		t.Errorf("detection = %q after refused changes, want all", got)
+	}
+	for _, path := range []string{"/v1/connections/c1/terms", "/v1/catalog/c1/grants"} {
+		if resp, _ := b.do("POST", path, nil); resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("%s still has a route: %d", path, resp.StatusCode)
 		}
-	}
-	if !slices.Equal(stageKinds(r.vault.conns["c1"].Detection), before) || len(r.vault.conns["c1"].Detection) > 0 && len(r.vault.conns["c1"].Detection[0].Entities) > 0 {
-		t.Errorf("stages changed to %+v", r.vault.conns["c1"].Detection)
-	}
-}
-
-func Test_DET_C40_ExpressionsNeverComeBackOut(t *testing.T) {
-	r := newRig(t)
-	b := r.browser()
-	const expr = `EMP-SECRET-\d{6}`
-	_, put := b.do("PUT", "/v1/connections/c1/terms", map[string]any{"patterns": []map[string]any{{"label": "employee_id", "expr": expr}}})
-	if got := r.vault.terms["c1"].Patterns; len(got) != 1 || got[0].Expr != expr {
-		t.Fatalf("expression was not stored: %+v", got)
-	}
-	_, desc := b.do("GET", "/v1/connections/c1", nil)
-	_, list := b.do("GET", "/v1/connections", nil)
-	for name, raw := range map[string][]byte{"terms response": put, "describe": desc, "list": list} {
-		if strings.Contains(string(raw), "EMP-SECRET") {
-			t.Errorf("%s carries an expression: %s", name, raw)
-		}
-	}
-}
-
-func Test_DET_C41_AnExpressionThatDoesNotCompileIsRefusedByName(t *testing.T) {
-	r := newRig(t)
-	r.vault.terms["c1"] = ports.Terms{Deny: []string{"kept"}}
-	resp, raw := r.browser().do("PUT", "/v1/connections/c1/terms", map[string]any{
-		"deny":     []string{"replaced"},
-		"patterns": []map[string]any{{"label": "badge", "expr": `EMP-(`}},
-	})
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("an expression that does not compile was accepted: %s", raw)
-	}
-	if !strings.Contains(string(raw), "badge") {
-		t.Errorf("the refusal does not name the expression: %s", raw)
-	}
-	if got := r.vault.terms["c1"]; !slices.Equal(got.Deny, []string{"kept"}) || len(got.Patterns) != 0 {
-		t.Errorf("stored terms changed to %+v", got)
-	}
-}
-
-func Test_DET_C42_AnEmptyMatchOrABadLabelIsRefused(t *testing.T) {
-	r := newRig(t)
-	for _, p := range []map[string]any{
-		{"label": "anything", "expr": `x*`},
-		{"label": "bad⟩label", "expr": `EMP-\d{6}`},
-	} {
-		resp, raw := r.browser().do("PUT", "/v1/connections/c1/terms", map[string]any{"patterns": []map[string]any{p}})
-		if resp.StatusCode == http.StatusOK {
-			t.Errorf("%v was accepted: %s", p, raw)
-		}
-	}
-	if got := r.vault.terms["c1"]; len(got.Patterns) != 0 {
-		t.Errorf("something was stored: %+v", got)
 	}
 }
 
@@ -996,7 +864,6 @@ func Test_WRITE_C2_TheRefusalNamesTheProfilesThatAllowWrites(t *testing.T) {
 func Test_WRITE_C3_AgentsSeeProfileDetailsButNeverAPassword(t *testing.T) {
 	r := newRig(t)
 	r.vault.conns["c1"].HostID, r.vault.conns["c1"].Writes = "h1", types.WritesAsk
-	r.vault.terms["c1"] = ports.Terms{}
 	a := r.agent()
 	var conns []struct {
 		Name     string `json:"name"`

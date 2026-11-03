@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/mtchen/keeper/internal/ports"
-	"github.com/mtchen/keeper/internal/types"
 )
 
 // scanState is one statement's free-text examination. Apply collects every
@@ -50,7 +49,7 @@ func (r *Redactor) collect(ctx context.Context, sess *session, plans []columnPla
 			}
 			pl := &plans[j]
 			v := row[j]
-			if v == nil || pl.policy == types.PolicyDrop {
+			if v == nil {
 				continue
 			}
 			if len(pl.paths) > 0 {
@@ -58,7 +57,7 @@ func (r *Redactor) collect(ctx context.Context, sess *session, plans []columnPla
 					continue
 				}
 			}
-			if pl.policy == types.PolicyScan {
+			if pl.examinesText(pl.policy) {
 				rewriteStrings(v, func(s string) string {
 					r.redactSpans(pl, s)
 					return s
@@ -69,9 +68,10 @@ func (r *Redactor) collect(ctx context.Context, sess *session, plans []columnPla
 	return len(sc.texts) > 0
 }
 
-// examine runs the connection's passes over every collected text. A connection
-// with no passes, a detector that cannot be built and a detector that fails all
-// leave the results empty, so every scan cell is redacted whole.
+// examine runs the connection's detector over every collected text. A connection
+// with detection off, a detector that cannot be built and a detector that fails
+// all leave the results empty, so every cell that needed examining is redacted
+// whole.
 func (r *Redactor) examine(ctx context.Context, connID string, sc *scanState) {
 	sc.results = map[string][]ports.Span{}
 	if r.detectors == nil || connID == "" {

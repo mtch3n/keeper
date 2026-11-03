@@ -147,8 +147,8 @@ export function getConnection(id: string) {
   return get<ConnectionDetail>(`/v1/connections/${id}`)
 }
 
-/** Inferred shape: CONTRACT.md §3 says "tables with columns and policies,
- * hide_name columns omitted and counted" without a linked Go type. */
+/** Inferred shape: CONTRACT.md §3 says "tables with columns and policies"
+ * without a linked Go type. */
 export interface LocalRequestView {
   request_id: string
   kind: RequestKind

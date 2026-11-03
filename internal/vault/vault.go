@@ -370,40 +370,6 @@ func (v *Vault) SetSettings(ctx context.Context, s types.Settings) error {
 	return nil
 }
 
-// Terms returns a connection's list-pass terms.
-func (v *Vault) Terms(ctx context.Context, id string) (ports.Terms, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.open {
-		return ports.Terms{}, errNotOpen()
-	}
-	rec, ok := v.doc.find(id)
-	if !ok {
-		return ports.Terms{}, &NotFoundError{ID: id}
-	}
-	return ports.Terms{Deny: slices.Clone(rec.Deny), Allow: slices.Clone(rec.Allow), Patterns: slices.Clone(rec.Patterns)}, nil
-}
-
-// SetTerms replaces a connection's list-pass terms.
-func (v *Vault) SetTerms(ctx context.Context, id string, t ports.Terms) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.open {
-		return errNotOpen()
-	}
-	rec, ok := v.doc.find(id)
-	if !ok {
-		return &NotFoundError{ID: id}
-	}
-	prevDeny, prevAllow, prevPatterns := rec.Deny, rec.Allow, rec.Patterns
-	rec.Deny, rec.Allow, rec.Patterns = slices.Clone(t.Deny), slices.Clone(t.Allow), slices.Clone(t.Patterns)
-	if err := v.persist(); err != nil {
-		rec.Deny, rec.Allow, rec.Patterns = prevDeny, prevAllow, prevPatterns
-		return err
-	}
-	return nil
-}
-
 // DSN assembles the connection string from the connection's host and its
 // credential.
 func (v *Vault) DSN(ctx context.Context, id string) (string, error) {
