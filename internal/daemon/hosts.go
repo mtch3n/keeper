@@ -76,8 +76,7 @@ func (d *Daemon) RegisterHost(ctx context.Context, spec HostSpec) (*types.Host, 
 }
 
 // RemoveHost deletes a host with no connections on it. Removing the
-// connections is a separate, deliberate step per connection, because each one
-// takes its grants with it.
+// connections is a separate, deliberate step per connection.
 func (d *Daemon) RemoveHost(ctx context.Context, id string) error {
 	if h, err := d.deps.Vault.Host(ctx, id); err != nil || h == nil {
 		return errUnknownHost

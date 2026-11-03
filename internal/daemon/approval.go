@@ -16,10 +16,6 @@ type Decision struct {
 	Decide string
 	// Actor is the human the acceptance is recorded against.
 	Actor string
-	// Grant, when set, turns this one approval into an allow rule over exactly
-	// the relations the plan touched. R9.3a: keeper proposes the narrowest scope
-	// covering the approved request, and widening is a separate explicit act.
-	Grant *GrantRequest
 }
 
 // Approvals is the shared queue: one queue across every session, oldest first,
@@ -64,8 +60,6 @@ func (d *Daemon) Decide(ctx context.Context, ticketID string, dec Decision) erro
 		return errValidation("decision", "must be approve or refuse")
 	}
 
-	// Read the item first and mutate nothing: a grant that cannot be written
-	// must not leave a ticket approved and unexecuted.
 	d.mu.Lock()
 	tk, ok := d.tickets[ticketID]
 	if !ok {
@@ -73,40 +67,6 @@ func (d *Daemon) Decide(ctx context.Context, ticketID string, dec Decision) erro
 		return errTicketUnknown
 	}
 	if tk.t.State != types.TicketPending {
-		d.mu.Unlock()
-		return errNoDecision
-	}
-	i := slices.IndexFunc(d.queue, func(q *queueItem) bool { return q.item.TicketID == ticketID })
-	if i < 0 {
-		d.mu.Unlock()
-		return errNoDecision
-	}
-	item := d.queue[i].item
-	write := tk.write
-	d.mu.Unlock()
-
-	if dec.Grant != nil {
-		if write {
-			// R4.2f: no allow rule authorizes a write, and none may lower one
-			// below tier 3. Revoking a read rule stops future reads; revoking a
-			// write rule does not undo the rows a write already changed.
-			return errWriteGrant
-		}
-		if dec.Decide != "approve" {
-			return errValidation("grant", "belongs to an approval, not a refusal")
-		}
-		if dec.Grant.RowCeiling <= 0 {
-			// §9.3's default: ten times what was approved, and never unbounded.
-			dec.Grant.RowCeiling = max(int(item.Facts.EstimatedRows)*10, 1)
-		}
-		if _, err := d.GrantPaths(item.Session.ID, item.Connection, item.Facts.Relations, *dec.Grant, dec.Actor); err != nil {
-			return err
-		}
-	}
-
-	d.mu.Lock()
-	tk, ok = d.tickets[ticketID]
-	if !ok || tk.t.State != types.TicketPending {
 		d.mu.Unlock()
 		return errNoDecision
 	}
@@ -221,7 +181,6 @@ func (d *Daemon) recordDecisions(ctx context.Context, events []Event, decision t
 			Statement:     it.SQL,
 			StatementType: it.Facts.StatementType,
 			Relations:     it.Facts.Relations,
-			Tier:          it.Tier,
 			Approver:      actor,
 			Decision:      decision,
 			ErrorCode:     decisionCode[decision],

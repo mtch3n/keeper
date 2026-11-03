@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -15,27 +14,20 @@ import (
 // output and in the audit log, and nothing outside this list is ever emitted by
 // the pipeline itself.
 const (
-	ReasonMasked            = "masked_output"
-	ReasonDropped           = "dropped_column"
-	ReasonUnresolved        = "unresolved_column"
-	ReasonNearRowCap        = "near_row_cap"
-	ReasonStaleCatalog      = "stale_catalog"
-	ReasonWrite             = "write"
-	ReasonDenylisted        = "denylisted_relation"
-	ReasonDDL               = "ddl"
-	ReasonWritesOff         = "writes_off"
-	ReasonNoGrant           = "no_grant"
-	ReasonStrictUncertainty = "strict_mode_uncertainty"
-	ReasonMultiStatement    = "multi_statement"
-	ReasonSyntax            = "unparseable"
-	ReasonPlanTimeout       = "plan_timeout"
-	ReasonPermission        = "permission_denied"
+	ReasonMasked         = "masked_output"
+	ReasonDropped        = "dropped_column"
+	ReasonUnresolved     = "unresolved_column"
+	ReasonStaleCatalog   = "stale_catalog"
+	ReasonWrite          = "write"
+	ReasonDDL            = "ddl"
+	ReasonWritesOff      = "writes_off"
+	ReasonReadsAsk       = "reads_ask"
+	ReasonVolatileCall   = "volatile_call"
+	ReasonMultiStatement = "multi_statement"
+	ReasonSyntax         = "unparseable"
+	ReasonPlanTimeout    = "plan_timeout"
+	ReasonPermission     = "permission_denied"
 )
-
-// nearCapFraction is how close to the operator row ceiling an estimate has to
-// get before §7.7 calls it "near the cap". It is a tuning value, not a design
-// decision (SPEC §15).
-const nearCapFraction = 0.8
 
 // column is one output column after G5: the server's identity for it, the policy
 // keeper resolved, and where that policy came from.
@@ -151,49 +143,26 @@ func (p *Pipeline) inherit(cat ports.Catalog, col types.ColumnMeta, plan *ports.
 	return types.Inherited(types.Strictest(candidates...)), types.BasisInherited
 }
 
-// assignTier is G6: SPEC §7.7's table as amended by R7.7a, R7.7d and R4.2f.
-func (p *Pipeline) assignTier(ctx context.Context, st *state) {
+// noteColumns records why a result is narrower than the table, so an approver
+// or an explain sees it, and notes a catalog that no longer matches its
+// database. Neither changes the outcome.
+func (p *Pipeline) noteColumns(ctx context.Context, st *state) {
 	for _, c := range st.cols {
 		switch {
 		case c.dropped:
-			// R7.7a: a drop column in the output is not an escalation. The
-			// column is removed, the statement runs at tier 1, and transforms
-			// reports the removal. Escalating it would open a ticket, send a
-			// human to a terminal and produce an identical result.
-			st.raise(types.Tier1Record)
 			st.reason(ReasonDropped)
 		case c.basis == types.BasisUnknown:
-			// R7.7d: an unresolved column never raises the tier by itself —
-			// never tier 2, never tier 3. A human cannot decide it from an
-			// approval prompt. The fix is a
-			// catalog edit, which is where it is surfaced.
-			st.raise(types.Tier1Record)
 			st.reason(ReasonUnresolved)
 		case c.entry.Policy.Masks():
-			st.raise(types.Tier1Record)
 			st.reason(ReasonMasked)
 		}
 	}
-
-	if st.plan == nil || st.conn == nil {
+	if st.plan == nil {
 		return
 	}
-
-	ceiling := st.conn.Limits.MaxRowsCeiling
-	if ceiling <= 0 {
-		ceiling = types.DefaultLimits().MaxRowsCeiling
-	}
-	if st.plan.EstimatedRows >= int64(float64(ceiling)*nearCapFraction) {
-		st.raise(types.Tier2Uncertain)
-		st.reason(ReasonNearRowCap)
-	}
-
-	// R5.6b-2: a view whose definition changed. A false answer from Fresh is
-	// uncertainty, not permission.
 	if fresh, err := st.cat.Fresh(ctx, st.plan.Relations); err != nil || !fresh {
 		st.degrade("catalog", "fingerprints no longer match the database")
 		st.reason(ReasonStaleCatalog)
-		st.raise(types.Tier2Uncertain)
 	}
 }
 
@@ -206,52 +175,6 @@ func (r Request) paramPolicies() []types.Policy {
 		}
 	}
 	return out
-}
-
-// applyGrants is SPEC §9.3. A grant covers exactly the path it names, so every
-// relation the plan touches must have its own entry; one unlisted relation sends
-// the statement back to its normal tier.
-func (p *Pipeline) applyGrants(ctx context.Context, req Request, st *state) []*types.Grant {
-	if st.plan == nil || st.tier <= types.Tier1Record {
-		return nil
-	}
-	if st.plan.Writes {
-		// R4.2f: no mode and no allow rule authorizes a write, and §9.3's rules
-		// cannot lower a write below tier 3.
-		return nil
-	}
-	if slices.Contains(st.reasons, ReasonStaleCatalog) {
-		// R9.3b: a rule was granted against a schema that has since moved, so
-		// it no longer says what a person agreed to. It lowers nothing, and the
-		// connection's rules are suspended for a person to re-authorize. This
-		// runs on a statement that already reached the database; nothing
-		// connects on a timer to look for it (LAZY-D4).
-		p.authority.SuspendGrants(req.ConnID, "a schema change touched this connection; re-authorize the path")
-		return nil
-	}
-	if len(st.plan.RelationNames) == 0 {
-		return nil
-	}
-
-	grants := make([]*types.Grant, 0, len(st.plan.RelationNames))
-	for _, rel := range st.plan.RelationNames {
-		g, ok := p.authority.Grant(ctx, req.Session.ID, types.PathRef{ConnectionID: req.ConnID, Relation: rel})
-		if !ok || g == nil || g.Suspended {
-			// No prefix matching, no wildcards, a view is its own path and so is
-			// every base table its plan expands to (R9.3c). A view reached
-			// through an allowed base table does not launder the base table's
-			// grant, and the reverse holds too.
-			st.reason(ReasonNoGrant)
-			return nil
-		}
-		grants = append(grants, g)
-	}
-
-	// A grant lowers the tier for the paths it names and can never lower below
-	// tier 1.
-	st.tier = types.Tier1Record
-	st.authorization = "grant:" + grants[0].ID
-	return grants
 }
 
 // applyRedaction is G7. Every value leaving keeper passes through the Redactor;
@@ -334,10 +257,9 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 	return outCols, outRows, nil
 }
 
-// rowCeiling is the operator bound of §4.5, narrowed by the agent's request and
-// by any grant's own ceiling. §9.4: estimated rows are advisory; the actual
-// output ceiling is what is enforced.
-func (p *Pipeline) rowCeiling(req Request, conn *types.Connection, grants []*types.Grant) int {
+// rowCeiling is the operator bound of §4.5, narrowed by the agent's request.
+// Estimated rows are advisory; the actual output ceiling is what is enforced.
+func (p *Pipeline) rowCeiling(req Request, conn *types.Connection) int {
 	ceiling := conn.Limits.MaxRowsCeiling
 	if ceiling <= 0 {
 		ceiling = types.DefaultLimits().MaxRowsCeiling
@@ -345,50 +267,7 @@ func (p *Pipeline) rowCeiling(req Request, conn *types.Connection, grants []*typ
 	if req.MaxRows > 0 {
 		ceiling = min(ceiling, req.MaxRows)
 	}
-	for _, g := range grants {
-		if g != nil && g.RowCeiling > 0 {
-			ceiling = min(ceiling, g.RowCeiling)
-		}
-	}
 	return ceiling
-}
-
-// denylisted evaluates R4.5 against the plan's relation list. EXPLAIN expands
-// views, so a denylisted base table reached through a view is caught, and a view
-// named in statement text is evidence of nothing.
-func denylisted(conn *types.Connection, plan *ports.PlanFacts) (types.RelationRef, bool) {
-	if plan == nil {
-		return types.RelationRef{}, false
-	}
-	for _, rel := range plan.RelationNames {
-		for _, d := range conn.Denylist {
-			if d == rel {
-				return rel, true
-			}
-		}
-	}
-	return types.RelationRef{}, false
-}
-
-// denylistedOutput rechecks the denylist against the relations that actually
-// produced an output column, using the executed RowDescription rather than the
-// plan taken in an earlier transaction.
-func (p *Pipeline) denylistedOutput(cat ports.Catalog, conn *types.Connection, cols []column) (types.RelationRef, bool) {
-	for _, c := range cols {
-		if c.meta.TableOID == 0 {
-			continue
-		}
-		rel, ok := cat.Relation(c.meta.TableOID)
-		if !ok {
-			continue
-		}
-		for _, d := range conn.Denylist {
-			if d == rel {
-				return rel, true
-			}
-		}
-	}
-	return types.RelationRef{}, false
 }
 
 // permissionError is R5.5's middle rule. R6.4a discards every PostgreSQL error

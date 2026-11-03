@@ -33,7 +33,7 @@ func testConnection(id string) types.Connection {
 		Engine:   "postgres",
 		Database: "app",
 		Role:     "app_ro",
-		Mode:     types.ModeAssisted,
+		Reads:    types.ReadsUncertain,
 		Limits:   types.DefaultLimits(),
 	}
 }

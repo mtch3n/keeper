@@ -27,21 +27,13 @@ const (
 	DecisionRefuse  ApprovalDecision = "refuse"
 )
 
-// GrantParams promotes an approval into a standing or session allow rule
-// (SPEC §9.3). Nil means the approval is one-time only.
-type GrantParams struct {
-	Lifetime   types.GrantLifetime `json:"lifetime"`
-	RowCeiling int                 `json:"row_ceiling"`
-}
-
 // DecideApproval approves or refuses one queued ticket. keeper approve
 // requires an interactive TTY (SPEC §3.4's stated limitation); this method
 // itself has no opinion about that — it is cmd/keeper's job to refuse to
 // call it from a non-terminal.
-func (c *Client) DecideApproval(ctx context.Context, ticket string, decision ApprovalDecision, grant *GrantParams) error {
+func (c *Client) DecideApproval(ctx context.Context, ticket string, decision ApprovalDecision) error {
 	body := struct {
 		Decision ApprovalDecision `json:"decision"`
-		Grant    *GrantParams     `json:"grant,omitzero"`
-	}{Decision: decision, Grant: grant}
+	}{Decision: decision}
 	return c.do(ctx, http.MethodPost, "/v1/approvals/"+url.PathEscape(ticket)+"/decide", body, nil)
 }

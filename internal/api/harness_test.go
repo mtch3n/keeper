@@ -22,7 +22,7 @@ import (
 // ---------------------------------------------------------------- pipeline
 
 // fakePipeline stands in for internal/pipeline. Its default behaviour is the one
-// the daemon's grant logic depends on: a statement escalates while nothing
+// the daemon's ticket logic depends on: a statement escalates while nothing
 // authorizes it, and runs once something does.
 type fakePipeline struct {
 	mu       sync.Mutex
@@ -35,7 +35,7 @@ type fakePipeline struct {
 }
 
 func (p *fakePipeline) Explain(context.Context, types.Session, string, string, []ports.Param) (*types.ExplainResult, error) {
-	return &types.ExplainResult{StatementType: "SELECT", PredictedTier: types.Tier1Record}, nil
+	return &types.ExplainResult{StatementType: "SELECT", Outcome: types.OutcomeRun}, nil
 }
 
 func (p *fakePipeline) Query(_ context.Context, _ types.Session, _, _ string, params []ports.Param, maxRows int, auth string) (*types.QueryResult, *types.Ticket, error) {
@@ -50,13 +50,13 @@ func (p *fakePipeline) Query(_ context.Context, _ types.Session, _, _ string, pa
 	}
 	if escalate && auth == "" {
 		return nil, &types.Ticket{
-			State: types.TicketPending, Tier: types.Tier3Approve,
+			State:  types.TicketPending,
 			Reason: "needs a human", AuditID: "audit-1", Preview: preview,
 		}, nil
 	}
 	return &types.QueryResult{
-		Rows: [][]any{{1}}, RowCount: 1, Tier: types.Tier1Record,
-		AuditID: "audit-1", Authorization: auth, Mode: types.ModeAssisted,
+		Rows: [][]any{{1}}, RowCount: 1,
+		AuditID: "audit-1", Authorization: auth,
 		Columns: []types.ColumnMeta{{Name: "id", Type: "int4", Policy: types.PolicyAllow}},
 	}, nil, nil
 }
@@ -146,7 +146,6 @@ type rig struct {
 	red   *fakeRedactor
 	alog  *fakeAuditLog
 	pipe  *fakePipeline
-	aud   *fakeAuditor
 
 	sockLn  *pipeListener
 	sockSrv *http.Server
@@ -170,7 +169,7 @@ func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 
 	conn := &types.Connection{
 		ID: "c1", Name: "prod", Engine: "postgres", Database: "app", Role: "app_ro",
-		Mode: types.ModeAssisted, Limits: types.DefaultLimits(),
+		Reads: types.ReadsUncertain, Limits: types.DefaultLimits(),
 	}
 	r := &rig{
 		t:     t,
@@ -180,14 +179,12 @@ func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 		red:   newRedactor(),
 		alog:  &fakeAuditLog{},
 		pipe:  &fakePipeline{},
-		aud:   &fakeAuditor{},
 		conn:  conn,
 		open:  map[string]func() error{},
 	}
 
 	d, err := daemon.New(cfg, daemon.Deps{
-		Vault:   r.vault,
-		Auditor: r.aud,
+		Vault: r.vault,
 		Catalogs: func(id string) (ports.Catalog, error) {
 			if f := r.open[id]; f != nil {
 				if err := f(); err != nil {

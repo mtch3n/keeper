@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -17,7 +16,6 @@ import (
 	"github.com/mtchen/keeper/internal/catalog"
 	"github.com/mtchen/keeper/internal/daemon"
 	"github.com/mtchen/keeper/internal/detect"
-	"github.com/mtchen/keeper/internal/pgaudit"
 	"github.com/mtchen/keeper/internal/pgdb"
 	"github.com/mtchen/keeper/internal/pipeline"
 	"github.com/mtchen/keeper/internal/ports"
@@ -32,10 +30,10 @@ import (
 // The daemon starts locked, so nothing here opens a database or reads the master
 // key: the vault resolves its key source chain on Unlock (§4.3), and the pools
 // and catalogs below are all lazy for the same reason.
-func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuthority, func(), error) {
+func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, func(), error) {
 	dir, err := configDir()
 	if err != nil {
-		return daemon.Deps{}, nil, nil, err
+		return daemon.Deps{}, nil, err
 	}
 
 	v := vault.New(dir)
@@ -55,7 +53,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		Detector: patterns,
 	})
 	if err != nil {
-		return daemon.Deps{}, nil, nil, fmt.Errorf("audit log: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("audit log: %w", err)
 	}
 
 	exec, err := pgdb.New(pgdb.Config{
@@ -65,7 +63,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	})
 	if err != nil {
 		alog.Close()
-		return daemon.Deps{}, nil, nil, fmt.Errorf("database: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("database: %w", err)
 	}
 
 	cats := newCatalogs(v, exec, detectors.For, dir)
@@ -77,16 +75,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	})
 	if err != nil {
 		alog.Close()
-		return daemon.Deps{}, nil, nil, fmt.Errorf("redaction: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("redaction: %w", err)
 	}
 
-	// The pipeline asks the daemon for connections and grants, and the daemon
-	// asks the pipeline to run statements. Neither can be constructed first, so
-	// the authority is a box the daemon drops itself into once it exists. It is
-	// read on every statement and written exactly once, which is what the atomic
-	// is for; a statement arriving before the daemon is wired gets a refusal
-	// rather than a nil dereference.
-	auth := &lateAuthority{vault: v}
+	auth := vaultAuthority{vault: v}
 
 	pipe, err := pipeline.New(pipeline.Deps{
 		Catalogs:  cats.For,
@@ -97,12 +89,11 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 	})
 	if err != nil {
 		alog.Close()
-		return daemon.Deps{}, nil, nil, fmt.Errorf("pipeline: %w", err)
+		return daemon.Deps{}, nil, fmt.Errorf("pipeline: %w", err)
 	}
 
 	deps := daemon.Deps{
 		Vault:        v,
-		Auditor:      pgaudit.New(),
 		Catalogs:     cats.For,
 		CatalogStore: openingStore{cats},
 		Executor:     exec,
@@ -117,7 +108,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		exec.Shutdown()
 		alog.Close()
 	}
-	return deps, auth, cleanup, nil
+	return deps, cleanup, nil
 }
 
 // limitsFrom reads §4.5's per-connection settings out of the vault for the pool
@@ -325,21 +316,16 @@ func safeFileName(s string) string {
 	}, s)
 }
 
-// lateAuthority is the box the daemon drops itself into. It exists because the
-// pipeline and the daemon each need the other.
-type lateAuthority struct {
+// vaultAuthority is the pipeline's view of the vault.
+type vaultAuthority struct {
 	vault *vault.Vault
-	d     atomic.Pointer[daemon.Daemon]
 }
 
-// Bind completes the cycle, once the daemon exists.
-func (l *lateAuthority) Bind(d *daemon.Daemon) { l.d.Store(d) }
-
-// Connection comes straight from the vault rather than through the daemon. It is
-// the single source R4.5's denylist, the writes setting, §4.5's limits and
-// §9.4's mode all read, which is what stops them drifting apart.
-func (l *lateAuthority) Connection(ctx context.Context, connID string) (*types.Connection, error) {
-	c, err := l.vault.Connection(ctx, connID)
+// Connection comes straight from the vault. It is the single source the
+// profile's settings and the limits are read from, which is what stops them
+// drifting apart.
+func (a vaultAuthority) Connection(ctx context.Context, connID string) (*types.Connection, error) {
+	c, err := a.vault.Connection(ctx, connID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,22 +333,6 @@ func (l *lateAuthority) Connection(ctx context.Context, connID string) (*types.C
 		return nil, fmt.Errorf("no connection %q", connID)
 	}
 	return c, nil
-}
-
-// SuspendGrants is R9.3b, asked for by a statement that found its connection's
-// catalog stale.
-func (l *lateAuthority) SuspendGrants(connID, reason string) {
-	if d := l.d.Load(); d != nil {
-		d.SuspendGrantsForConnection(connID, reason)
-	}
-}
-
-func (l *lateAuthority) Grant(ctx context.Context, sessionID string, path types.PathRef) (*types.Grant, bool) {
-	d := l.d.Load()
-	if d == nil {
-		return nil, false
-	}
-	return d.GrantFor(ctx, sessionID, path)
 }
 
 // pipelineAdapter fits *pipeline.Pipeline to daemon.Pipeline.
@@ -414,7 +384,6 @@ func queryOutcome(dec *pipeline.Decision) (*types.QueryResult, *types.Ticket, er
 	case dec.Escalation != nil:
 		return nil, &types.Ticket{
 			State:   types.TicketPending,
-			Tier:    dec.Tier,
 			Reason:  strings.Join(dec.Escalation.Facts.Reasons, ", "),
 			AuditID: dec.AuditID,
 			Preview: dec.Escalation.Write,

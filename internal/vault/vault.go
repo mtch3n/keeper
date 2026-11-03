@@ -302,11 +302,7 @@ func (v *Vault) Register(ctx context.Context, c *types.Connection, cred ports.Cr
 	return nil
 }
 
-// Update replaces the stored connection's editable state: mode, limits,
-// denylist, writes setting and findings. Findings are stored as the last audit
-// reported them and gate nothing; a re-audit that turns up a new privilege
-// changes what the audit report says and leaves the connection usable, which
-// is what makes the audit separable from the connection at all: SPEC R4.1.
+// Update replaces the stored connection's editable state.
 func (v *Vault) Update(ctx context.Context, c *types.Connection) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()

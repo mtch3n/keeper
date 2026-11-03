@@ -34,7 +34,6 @@ func TestWriteAppendsOneLinePerRecord(t *testing.T) {
 			SessionID:  "s1",
 			Connection: "c1",
 			Statement:  "SELECT id FROM users WHERE email = $1",
-			Tier:       types.Tier(i),
 			RowCount:   i,
 			Duration:   time.Duration(i) * time.Millisecond,
 		}
@@ -142,14 +141,12 @@ func TestWriteWithholdsAnUnscreenedIntent(t *testing.T) {
 func TestQueryAndGet(t *testing.T) {
 	l := newLog(t)
 	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	tiers := []types.Tier{types.Tier0Run, types.Tier1Record, types.Tier3Approve}
 	var ids []string
-	for i, tier := range tiers {
+	for i := range 3 {
 		r := &types.AuditRecord{
 			At:         base.Add(time.Duration(i) * time.Hour),
 			SessionID:  []string{"s1", "s2", "s1"}[i],
 			Connection: []string{"c1", "c1", "c2"}[i],
-			Tier:       tier,
 			Statement:  "SELECT 1",
 			Transforms: map[string]types.Transform{"email": {Policy: types.PolicyToken, Namespace: "email", Basis: types.BasisCatalog}},
 			Duration:   250 * time.Millisecond,
@@ -178,11 +175,6 @@ func TestQueryAndGet(t *testing.T) {
 	byConn, _ := l.Query(t.Context(), ports.AuditFilter{ConnectionID: "c2"})
 	if len(byConn) != 1 {
 		t.Errorf("connection filter returned %d", len(byConn))
-	}
-	tier := types.Tier1Record
-	byTier, _ := l.Query(t.Context(), ports.AuditFilter{Tier: &tier})
-	if len(byTier) != 1 || byTier[0].Tier != types.Tier1Record {
-		t.Errorf("tier filter returned %v", byTier)
 	}
 	since, _ := l.Query(t.Context(), ports.AuditFilter{Since: base.Add(90 * time.Minute)})
 	if len(since) != 1 {

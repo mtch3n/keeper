@@ -87,13 +87,6 @@ type Vault interface {
 	RotateMaster(ctx context.Context) error
 }
 
-// Auditor is internal/pgaudit. It runs G0 against a live connection and reports
-// what it found. It never refuses and never disables: what it returns is a
-// report the operator reads, not a gate on the connection. SPEC R4.1.
-type Auditor interface {
-	Audit(ctx context.Context, dsn string, role Role) ([]types.Finding, error)
-}
-
 // CatalogFor resolves the catalog for one connection.
 //
 // ports.Catalog is per-connection by construction and nothing holds a single
@@ -347,8 +340,7 @@ type Param struct {
 	Policy types.Policy
 }
 
-// PlanFacts is what EXPLAIN told us. Denylists and allow rules are evaluated
-// against Relations, never against statement text: SPEC R7.4c.
+// PlanFacts is what EXPLAIN told us. Decisions read it, never statement text.
 type PlanFacts struct {
 	StatementType string
 	Relations     []uint32
@@ -356,7 +348,10 @@ type PlanFacts struct {
 	EstimatedRows int64
 	EstimatedCost float64
 	Writes        bool
-	HasFilter     bool
+	// Uncertain is set when a volatile function name appears as a call in the
+	// plan, or when keeper could not look that up.
+	Uncertain bool
+	HasFilter bool
 	// Filters are the columns the plan's conditions name: filters, index and
 	// join conditions.
 	Filters []ColumnRef
@@ -431,7 +426,6 @@ type AuditLog interface {
 type AuditFilter struct {
 	SessionID    string
 	ConnectionID string
-	Tier         *types.Tier
 	Since        time.Time
 	// Before is an audit id: only records written before it are returned. It
 	// is how the Activity screen pages back through a log longer than Limit.

@@ -95,8 +95,8 @@ func (d *Daemon) OpenSession(ctx context.Context, client types.ClientInfo) (*Ses
 // SessionFor resolves the id a request carried, and refuses it when the request
 // did not arrive on that session's own connection. A session id borrowed onto a
 // second connection is not that session: R3.4e says the connection is the
-// session, and every scope that hangs off it — tickets, the reverse map, session
-// grants — would otherwise be reachable from a connection the daemon never
+// session, and every scope that hangs off it — tickets, the reverse map —
+// would otherwise be reachable from a connection the daemon never
 // handed it to.
 func (d *Daemon) SessionFor(ctx context.Context, id string) (*Session, error) {
 	if id == "" {
@@ -158,7 +158,7 @@ func (d *Daemon) SetIntent(ctx context.Context, s *Session, intent string, scope
 
 // CloseConn ends the session bound to a connection and drops everything scoped
 // to it: tickets are cancelled, queue items are cancelled rather than silently
-// removed, session grants are revoked, pending local requests are invalidated
+// removed, pending local requests are invalidated
 // and the reverse map is cleared. R3.4d and R3.4e, and §2.5's rule that a human
 // reading a row deserves to be told why it went.
 func (d *Daemon) CloseConn(c net.Conn) {
@@ -184,12 +184,6 @@ func (d *Daemon) CloseConn(c net.Conn) {
 			events = append(events, d.dequeueLocked(id, "session_closed")...)
 		}
 		delete(d.tickets, id)
-	}
-	for id, g := range d.grants {
-		if g.SessionID == s.id {
-			delete(d.grants, id)
-			events = append(events, Event{Type: EventApproval, Data: GrantEvent{Action: "revoked", GrantID: id}})
-		}
 	}
 	for id, r := range d.requests {
 		if r.r.SessionID != s.id {

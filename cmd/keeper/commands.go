@@ -235,9 +235,6 @@ func catalogGrants(ctx context.Context, args []string) error {
 func runApprove(args []string) error {
 	fs := flag.NewFlagSet("approve", flag.ContinueOnError)
 	refuse := fs.Bool("refuse", false, "refuse instead of approving")
-	standing := fs.Bool("standing", false, "also create a standing allow rule for the paths")
-	session := fs.Bool("session", false, "also create a session allow rule for the paths")
-	ceiling := fs.Int("row-ceiling", 0, "row ceiling for the allow rule")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -289,27 +286,10 @@ func runApprove(args []string) error {
 		return nil
 	}
 
-	var grant *client.GrantParams
-	if *standing || *session {
-		if *ceiling <= 0 {
-			// §9.3: identical relations with a different WHERE can return three
-			// orders of magnitude more rows, so the ceiling is not optional.
-			return fmt.Errorf("approve: --row-ceiling is required with --standing or --session")
-		}
-		life := types.GrantSession
-		if *standing {
-			life = types.GrantStanding
-		}
-		grant = &client.GrantParams{Lifetime: life, RowCeiling: *ceiling}
-	}
-
-	if err := cli.DecideApproval(ctx, ticket, decision, grant); err != nil {
+	if err := cli.DecideApproval(ctx, ticket, decision); err != nil {
 		return err
 	}
 	fmt.Printf("%sd %s\n", strings.ToLower(verb), ticket)
-	if grant != nil {
-		fmt.Printf("allow rule created: %s, ceiling %d rows\n", grant.Lifetime, grant.RowCeiling)
-	}
 	return nil
 }
 
@@ -322,11 +302,11 @@ func printQueue(queue []types.ApprovalItem) error {
 	// database with similar SQL are otherwise indistinguishable, which is the
 	// normal case with three windows open.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tINTENT\tCONNECTION\tTIER\tAGE")
+	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tINTENT\tCONNECTION\tAGE")
 	for _, it := range queue {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			it.TicketID, it.Session.Client.Name, it.Session.Client.Workspace,
-			truncate(it.Session.Intent, 40), it.Connection, it.Tier, age(it.CreatedAt))
+			truncate(it.Session.Intent, 40), it.Connection, age(it.CreatedAt))
 	}
 	w.Flush()
 	fmt.Println("\nkeeper approve <ticket> to decide one.")
@@ -363,81 +343,12 @@ func printApproval(it types.ApprovalItem) {
 	fmt.Println()
 }
 
-// ----------------------------------------------------------------- allow ---
-
-func runAllow(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("allow: expected a subcommand (ls, revoke)")
-	}
-	ctx := context.Background()
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	switch args[0] {
-	case "ls":
-		fs := flag.NewFlagSet("allow ls", flag.ContinueOnError)
-		asJSON := fs.Bool("json", false, "emit JSON")
-		if err := parseFlags(fs, args[1:]); err != nil {
-			return err
-		}
-		grants, err := cli.ListGrants(ctx)
-		if err != nil {
-			return err
-		}
-		if *asJSON {
-			return printJSON(grants)
-		}
-		if len(grants) == 0 {
-			fmt.Println("no allow rules")
-			return nil
-		}
-		// last used and uses are the point of the listing: an entry granted in
-		// March and never used since is the one to revoke, and nothing else in
-		// the product can tell you that.
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tPATH\tLIFETIME\tCEILING\tGRANTED\tLAST USED\tUSES")
-		for _, g := range grants {
-			last := "never"
-			if !g.LastUsedAt.IsZero() {
-				last = age(g.LastUsedAt) + " ago"
-			}
-			life := string(g.Lifetime)
-			if g.Suspended {
-				life += " (suspended)"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s ago\t%s\t%d\n",
-				g.ID, g.Path, life, g.RowCeiling, age(g.CreatedAt), last, g.Uses)
-		}
-		w.Flush()
-		fmt.Println("\nA rule covers exactly the path it names: no wildcards, and a view is")
-		fmt.Println("its own path (SPEC R9.3c).")
-		return nil
-
-	case "revoke":
-		if len(args) != 2 {
-			return fmt.Errorf("allow revoke: expected one rule id")
-		}
-		if err := cli.RevokeGrant(ctx, args[1]); err != nil {
-			return err
-		}
-		fmt.Printf("revoked %s\n", args[1])
-		return nil
-
-	default:
-		return fmt.Errorf("allow: unknown subcommand %q", args[0])
-	}
-}
-
 // -------------------------------------------------------------- activity ---
 
 func runActivity(args []string) error {
 	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
 	session := fs.String("session", "", "filter by session id")
 	conn := fs.String("connection", "", "filter by connection")
-	tier := fs.Int("tier", -1, "filter by tier")
 	since := fs.Duration("since", 0, "how far back to look, e.g. 24h")
 	limit := fs.Int("limit", 50, "maximum records")
 	asJSON := fs.Bool("json", false, "emit JSON")
@@ -467,10 +378,6 @@ func runActivity(args []string) error {
 			return err
 		}
 	}
-	if *tier >= 0 {
-		t := types.Tier(*tier)
-		f.Tier = &t
-	}
 	if *since > 0 {
 		f.Since = time.Now().Add(-*since)
 	}
@@ -486,10 +393,10 @@ func runActivity(args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "WHEN\tCONNECTION\tTIER\tROWS\tPOLICIES APPLIED\tSTATEMENT")
+	fmt.Fprintln(w, "WHEN\tCONNECTION\tROWS\tPOLICIES APPLIED\tSTATEMENT")
 	for _, r := range recs {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n",
-			r.At.Format(time.RFC3339), r.Connection, r.Tier, r.RowCount,
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
+			r.At.Format(time.RFC3339), r.Connection, r.RowCount,
 			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
 	}
 	w.Flush()
@@ -615,13 +522,7 @@ func runDoctor(args []string) error {
 		fmt.Printf("detector      %s %s, network %s\n", rep.Detector.Name, rep.Detector.Version, rep.Detector.NetworkPosture)
 	}
 	for _, c := range rep.Connections {
-		fmt.Printf("connection    %s\n", c.Name)
-		if c.Findings > 0 {
-			// A pointer, not a verdict: the findings do not stop this
-			// connection, and doctor reporting them as a fault would be
-			// the acceptance gate wearing a different hat (SPEC R4.1).
-			fmt.Printf("              %d privilege finding(s) — `keeper audit %s`\n", c.Findings, c.Name)
-		}
+		fmt.Printf("connection    %s: reads %s, writes %s\n", c.Name, c.Reads, c.Writes)
 	}
 	return nil
 }
