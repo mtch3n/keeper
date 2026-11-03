@@ -17,13 +17,11 @@ import (
 
 func runConnection(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("connection: expected a subcommand (add, ls, show, set, terms, denylist, rm)")
+		return fmt.Errorf("connection: expected a subcommand (ls, show, set, terms, denylist, rm)")
 	}
 	ctx := context.Background()
 	sub, rest := args[0], args[1:]
 	switch sub {
-	case "add":
-		return connectionAdd(ctx, rest)
 	case "ls":
 		return connectionLs(ctx, rest)
 	case "show":
@@ -59,77 +57,8 @@ func resolveConnectionID(ctx context.Context, cli *client.Client, name string) (
 	return "", fmt.Errorf("no connection named %q", name)
 }
 
-func connectionAdd(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("connection add", flag.ExitOnError)
-	name := fs.String("name", "", "connection name (required)")
-	host := fs.String("host", "", "name of the host it is on, from `keeper host add` (required)")
-	database := fs.String("database", "", "database name (required)")
-	user := fs.String("user", "", "the profile's login role (required)")
-	writes := fs.String("writes", "off", "off | approve: whether this profile's sessions may write; every write waits for approval")
-	catalogPath := fs.String("catalog", "", "catalog.yaml path (default .keeper/catalog.yaml, SPEC R5.2a)")
-	jsonOut := fs.Bool("json", false, "JSON output")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if *name == "" || *host == "" || *database == "" || *user == "" {
-		return fmt.Errorf("connection add: --name, --host, --database and --user are required")
-	}
-
-	// Passwords are never flags: a flag is in shell history and in every
-	// process listing for as long as the command runs.
-	in := newSecretReader()
-	params := client.RegisterConnectionParams{
-		Name: *name, Database: *database, CatalogPath: *catalogPath,
-		Credential: client.Credential{User: *user}, Writes: types.Writes(*writes),
-	}
-	var err error
-	if params.Credential.Password, err = in.read("password for " + *user); err != nil {
-		return err
-	}
-
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	if params.HostID, err = resolveHostID(ctx, cli, *host); err != nil {
-		return err
-	}
-	conn, err := cli.RegisterConnection(ctx, params)
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return printJSON(conn)
-	}
-	printFindingsReport(conn, "registered")
-	return nil
-}
-
-// printFindingsReport is SPEC R4.1's requirement in text form: every finding
-// in full — what it means and the statement that would narrow it — never a
-// summary, never a count. The connection is usable either way; what this
-// prints is work the operator may choose to do on the database.
-func printFindingsReport(c *types.Connection, verb string) {
-	fmt.Printf("connection %q %s (id %s)\n", c.Name, verb, c.ID)
-	if c.AuditedAt.IsZero() {
-		fmt.Printf("G0 privilege audit could not run. The connection is usable; run `keeper audit %s --rerun`\n", c.Name)
-		fmt.Println("once the server is reachable to see what the role can do.")
-		return
-	}
-	if len(c.Findings) == 0 {
-		fmt.Println("G0 privilege audit found nothing. This role holds no privilege keeper would report.")
-		return
-	}
-	fmt.Printf("\nG0 privilege audit found %d finding(s). The connection is usable; these are\n", len(c.Findings))
-	fmt.Printf("what the role can do beyond reading, and what would narrow it:\n")
-	printFindings(c.Findings, "  ")
-	fmt.Printf("\nRe-read this at any time with `keeper audit`.\n")
-}
-
 // printFindings renders findings with their suggested remediation. Shared by
-// `keeper connection add` and `keeper audit`.
+// `keeper audit`.
 func printFindings(findings []types.Finding, indent string) {
 	for _, f := range findings {
 		fmt.Printf("\n%s[%s] %s (%s)\n", indent, f.ID, f.Subject, f.Kind)

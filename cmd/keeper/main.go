@@ -26,6 +26,8 @@ func run(args []string) error {
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "connect":
+		return runConnect(rest)
 	case "host":
 		return runHost(rest)
 	case "connection":
@@ -69,11 +71,10 @@ func usage() {
 	fmt.Fprint(os.Stderr, `keeper — operate a keeper daemon and its registered connections
 
 Usage:
-  keeper host add --name H --address A [--port 5432] [--sslmode prefer]
+  keeper connect [--name N]
+      reads a PostgreSQL connection string at a hidden prompt, or one line from stdin
   keeper host ls
   keeper host rm <name>
-  keeper connection add --name X --host H --database D --user U [--writes off|approve] [--catalog path]
-      passwords are prompted for, or read one per line from stdin
   keeper connection ls
   keeper connection show <name>
   keeper connection set <name> [--mode ...] [--detection kind[:entity+entity][@raw],...|off] [--writes off|approve] [--persistent-tokens on|off] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]

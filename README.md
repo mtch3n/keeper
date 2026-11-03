@@ -115,7 +115,7 @@ A host is the server, entered once. Each database and role on it is its own
 connection, with its own catalog, mode and audit:
 
 ```sh
-keeper host add --name prod-db --address db.internal --sslmode require
+keeper connect   # paste postgres://app_ro:...@db.internal/app?sslmode=require at the hidden prompt
 
 keeper connection add --name prod --host prod-db --database app --user app_ro
 # prompts for the password (or reads it from stdin), audits the role and prints
