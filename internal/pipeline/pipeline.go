@@ -113,12 +113,6 @@ type Request struct {
 	ConnID  string
 	SQL     string
 	Params  []ports.Param
-	// ParamPolicies is the source policy of each parameter resolved from a token
-	// (SPEC R6.2), parallel to Params, PolicyAllow for a plain value. The
-	// Redactor resolves a token before the pipeline runs — the Executor never
-	// sees one — so the policy travels here. R7.6's no-relation case and R8.4b
-	// both read it.
-	ParamPolicies []types.Policy
 	// MaxRows is the agent's request. The operator ceiling and any grant ceiling
 	// bound it; the agent cannot raise it (SPEC §4.5).
 	MaxRows int

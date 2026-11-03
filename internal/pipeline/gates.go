@@ -55,7 +55,7 @@ type column struct {
 // matching requires enumerating aliases, expressions, function wrappers, views
 // and CTEs, which is the failure shape of CVE-2026-85620 (SPEC R7.5a).
 func (p *Pipeline) resolveColumns(cat ports.Catalog, raw []types.ColumnMeta, plan *ports.PlanFacts, req Request) []column {
-	paramPolicy := types.Strictest(req.ParamPolicies...)
+	paramPolicy := types.Strictest(req.paramPolicies()...)
 	cols := make([]column, len(raw))
 	used := map[string]bool{}
 
@@ -112,10 +112,11 @@ func (p *Pipeline) inherit(cat ports.Catalog, col types.ColumnMeta, plan *ports.
 		// A computed column with no referenced relation inherits from its
 		// parameters (§8.4), and is redact if that is indeterminable — which,
 		// with no parameters at all, it is.
-		if len(req.ParamPolicies) == 0 {
+		policies := req.paramPolicies()
+		if len(policies) == 0 {
 			return types.PolicyRedact, types.BasisUnknown
 		}
-		return types.Inherited(types.Strictest(req.ParamPolicies...)), types.BasisParameter
+		return types.Inherited(types.Strictest(policies...)), types.BasisParameter
 	}
 
 	// Numeric, boolean, date/time and uuid inherit from the same family only.
@@ -196,6 +197,17 @@ func (p *Pipeline) assignTier(ctx context.Context, st *state) {
 	}
 }
 
+// paramPolicies lists the source policy of each parameter resolved from a token.
+func (r Request) paramPolicies() []types.Policy {
+	var out []types.Policy
+	for _, p := range r.Params {
+		if p.Policy != "" {
+			out = append(out, p.Policy)
+		}
+	}
+	return out
+}
+
 // applyGrants is SPEC §9.3. A grant covers exactly the path it names, so every
 // relation the plan touches must have its own entry; one unlisted relation sends
 // the statement back to its normal tier.
@@ -257,9 +269,9 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 	// falls back to redact — masking correctly but destroying the join the token
 	// exists to preserve.
 	var resolved []ports.ResolvedParam
-	for i, pol := range req.ParamPolicies {
-		if pol != types.PolicyAllow {
-			resolved = append(resolved, ports.ResolvedParam{Ordinal: i + 1, Policy: pol})
+	for i, param := range req.Params {
+		if param.Policy != "" && param.Policy != types.PolicyAllow {
+			resolved = append(resolved, ports.ResolvedParam{Ordinal: i + 1, Policy: param.Policy})
 		}
 	}
 	// Tokens persist only where the agent declared it and the connection allows

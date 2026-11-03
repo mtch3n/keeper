@@ -34,14 +34,14 @@ func (d *Daemon) resolveParams(ctx context.Context, sessionID, connID string, pa
 			out = append(out, ports.Param{Value: p.Value})
 			continue
 		}
-		v, _, err := d.deps.Redactor.Resolve(ctx, sessionID, connID, p.Token)
+		v, pol, err := d.deps.Redactor.Resolve(ctx, sessionID, connID, p.Token)
 		if err != nil {
 			// R3.4d: the reverse map is memory only, so an unresolvable token is
 			// not "retry" but "every token you hold is dead, re-run the queries
 			// that minted them".
 			return nil, errStaleToken
 		}
-		out = append(out, ports.Param{Value: v})
+		out = append(out, ports.Param{Value: v, Policy: pol})
 	}
 	return out, nil
 }

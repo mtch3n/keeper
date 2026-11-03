@@ -343,6 +343,8 @@ type Executor interface {
 // the Redactor before it reaches the Executor, so Executor never sees one.
 type Param struct {
 	Value any
+	// Policy is the source policy of a value resolved from a token. Empty is a plain value.
+	Policy types.Policy
 }
 
 // PlanFacts is what EXPLAIN told us. Denylists and allow rules are evaluated

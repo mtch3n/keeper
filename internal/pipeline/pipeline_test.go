@@ -167,9 +167,8 @@ func TestTokenParameterRaisesTextOutputOnly(t *testing.T) {
 	})
 
 	dec := h.query(t, Request{
-		SQL:           "SELECT 'Hi ' || $1::text, count(*) FROM clean_ids",
-		Params:        []ports.Param{{Value: "Ada"}},
-		ParamPolicies: []types.Policy{types.PolicyToken},
+		SQL:    "SELECT 'Hi ' || $1::text, count(*) FROM clean_ids",
+		Params: []ports.Param{{Value: "Ada", Policy: types.PolicyToken}},
 	})
 
 	greeting := transformFor(t, dec, "greeting")
