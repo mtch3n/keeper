@@ -96,7 +96,9 @@ func mcpAgentAnswering(t *testing.T, handler answerFunc, protocol ...string) (*a
 
 func (e *leanEnv) counter(t *testing.T, name string) func() int64 {
 	t.Helper()
-	e.super(t, "CREATE SEQUENCE "+name, "GRANT USAGE, SELECT ON SEQUENCE "+name+" TO shop_eval_rw")
+	e.super(t, "CREATE SEQUENCE "+name, "GRANT USAGE, SELECT ON SEQUENCE "+name+" TO shop_eval_rw",
+		"CREATE FUNCTION "+name+"_count() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('"+name+"'); RETURN NEW; END $$",
+		"CREATE TRIGGER "+name+" BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION "+name+"_count()")
 	return func() int64 {
 		admin, err := pgx.Connect(t.Context(), e.shop.superDSN)
 		if err != nil {
@@ -115,8 +117,11 @@ func (e *leanEnv) counter(t *testing.T, name string) func() int64 {
 	}
 }
 
-func counted(name string) string {
-	return "UPDATE orders SET total = total + 0 * nextval('" + name + "') WHERE id = 1"
+// counted is a write that calls no function. The trigger counter creates counts
+// its executions, so the count measures the statement and the statement stays
+// one keeper previews.
+func counted(string) string {
+	return "UPDATE orders SET total = total + 0 WHERE id = 1"
 }
 
 func (e *leanEnv) inbox(t *testing.T) []types.ApprovalItem {
