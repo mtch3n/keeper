@@ -15,6 +15,18 @@ const (
 	ModeAssisted Mode = "assisted"
 )
 
+// Reads is when a profile's reads ask a person first. Anything else behaves as ReadsAlways.
+type Reads string
+
+const (
+	ReadsAlways    Reads = "always"
+	ReadsUncertain Reads = "uncertain"
+	ReadsNever     Reads = "never"
+)
+
+// Valid reports whether r is a setting keeper knows.
+func (r Reads) Valid() bool { return r == ReadsAlways || r == ReadsUncertain || r == ReadsNever }
+
 // StageKind names a detection adapter a stage runs.
 type StageKind string
 
@@ -140,6 +152,7 @@ type Connection struct {
 	CatalogPath string `json:"catalog_path"`
 
 	Mode   Mode   `json:"mode"`
+	Reads  Reads  `json:"reads"`
 	Limits Limits `json:"limits"`
 	// Detection is the ordered pipeline a scan column's free text runs through.
 	// Empty is off: free text is redacted whole.
@@ -167,6 +180,8 @@ type Writes string
 const (
 	WritesOff     Writes = "off"
 	WritesApprove Writes = "approve"
+	WritesAsk     Writes = "ask"
+	WritesAllow   Writes = "allow"
 )
 
 // Settings are the daemon-wide choices an operator makes in Settings. They live

@@ -91,6 +91,15 @@ const (
 	CutBySize Cut = "size"
 )
 
+// Outcome is what keeper does with a statement.
+type Outcome string
+
+const (
+	OutcomeRun    Outcome = "run"
+	OutcomeAsk    Outcome = "ask"
+	OutcomeRefuse Outcome = "refuse"
+)
+
 // ExplainResult is the dry run of SPEC §6.1: what would be masked and whether the
 // statement would escalate, without spending an approval.
 type ExplainResult struct {
@@ -100,6 +109,7 @@ type ExplainResult struct {
 	EstimatedCost float64       `json:"estimated_cost"`
 	OutputColumns []ColumnMeta  `json:"output_columns"`
 	PredictedTier Tier          `json:"predicted_tier"`
+	Outcome       Outcome       `json:"outcome"`
 	Reasons       []string      `json:"reasons,omitzero"`
 }
 

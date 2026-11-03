@@ -19,6 +19,7 @@ type Profile struct {
 	Database string       `json:"database"`
 	Username string       `json:"username"`
 	Writes   types.Writes `json:"writes"`
+	Reads    types.Reads  `json:"reads"`
 }
 
 // ConnectionSummary is one row of list_connections / `keeper connection ls`
@@ -149,7 +150,8 @@ func (c *Client) Audit(ctx context.Context) ([]AuditReport, error) {
 // alone; Limits, when set, replaces every limit, so a caller changing one reads
 // the others first.
 type PatchConnectionParams struct {
-	Mode types.Mode `json:"mode,omitzero"`
+	Mode  types.Mode  `json:"mode,omitzero"`
+	Reads types.Reads `json:"reads,omitzero"`
 	// Limits replaces all of the connection's limits when set.
 	Limits *types.Limits `json:"limits,omitzero"`
 	// Detection replaces the connection's passes when set; an empty list turns

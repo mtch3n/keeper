@@ -24,6 +24,7 @@ type Profile struct {
 	Database string       `json:"database"`
 	Username string       `json:"username"`
 	Writes   types.Writes `json:"writes"`
+	Reads    types.Reads  `json:"reads"`
 }
 
 // ConnectionSummary is GET /v1/connections.
