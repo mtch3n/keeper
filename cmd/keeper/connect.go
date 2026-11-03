@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -54,6 +55,40 @@ func runConnect(args []string) error {
 type connTarget struct {
 	address, sslmode, database, user, password, profile, catalogPath string
 	port                                                             int
+	sslDefaulted                                                     bool
+}
+
+// tlsHint names the way out when keeper itself chose require: pgx reports a
+// server that refuses TLS and an unreachable server as the same safe error, so
+// the hint is attached to every failure on a defaulted require.
+func tlsHint(t connTarget) string {
+	if !t.sslDefaulted || t.sslmode != "require" {
+		return ""
+	}
+	return "no sslmode was given, so keeper required TLS for this remote host; if the server does not offer TLS and plaintext is really intended, add sslmode=disable to the connection string"
+}
+
+var sslStrength = map[string]int{"disable": 0, "allow": 1, "prefer": 2, "require": 3, "verify-ca": 4, "verify-full": 5}
+
+// modeNotice reports when a reused host's sslmode, not the string's, decides
+// the login: the string named a different mode, or named none and the host is
+// weaker than keeper's default.
+func modeNotice(t connTarget, hostMode string) string {
+	if hostMode == t.sslmode {
+		return ""
+	}
+	if !t.sslDefaulted || sslStrength[hostMode] < sslStrength[t.sslmode] {
+		return fmt.Sprintf("this host is already registered with sslmode=%s; that mode is used, not the connection string's", hostMode)
+	}
+	return ""
+}
+
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 func parseConnString(raw string) (connTarget, error) {
@@ -64,7 +99,7 @@ func parseConnString(raw string) (connTarget, error) {
 	}
 	t := connTarget{
 		address: cfg.Host, port: int(cfg.Port), database: cfg.Database,
-		user: cfg.User, password: cfg.Password, sslmode: "prefer",
+		user: cfg.User, password: cfg.Password,
 	}
 	if t.address == "" || strings.HasPrefix(t.address, "/") {
 		return connTarget{}, fmt.Errorf("the connection string needs a server host name or address")
@@ -74,6 +109,12 @@ func parseConnString(raw string) (connTarget, error) {
 	}
 	if v := sslmodeOf(raw); v != "" {
 		t.sslmode = v
+	} else {
+		t.sslDefaulted = true
+		t.sslmode = "require"
+		if isLoopback(t.address) {
+			t.sslmode = "prefer"
+		}
 	}
 	t.profile = t.database + "_" + t.user
 	return t, nil
@@ -116,6 +157,9 @@ func connectProfile(ctx context.Context, cli *client.Client, t connTarget) error
 	for _, h := range hosts {
 		if h.Address == t.address && h.Port == t.port {
 			hostID = h.ID
+			if n := modeNotice(t, h.SSLMode); n != "" {
+				fmt.Println(n)
+			}
 		}
 	}
 	newHost := hostID == ""
@@ -151,20 +195,23 @@ func connectProfile(ctx context.Context, cli *client.Client, t connTarget) error
 	if err != nil {
 		_ = cli.RemoveConnection(ctx, conn.ID)
 		undoHost()
-		return testFailure(err)
+		return testFailure(err, t)
 	}
 	fmt.Printf("profile %q registered with writes off\n", t.profile)
 	fmt.Printf("connected as %s · PostgreSQL %s · %s\n", res.User, res.ServerVersion, time.Duration(res.RoundTrip).Round(time.Millisecond))
 	return nil
 }
 
-func testFailure(err error) error {
+func testFailure(err error, t connTarget) error {
+	msg := "the login test failed; check the connection string and run `keeper connect` again"
 	if ke, ok := errors.AsType[*types.Error](err); ok {
-		msg := ke.Summary
+		msg = ke.Summary
 		if ke.Action != "" {
 			msg += ". " + ke.Action
 		}
-		return fmt.Errorf("%s; nothing was registered", msg)
 	}
-	return errors.New("the login test failed; check the connection string and run `keeper connect` again; nothing was registered")
+	if h := tlsHint(t); h != "" {
+		msg += ". " + h
+	}
+	return fmt.Errorf("%s; nothing was registered", msg)
 }

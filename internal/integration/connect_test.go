@@ -235,3 +235,42 @@ func TestConnect_ThenTheFirstQueryReturnsAnEmailToken(t *testing.T) {
 		t.Errorf("seeded personal data in the result: %v", leaks)
 	}
 }
+
+func TestConnectDefaultsToTLSOnARemoteHost(t *testing.T) {
+	e := newLeanEnv(t)
+	bin := buildKeeper(t)
+	hosts0, conns0 := e.counts(t)
+
+	addrs, _ := net.InterfaceAddrs()
+	remote := ""
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLoopback() {
+			remote = ipn.IP.String()
+			break
+		}
+	}
+	if remote == "" {
+		t.Skip("no non-loopback IPv4 address on this machine")
+	}
+	if c, err := net.Dial("tcp", net.JoinHostPort(remote, strconv.Itoa(e.shop.port))); err != nil {
+		t.Skipf("the test server is not reachable on %s: %v", remote, err)
+	} else {
+		c.Close()
+	}
+
+	str := connString(remote, e.shop.port, "shop_eval_ro", e.shop.roPass, "shop")
+	str = strings.TrimSuffix(str, "?sslmode=disable")
+	out, err := runKeeper(t, bin, str+"\n", "connect")
+	if err == nil {
+		t.Fatalf("a non-TLS server with no sslmode on a remote host must fail:\n%s", out)
+	}
+	if !strings.Contains(out, "sslmode=disable") || !strings.Contains(out, "nothing was registered") {
+		t.Errorf("output does not name the fix:\n%s", out)
+	}
+	if strings.Contains(out, e.shop.roPass) {
+		t.Errorf("output repeats the password:\n%s", out)
+	}
+	if h, c := e.counts(t); h != hosts0 || c != conns0 {
+		t.Errorf("registered something: hosts %d->%d, connections %d->%d", hosts0, h, conns0, c)
+	}
+}
