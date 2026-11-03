@@ -105,20 +105,21 @@ type ExplainResult struct {
 type Code string
 
 const (
-	CodeSyntax           Code = "syntax"            // the agent's statement did not parse
-	CodeMultiStatement   Code = "multi_statement"   // more than one statement
-	CodePermissionDenied Code = "permission_denied" // G3 refused; Invariant A working
-	CodeUnclassified     Code = "unclassified"      // a column needs a catalog entry
-	CodeDDLRefused       Code = "ddl_refused"       // SPEC R4.2c
-	CodeWritesOff        Code = "writes_off"        // the profile's sessions are read-only
-	CodeApprovalRequired Code = "approval_required"
-	CodeApprovalRefused  Code = "approval_refused"
-	CodeTicketUnknown    Code = "ticket_unknown"
-	CodeTimeout          Code = "timeout"
-	CodeRowCap           Code = "row_cap"
-	CodeStaleToken       Code = "stale_token" // the daemon restarted; SPEC R3.4d
-	CodeUnreachable      Code = "unreachable" // keeper could not connect to the database
-	CodeInternal         Code = "internal"
+	CodeSyntax            Code = "syntax"            // the agent's statement did not parse
+	CodeMultiStatement    Code = "multi_statement"   // more than one statement
+	CodePermissionDenied  Code = "permission_denied" // G3 refused; Invariant A working
+	CodeUnclassified      Code = "unclassified"      // a column needs a catalog entry
+	CodeDDLRefused        Code = "ddl_refused"       // SPEC R4.2c
+	CodeWritesOff         Code = "writes_off"        // the profile's sessions are read-only
+	CodeApprovalRequired  Code = "approval_required"
+	CodeApprovalRefused   Code = "approval_refused"
+	CodeTicketUnknown     Code = "ticket_unknown"
+	CodeUnknownConnection Code = "unknown_connection" // no connection has that id or profile name, or the name is ambiguous
+	CodeTimeout           Code = "timeout"
+	CodeRowCap            Code = "row_cap"
+	CodeStaleToken        Code = "stale_token" // the daemon restarted; SPEC R3.4d
+	CodeUnreachable       Code = "unreachable" // keeper could not connect to the database
+	CodeInternal          Code = "internal"
 )
 
 // Error is the only error shape that reaches an agent. Every field PostgreSQL

@@ -31,7 +31,9 @@ rows when they accept, or a refusal when they decline. You wait inside the call;
 you do not poll.
 
 Each profile is one login. When the user names one — "use orders_rw" — find it
-in `list_connections` and send the statement on it. keeper never switches
+in `list_connections` and send the statement on it. `connection_id` takes the
+id or the exact profile name, so `shop_ro` works without a lookup first. If two
+profiles share a name, the error lists their ids. keeper never switches
 profiles for you, and never shows you a password.
 
 `explain(connection_id, sql, params?)` says what a statement would touch, which
@@ -134,6 +136,7 @@ task means the user wants the dashboard: tell them to run `keeper ui`.
 | `writes_off` | this profile does not allow writes |
 | `syntax`, `multi_statement` | the statement did not parse, or held more than one statement |
 | `approval_required`, `approval_refused` | a person has to accept first, or they refused |
+| `unknown_connection` | no connection has that id or name, or the name is ambiguous. Call `list_connections` |
 | `ticket_unknown`, `timeout` | the ticket is not known, or keeper did not finish in time. Retry once |
 | `row_cap` | more rows than the ceiling allows. Narrow the query or lower `max_rows` |
 | `stale_token` | the daemon restarted; run the query that made the token again |

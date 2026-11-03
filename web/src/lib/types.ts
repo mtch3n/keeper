@@ -146,6 +146,7 @@ type Code =
   | 'approval_required'
   | 'approval_refused'
   | 'ticket_unknown'
+  | 'unknown_connection'
   | 'timeout'
   | 'row_cap'
   | 'stale_token'
