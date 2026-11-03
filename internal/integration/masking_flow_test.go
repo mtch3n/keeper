@@ -78,37 +78,60 @@ func TestComputedColumnsDoNotCarryDataFromHiddenRelations(t *testing.T) {
 		`ANALYZE customers`,
 	)
 	e.declare(t, e.ro, map[string]types.ColumnPolicy{
-		"public.dom.id":     {Policy: types.PolicyAllow},
-		"public.dom.code":   {Policy: types.PolicyRedact},
-		"public.dom.scores": {Policy: types.PolicyRedact},
+		"public.products.id":    {Policy: types.PolicyAllow},
+		"public.products.sku":   {Policy: types.PolicyAllow},
+		"public.products.name":  {Policy: types.PolicyAllow},
+		"public.products.price": {Policy: types.PolicyAllow},
+		"public.dom.id":         {Policy: types.PolicyAllow},
+		"public.dom.code":       {Policy: types.PolicyRedact},
+		"public.dom.scores":     {Policy: types.PolicyRedact},
 		"public.support_tickets.metadata": {Policy: types.PolicyAllow, Paths: map[string]types.ColumnPolicy{
 			"$.channel": {Policy: types.PolicyAllow},
 		}},
 		"public.support_tickets.id": {Policy: types.PolicyAllow},
 	})
 	ssn := e.superValue(t, "SELECT ssn FROM customers WHERE id = 1")
+	digits := strings.ReplaceAll(ssn, "-", "")
 
-	for label, sql := range map[string]string{
-		"user function":      "SELECT cust_ssn(id) FROM products",
-		"query_to_xml":       "SELECT query_to_xml('select email,ssn from customers',true,true,'')::text FROM products",
-		"pg_stats":           "SELECT histogram_bounds::text FROM pg_stats WHERE tablename='customers' AND attname='ssn'",
-		"digits of an ssn":   "SELECT replace(ssn,'-','')::bigint FROM customers",
-		"date arithmetic":    "SELECT dob - date '1970-01-01', extract(epoch from dob) FROM customers",
-		"domain column":      "SELECT code + 0 FROM dom",
-		"array element":      "SELECT scores[1] FROM dom",
-		"json with paths":    "SELECT metadata->>'ip', metadata::text FROM support_tickets",
-		"view of a base col": "SELECT amount FROM emp_view",
-	} {
-		body := e.query(t, e.agent, e.ro, sql)
-		if strings.Contains(body, ssn) || ssnShape.MatchString(body) || strings.Contains(body, "424242") || strings.Contains(body, "777777") ||
-			strings.Contains(body, "10.") && strings.Contains(label, "json") {
-			t.Errorf("%s leaked: %.400s", label, body)
+	// Every statement must run and return rows, each cell masked. A statement
+	// whose refusal is the intended outcome says so in refused.
+	cases := []struct {
+		label, sql string
+		refused    bool
+	}{
+		{"user function", "SELECT cust_ssn(id) FROM products", false},
+		{"query_to_xml", "SELECT query_to_xml('select email,ssn from customers',true,true,'')::text FROM products", false},
+		{"pg_stats", "SELECT histogram_bounds::text FROM pg_stats WHERE tablename='customers' AND attname='ssn'", false},
+		{"digits of an ssn", "SELECT replace(ssn,'-','')::bigint FROM customers LIMIT 3", false},
+		{"digits, order by", "SELECT replace(ssn,'-','')::bigint FROM customers ORDER BY id LIMIT 3", false},
+		{"digits, group by", "SELECT replace(ssn,'-','')::bigint, count(*) FROM customers GROUP BY 1 LIMIT 3", false},
+		{"digits, subquery", "SELECT x FROM (SELECT replace(ssn,'-','')::bigint AS x FROM customers LIMIT 3) s", false},
+		{"digits, offset 0 subquery", "SELECT x FROM (SELECT replace(ssn,'-','')::bigint AS x FROM customers OFFSET 0) s LIMIT 3", false},
+		{"digits, cte", "WITH c AS MATERIALIZED (SELECT replace(ssn,'-','')::bigint AS x FROM customers) SELECT x FROM c LIMIT 3", false},
+		{"digits, union", "SELECT replace(ssn,'-','')::bigint FROM customers UNION ALL SELECT 1 LIMIT 3", false},
+		{"digits, lateral", "SELECT l.x FROM products p, LATERAL (SELECT replace(ssn,'-','')::bigint AS x FROM customers c WHERE c.id = p.id) l LIMIT 3", false},
+		{"filter aggregate", "SELECT count(*) FILTER (WHERE ssn LIKE '1%') FROM customers", false},
+		{"sum of digits", "SELECT sum(replace(ssn,'-','')::bigint) FROM customers", false},
+		{"date arithmetic", "SELECT dob - date '1970-01-01', extract(epoch from dob) FROM customers LIMIT 3", false},
+		{"domain column", "SELECT code + 0 FROM dom", false},
+		{"array element", "SELECT scores[1] FROM dom", false},
+		{"json with paths", "SELECT metadata->>'ip', metadata::text FROM support_tickets LIMIT 3", false},
+		{"view of a base col", "SELECT amount FROM emp_view LIMIT 3", false},
+	}
+	for _, tc := range cases {
+		body := e.query(t, e.agent, e.ro, tc.sql)
+		if strings.Contains(body, ssn) || strings.Contains(body, digits) || ssnShape.MatchString(body) ||
+			strings.Contains(body, "424242") || strings.Contains(body, "777777") || strings.Contains(body, `"10.`) {
+			t.Errorf("%s leaked: %.400s", tc.label, body)
 		}
 		if !strings.Contains(body, `"rows"`) {
-			t.Logf("%s: refused: %.120s", label, body)
+			if !tc.refused {
+				t.Errorf("%s: did not run: %.200s", tc.label, body)
+			}
 			continue
 		}
-		everyCellMasked(t, label, body)
+		t.Logf("%-26s ran, masked", tc.label)
+		everyCellMasked(t, tc.label, body)
 	}
 
 	e.super(t, `CREATE TABLE late (id int, ssn text)`, `INSERT INTO late VALUES (1, '123-45-6789')`, `GRANT SELECT ON late TO shop_eval_ro`)
@@ -116,6 +139,7 @@ func TestComputedColumnsDoNotCarryDataFromHiddenRelations(t *testing.T) {
 	if strings.Contains(body, "123-45-6789") {
 		t.Errorf("a table created after the catalog opened leaked: %s", body)
 	}
+	everyCellMasked(t, "late table", body)
 
 	hosts, err := e.op.ListHosts(t.Context())
 	if err != nil || len(hosts) == 0 {
@@ -133,6 +157,7 @@ func TestComputedColumnsDoNotCarryDataFromHiddenRelations(t *testing.T) {
 	if strings.Contains(body, ssn) || ssnShape.MatchString(body) {
 		t.Errorf("a role with a grant on a view only leaked: %.400s", body)
 	}
+	everyCellMasked(t, "view-only role", body)
 }
 
 func TestAggregatesStayUsableWhileOtherColumnsAreMasked(t *testing.T) {
