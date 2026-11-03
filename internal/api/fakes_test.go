@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/mtchen/keeper/internal/audit"
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
@@ -368,7 +369,9 @@ func (a *fakeAuditLog) Get(_ context.Context, id string) (*types.AuditRecord, er
 	return nil, nil
 }
 
-func (a *fakeAuditLog) Normalize(sql string, _ func(string) bool) string { return sql }
+func (a *fakeAuditLog) Normalize(sql string, known func(string) bool) string {
+	return audit.Normalize(sql, known)
+}
 
 func (a *fakeAuditLog) ScreenText(context.Context, string) error { return nil }
 

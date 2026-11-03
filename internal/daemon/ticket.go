@@ -20,6 +20,11 @@ type ticket struct {
 	params  []ports.Param
 	maxRows int
 	write   bool
+	// previewed is the row count the preview reported, kept for the executed
+	// record. Zero for a read, and for a write that was not previewed.
+	previewed int64
+	// cancelRun stops the approved statement, until the pipeline commits.
+	cancelRun context.CancelFunc
 
 	approver  string
 	result    *types.QueryResult
@@ -87,6 +92,9 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 		item.Facts = *facts
 	}
 
+	if preview != nil && !preview.Unpreviewed {
+		tk.previewed = preview.RowCount
+	}
 	tk.t.URL = d.cfg.UIBase + "/r/" + tk.t.ID
 	tk.t.Write = write
 	tk.t.Prompt = dialogMessage(item, profile, tk.t.URL)
@@ -101,7 +109,7 @@ func (d *Daemon) issueTicket(s *Session, connID, sql string, params []ports.Para
 	}
 
 	d.hub.Publish(Event{Type: EventApproval, Data: ApprovalEvent{
-		Action: "queued", TicketID: tk.t.ID, State: types.TicketPending, Item: &item,
+		Action: "queued", TicketID: tk.t.ID, State: types.TicketPending, Connection: connID,
 	}})
 	out := tk.t
 	return &out

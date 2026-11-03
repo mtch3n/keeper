@@ -103,13 +103,44 @@ func TestWriteReNormalizesDefensively(t *testing.T) {
 			t.Errorf("stored record contains %q", needle)
 		}
 	}
-	// Already-normalized text, with a catalogued identifier, survives untouched.
-	r2 := &types.AuditRecord{Statement: `SELECT "Email" FROM "order" WHERE id = $1`}
+	// Text the caller normalized itself, with its catalog, is kept as it is.
+	r2 := &types.AuditRecord{Statement: `SELECT "Email" FROM "order" WHERE id = $1`, Normalized: true}
 	if err := l.Write(t.Context(), r2); err != nil {
 		t.Fatal(err)
 	}
 	if r2.Statement != `SELECT "Email" FROM "order" WHERE id = $1` {
 		t.Errorf("a normalized statement was rewritten: %q", r2.Statement)
+	}
+}
+
+func TestWriteNormalizesEveryLiteralFormTheCallerLeftIn(t *testing.T) {
+	l := newLog(t)
+	cases := map[string]string{
+		`SELECT id AS "alice@example.com" FROM orders WHERE id = 123456789`: "alice",
+		`DELETE FROM orders WHERE total = 4111111111111111`:                 "4111",
+		`SELECT 1.5e3, .25, 0xff, 12345678901`:                              "12345",
+		`SELECT E'ssn\' 078051120'`:                                         "078051120",
+		`SELECT $a$secret$a$, $$secret2$$`:                                  "secret",
+		`SELECT U&'d\0061ta', B'1010', X'1F'`:                               "0061",
+		`SELECT 1 -- jane@example.com`:                                      "jane",
+		`SELECT /* 555-12-3456 */ 1`:                                        "555",
+		`SELECT "Jane Doe" FROM "orders"`:                                   "Jane",
+	}
+	for sql, leak := range cases {
+		r := &types.AuditRecord{Statement: sql}
+		if err := l.Write(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(r.Statement, leak) {
+			t.Errorf("%q was kept in %q", leak, r.Statement)
+		}
+		stored, err := l.Get(t.Context(), r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stored.Statement, leak) {
+			t.Errorf("%q reached the log in %q", leak, stored.Statement)
+		}
 	}
 }
 
@@ -297,5 +328,43 @@ func TestConcurrentWrites(t *testing.T) {
 func TestNewRequiresADetector(t *testing.T) {
 	if _, err := New(Config{Key: testKey, Dir: filepath.Join(t.TempDir(), "activity")}); err == nil {
 		t.Error("New accepted a nil detector")
+	}
+}
+
+func TestALaterRecordWithTheSameIDReplacesTheIntentRecord(t *testing.T) {
+	l := newLog(t)
+	at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	for i, rows := range []int{0, 7} {
+		if err := l.Write(t.Context(), &types.AuditRecord{ID: "w1", At: at, Statement: "UPDATE t SET a = 1", RowCount: rows}); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			if err := l.Write(t.Context(), &types.AuditRecord{ID: "w2", At: at.Add(time.Second), Statement: "SELECT 1"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	recs, err := l.Query(t.Context(), ports.AuditFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2: %+v", len(recs), recs)
+	}
+	if recs[1].ID != "w1" || recs[1].RowCount != 7 {
+		t.Errorf("the intent record was not replaced by the final one: %+v", recs[1])
+	}
+	got, err := l.Get(t.Context(), "w1")
+	if err != nil || got.RowCount != 7 {
+		t.Errorf("Get returned %+v, %v", got, err)
+	}
+}
+
+func TestAWriteIsRecordedEvenWhenTheCallersContextIsCancelledFirst(t *testing.T) {
+	l := newLog(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := l.Write(context.WithoutCancel(ctx), &types.AuditRecord{Statement: "SELECT 1"}); err != nil {
+		t.Fatal(err)
 	}
 }

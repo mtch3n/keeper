@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	jsonv2 "encoding/json/v2"
 
@@ -57,7 +58,10 @@ type Client struct {
 	socketPath    string
 	sessionID     string
 	generation    *atomic.Int64 // bumped each time the transport dials a new conn
-	dialGen       int64         // generation observed at handshake time
+	// lost is set when a request failed on the transport itself, so the
+	// connection, and with it the session, is gone.
+	lost    atomic.Bool
+	dialGen int64 // generation observed at handshake time
 	// ready becomes true once Dial's handshake has completed, so staleness
 	// tracking never fires against the dial that establishes the session
 	// in the first place.
@@ -145,7 +149,9 @@ func dial(ctx context.Context, socketPath string, info *types.ClientInfo) (*Clie
 // underneath us — a new session, per R3.4e — and every token or ticket
 // this Client's caller was holding is gone (R3.4d). It is always true before
 // Dial has finished its own handshake.
-func (c *Client) SessionAlive() bool { return !c.ready || c.generation.Load() == c.dialGen }
+func (c *Client) SessionAlive() bool {
+	return !c.ready || (!c.lost.Load() && c.generation.Load() == c.dialGen)
+}
 
 // Close releases the underlying connection.
 func (c *Client) Close() error {
@@ -188,6 +194,35 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 // responses (query's result-or-ticket union) whose shape can't be known
 // until the bytes are inspected.
 func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]byte, error) {
+	// net/http closes the connection of a request whose context ends, and the
+	// connection is the session. A cancelled call is therefore abandoned rather
+	// than aborted: the request finishes in the background, the caller stops
+	// waiting, and the next call queues behind it on the same connection. Waiting
+	// calls are sliced (see [waitSlice]) so that queue is short. A deadline still
+	// applies, and ends the connection.
+	run, release := context.WithoutCancel(ctx), func() {}
+	if dl, ok := ctx.Deadline(); ok {
+		run, release = context.WithDeadline(run, dl)
+	}
+	type reply struct {
+		data []byte
+		err  error
+	}
+	done := make(chan reply, 1)
+	go func() {
+		defer release()
+		data, err := c.roundTrip(run, method, path, body)
+		done <- reply{data, err}
+	}()
+	select {
+	case r := <-done:
+		return r.data, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (c *Client) roundTrip(ctx context.Context, method, path string, body any) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := marshal(body)
@@ -208,18 +243,28 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]by
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		if !c.SessionAlive() {
-			return nil, &StaleSessionError{Cause: err}
+		if c.sessionID == "" {
+			return nil, fmt.Errorf("keeper: %s %s: %w", method, path, err)
 		}
-		return nil, fmt.Errorf("keeper: %s %s: %w", method, path, err)
+		c.lost.Store(true)
+		return nil, &StaleSessionError{Cause: err}
 	}
 	defer resp.Body.Close()
+	if c.sessionID != "" && !c.SessionAlive() {
+		// The transport redialed under this request, so it ran as no session at
+		// all and whatever it answered is not about the session the caller holds.
+		return nil, &StaleSessionError{}
+	}
 	if resp.StatusCode >= 400 {
 		return nil, decodeError(resp)
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("keeper: read response from %s %s: %w", method, path, err)
+		if c.sessionID == "" {
+			return nil, fmt.Errorf("keeper: read response from %s %s: %w", method, path, err)
+		}
+		c.lost.Store(true)
+		return nil, &StaleSessionError{Cause: err}
 	}
 	return data, nil
 }
@@ -232,6 +277,33 @@ func waitMs(ms int) int {
 		return cap
 	}
 	return ms
+}
+
+// waitSlice is the longest a single request waits on the daemon. A call may ask
+// to wait 25 seconds; it is made as a series of shorter waits, because a
+// request cannot be aborted without losing the session and the next call has to
+// queue behind it on the one connection.
+var waitSlice = 2 * time.Second
+
+// poll is a GET that waits up to waitMillis for settled to report true, as
+// slices of [waitSlice]. out holds the last response.
+func (c *Client) poll(ctx context.Context, path string, waitMillis int, out any, settled func() bool) error {
+	remaining := time.Duration(waitMs(waitMillis)) * time.Millisecond
+	deadline := time.Now().Add(remaining)
+	for {
+		slice := min(remaining, waitSlice)
+		p := path
+		if slice > 0 {
+			p += "?wait_ms=" + fmt.Sprint(slice.Milliseconds())
+		}
+		if err := c.do(ctx, http.MethodGet, p, nil, out); err != nil {
+			return err
+		}
+		remaining = time.Until(deadline)
+		if settled() || remaining <= 0 {
+			return nil
+		}
+	}
 }
 
 // DaemonVersion is the version the daemon reported at the handshake.

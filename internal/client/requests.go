@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 
@@ -40,16 +39,9 @@ type RequestResult struct {
 
 // GetInputResult polls an input request. waitMs is capped at 25000.
 func (c *Client) GetInputResult(ctx context.Context, requestID string, waitMillis int) (*RequestResult, error) {
-	q := url.Values{}
-	if waitMillis > 0 {
-		q.Set("wait_ms", fmt.Sprint(waitMs(waitMillis)))
-	}
-	path := "/v1/requests/" + url.PathEscape(requestID)
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
 	var out RequestResult
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	err := c.poll(ctx, "/v1/requests/"+url.PathEscape(requestID), waitMillis, &out, func() bool { return out.State != "pending_input" })
+	if err != nil {
 		return nil, err
 	}
 	return &out, nil

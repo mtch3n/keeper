@@ -151,10 +151,9 @@ const dayLayout = "2006-01-02"
 //
 // It fills in the record's id and timestamp when they are empty, so the caller
 // can read the id back for the response's audit_id, and it re-normalizes the
-// statement when it still carries something [Normalize] would have stripped.
-// That second part is a backstop, not the mechanism: the pipeline is expected
-// to pass normalized text with its own `known` callback, because this function
-// has no catalog and must therefore drop every quoted identifier.
+// statement unless the caller says it normalized it. A caller that has a
+// catalog passes normalized text with Normalized set; this function has no
+// catalog and so drops every quoted identifier.
 func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 	if r == nil {
 		return errors.New("audit: nil record")
@@ -168,8 +167,9 @@ func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 	if r.At.IsZero() {
 		r.At = l.now()
 	}
-	if hasStrippableLiteral(r.Statement) {
+	if !r.Normalized {
 		r.Statement = Normalize(r.Statement, nil)
+		r.Normalized = true
 	}
 	line, err := json.Marshal(r, durationMarshaler)
 	if err != nil {
@@ -209,13 +209,22 @@ func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 // collected so far is older than it.
 func (l *Log) Query(ctx context.Context, f ports.AuditFilter) ([]types.AuditRecord, error) {
 	var out []types.AuditRecord
+	at := map[string]int{}
 	err := l.each(ctx, func(r types.AuditRecord) bool {
 		if f.Before != "" && r.ID == f.Before {
 			return false
 		}
-		if matches(r, f) {
-			out = append(out, r)
+		if !matches(r, f) {
+			return true
 		}
+		// A write records its intent before it commits and its outcome after,
+		// under one id. The later record is the one that counts.
+		if i, ok := at[r.ID]; ok {
+			out[i] = r
+			return true
+		}
+		at[r.ID] = len(out)
+		out = append(out, r)
 		return true
 	})
 	if err != nil {
@@ -234,7 +243,6 @@ func (l *Log) Get(ctx context.Context, id string) (*types.AuditRecord, error) {
 	err := l.each(ctx, func(r types.AuditRecord) bool {
 		if r.ID == id {
 			found = &r
-			return false
 		}
 		return true
 	})

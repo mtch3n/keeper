@@ -29,6 +29,10 @@ var (
 	// ErrNoConnection is returned when a statement needs a token key and the
 	// context carries no connection to fetch one for.
 	ErrNoConnection = errors.New("redact: statement context carries no connection id")
+
+	// ErrSessionClosed is returned for a session the daemon dropped. A late
+	// statement must not recreate its reverse map.
+	ErrSessionClosed = errors.New("redact: the session is closed")
 )
 
 // PolicyLookup is the slice of ports.Catalog this package needs: the arguments a
@@ -91,6 +95,7 @@ type Redactor struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*session
+	closed   map[string]struct{}
 }
 
 var _ ports.Redactor = (*Redactor)(nil)
@@ -106,6 +111,7 @@ func New(cfg Config) (*Redactor, error) {
 		now:       cfg.Now,
 		hexLen:    TokenHexLen,
 		sessions:  map[string]*session{},
+		closed:    map[string]struct{}{},
 	}
 	if r.now == nil {
 		r.now = time.Now
@@ -140,21 +146,24 @@ func (r *Redactor) rule(namespace string) NamespaceRule {
 	return (*m)[namespace]
 }
 
-func (r *Redactor) sessionFor(id string) *session {
+func (r *Redactor) sessionFor(id string) (*session, error) {
 	r.mu.RLock()
 	s, ok := r.sessions[id]
 	r.mu.RUnlock()
 	if ok {
-		return s
+		return s, nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, gone := r.closed[id]; gone {
+		return nil, ErrSessionClosed
+	}
 	if s, ok := r.sessions[id]; ok {
-		return s
+		return s, nil
 	}
 	s = newSession()
 	r.sessions[id] = s
-	return s
+	return s, nil
 }
 
 // DropSession clears a session's reverse map. The daemon calls it when the
@@ -163,6 +172,7 @@ func (r *Redactor) sessionFor(id string) *session {
 func (r *Redactor) DropSession(sessionID string) {
 	r.mu.Lock()
 	delete(r.sessions, sessionID)
+	r.closed[sessionID] = struct{}{}
 	r.mu.Unlock()
 }
 
@@ -199,7 +209,11 @@ func (r *Redactor) Mint(ctx context.Context, sessionID, connID, namespace, value
 		policy:     types.PolicyToken,
 		expires:    now.Add(r.ttl),
 	}
-	bound, collision := r.sessionFor(sessionID).bind(b, now)
+	sess, err := r.sessionFor(sessionID)
+	if err != nil {
+		return "", err
+	}
+	bound, collision := sess.bind(b, now)
 	if collision {
 		return "", fmt.Errorf("%w: %s", ErrCollision, bound.token)
 	}
@@ -289,7 +303,10 @@ type columnPlan struct {
 func (r *Redactor) Apply(ctx context.Context, sessionID string, cols []types.ColumnMeta, rows [][]any) (map[string]types.Transform, error) {
 	st, _ := StatementFrom(ctx)
 	now := r.now()
-	sess := r.sessionFor(sessionID)
+	sess, err := r.sessionFor(sessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	plans, err := r.plan(ctx, st, sessionID, cols)
 	if err != nil {
