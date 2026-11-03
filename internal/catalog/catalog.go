@@ -1,10 +1,10 @@
 // Package catalog implements internal/ports' Catalog and CatalogStore: the
 // per-connection classification store described in SPEC.md §5.
 //
-// Two files back every connection: ".keeper/catalog.yaml" in the project
-// repo, which is committed, reviewed and shared (SPEC R5.2a), and
-// ".keeper/catalog.local.yaml" beside it, a daemon-owned, gitignored overlay
-// that automatic classification writes to instead (SPEC R5.2c). The merged
+// Two files back every connection: catalog.yaml, which a person edits, and
+// catalog.local.yaml beside it, a daemon-owned overlay that automatic
+// classification writes to instead (SPEC R5.2c). By default both live in a
+// folder of the connection's own in keeper's state directory. The merged
 // view — overlay entries taking precedence over committed ones — is what the
 // pipeline reads on every statement.
 //
@@ -26,13 +26,12 @@ import (
 )
 
 // Paths locates one connection's catalog files. All three are supplied by
-// the caller — the daemon derives Committed and Overlay from the
-// connection's project repo (SPEC R5.2a) and Cache from its own state
-// directory.
+// the caller — the daemon derives all of them from its own state
+// directory unless the connection names a catalog path.
 type Paths struct {
-	// Committed is .keeper/catalog.yaml: human-edited, reviewed, shared.
+	// Committed is catalog.yaml: human-edited.
 	Committed string
-	// Overlay is .keeper/catalog.local.yaml: daemon-owned, gitignored.
+	// Overlay is catalog.local.yaml: daemon-owned.
 	Overlay string
 	// Cache is catalog.db: the resolved-identity cache for this connection.
 	Cache string

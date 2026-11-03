@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"iter"
 	"maps"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/mtchen/keeper/internal/client"
 	"github.com/mtchen/keeper/internal/daemonapp"
+	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -72,33 +74,39 @@ func catalogInit(ctx context.Context, args []string) error {
 		return printJSON(prop)
 	}
 
+	printProposal(os.Stdout, fs.Arg(0), prop)
+	return nil
+}
+
+// printProposal prints what catalog init proposed. Init writes nothing: the
+// only way to apply a proposal is keeper catalog edit.
+func printProposal(w io.Writer, name string, prop *ports.InitProposal) {
 	// The grouping is the point. "Typed scalars → allow" and a column whose
 	// samples the detector found PII in at the threshold rate are safe to accept
 	// without reading; other text is the review task, because that is where
 	// name and address columns live and pattern detection cannot find them.
 	if len(prop.SafeToBulkAccept)+len(prop.NeedsReview) == 0 {
-		fmt.Println("no proposals: this connection has detection off, or the detector could not examine its samples.")
-		fmt.Println("classify columns with `keeper catalog edit`, or turn detection on with `keeper connection set --detection scan`.")
+		fmt.Fprintln(w, "no proposals: this connection has detection off, or the detector could not examine its samples.")
+		fmt.Fprintln(w, "classify columns with `keeper catalog edit`, or turn detection on with `keeper connection set --detection scan`.")
 	}
 	for _, d := range prop.Degradations {
-		fmt.Printf("degraded: %s — %s\n", d.Layer, d.Reason)
+		fmt.Fprintf(w, "degraded: %s — %s\n", d.Layer, d.Reason)
 	}
-	fmt.Printf("safe to accept in bulk: %d column(s)\n", len(prop.SafeToBulkAccept))
+	fmt.Fprintf(w, "safe to accept in bulk: %d column(s)\n", len(prop.SafeToBulkAccept))
 	for key, p := range sortedEntries(prop.SafeToBulkAccept) {
-		fmt.Printf("  %-50s %s%s\n", key, p.Policy, policyArgs(p))
+		fmt.Fprintf(w, "  %-50s %s%s\n", key, p.Policy, policyArgs(p))
 	}
-	fmt.Printf("\nneeds review: %d column(s)\n", len(prop.NeedsReview))
-	fmt.Println("  these are free-text columns the detector did not match at the threshold rate. A name or")
-	fmt.Println("  an address here is invisible to pattern detection, so a human decides each one.")
+	fmt.Fprintf(w, "\nneeds review: %d column(s)\n", len(prop.NeedsReview))
+	fmt.Fprintln(w, "  these are free-text columns the detector did not match at the threshold rate. A name or")
+	fmt.Fprintln(w, "  an address here is invisible to pattern detection, so a human decides each one.")
 	for key, p := range sortedEntries(prop.NeedsReview) {
 		rate := ""
 		if r, ok := prop.SampleRates[key]; ok && r > 0 {
 			rate = fmt.Sprintf("  (%.0f%% of sampled rows matched a rule)", r*100)
 		}
-		fmt.Printf("  %-50s %s%s%s\n", key, p.Policy, policyArgs(p), rate)
+		fmt.Fprintf(w, "  %-50s %s%s%s\n", key, p.Policy, policyArgs(p), rate)
 	}
-	fmt.Println("\nreview and commit .keeper/catalog.yaml, then `keeper catalog edit` to change one.")
-	return nil
+	fmt.Fprintf(w, "\nthis only proposed: nothing is changed yet. To apply one, run `keeper catalog edit %s <schema.table.column> --policy <policy>`.\n", name)
 }
 
 func catalogLs(ctx context.Context, args []string) error {
