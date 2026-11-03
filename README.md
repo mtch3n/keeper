@@ -27,7 +27,8 @@ under GDPR Article 4(11).
    ```
 
    Codex: add the same repository as a plugin marketplace and install the
-   `keeper` plugin. See "Codex" below for two settings it needs.
+   `keeper` plugin. Check the Codex plugin docs for the exact command in your
+   Codex version. See "Codex" below for two settings it needs.
 
    If `~/.local/bin` is not on your `PATH`, the plugin still works. Add the
    folder to `PATH` so that your terminal finds `keeper`:
@@ -47,16 +48,17 @@ under GDPR Article 4(11).
    rows come back on the same call.
 
 4. In the first result, the email column is a token, for example
-   `⟨email1:a3f21b4c9d8e7f60⟩`. The same email always gives the same token, so
-   joins, `GROUP BY` and `COUNT(DISTINCT ...)` still work. The result also names
+   `⟨email1:a3f21b4c9d8e7f60⟩`. Within one session, the same email gives the same
+   token, so joins, `GROUP BY` and `COUNT(DISTINCT ...)` still work. Another
+   session gets a different token for the same email. The result also names
    the one command that changes how a column is masked:
 
    ```sh
    keeper catalog edit <profile> <schema.table.column> --policy allow
    ```
 
-keeper classifies columns on its own the first time. You do not have to set up a
-catalog before the first query.
+keeper classifies columns on its own, by name and type. You do not have to set up
+a catalog before the first query.
 
 ## Profile settings
 
@@ -67,7 +69,7 @@ the dashboard (`keeper ui`).
 |---|---|---|
 | `reads` | `always`, `uncertain`, `never` | `always`: every read asks a person first. `uncertain`: a read asks when its plan calls a volatile function. `never`: reads run without a question. |
 | `writes` | `off`, `ask`, `allow` | `off`: a write is refused. `ask`: a person approves each write and sees the rows it changes. `allow`: a write runs. |
-| `detection` | `off`, `scan`, `all` | How keeper looks for personal data in free text. `scan` is the default. |
+| `detection` | `off`, `scan`, `all` | `scan` (the default): pattern detection examines the text of `scan` columns. `all`: it also examines the text of `allow` columns. `off`: it examines nothing, so `scan` cells are redacted whole. |
 
 ```sh
 keeper connection set prod --reads uncertain --writes ask --detection scan
@@ -92,8 +94,13 @@ accepts.
 
 ## Declare personal data columns
 
-keeper classifies columns by name and type, and by a scan of sample values. To
-set the policy of one column yourself:
+keeper classifies a column on its own by its name and its type only. A name that
+says personal data gets `token` (or `redact` when the column is not text). Other
+text columns are redacted. Numeric, boolean, date and time, and UUID columns are
+allowed. `keeper catalog init <profile> --sample N` samples N rows per column and
+prints proposals in two groups, safe to accept in bulk and needs review. It only
+proposes: it changes nothing until you run `keeper catalog edit`. To set the
+policy of one column yourself:
 
 ```sh
 keeper catalog ls prod --unclassified
@@ -135,10 +142,9 @@ restores them on another machine. keeper does not store the passphrase.
 
 ## Codex
 
-The plugin cannot set tool approval in Codex. Without a setting, Codex asks a
-second question before each keeper tool call, on top of keeper's own dialog. To
-avoid the second question, set the approval mode for the keeper server in your
-Codex config (`~/.codex/config.toml`):
+The plugin cannot set tool approval in Codex. To avoid a second question
+on top of keeper's own dialog, set the approval mode for the keeper server in
+your Codex config (`~/.codex/config.toml`). Check this for your Codex version:
 
 ```toml
 [mcp_servers.keeper]
@@ -146,7 +152,8 @@ default_tools_approval_mode = "approve"
 ```
 
 The key is `mcp_servers.<id>.default_tools_approval_mode`. Its documented values
-are `auto`, `prompt`, `writes` and `approve`. A per-tool key,
+are `auto`, `prompt`, `writes` and `approve`. The Codex docs do not say what
+each value does, so check which one skips the question. A per-tool key,
 `mcp_servers.<id>.tools.<tool>.approval_mode`, also exists. Check the
 [config reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 for your Codex version.
