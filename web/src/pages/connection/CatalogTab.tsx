@@ -66,8 +66,9 @@ export function CatalogTab({ connId }: { connId: string }) {
 
   if (!loaded && !error) return <Skeleton className="h-40 w-full" />
 
-  const undecided: [string, ColumnPolicy | null][] = unclassified.map((key) => [key, null])
-  const shown = [...undecided, ...Object.entries(entries)].filter(([key]) => key.includes(filter))
+  const byKey = (a: [string, unknown], b: [string, unknown]) => a[0].localeCompare(b[0])
+  const undecided: [string, ColumnPolicy | null][] = unclassified.map((key): [string, null] => [key, null]).sort(byKey)
+  const shown = [...undecided, ...Object.entries(entries).sort(byKey)].filter(([key]) => key.includes(filter))
 
   return (
     <div className="flex flex-col gap-6">
