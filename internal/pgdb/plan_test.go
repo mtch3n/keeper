@@ -19,7 +19,7 @@ func parsePlan(t *testing.T, raw string) walkResult {
 	if len(roots) == 0 {
 		t.Fatal("EXPLAIN output had no plan")
 	}
-	return walkPlan(&roots[0].Plan)
+	return walkPlan(roots)
 }
 
 // A view is expanded by EXPLAIN, so the plan names the base tables and never the

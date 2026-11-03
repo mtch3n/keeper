@@ -7,6 +7,7 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,10 +56,12 @@ func (r *Redactor) applyPaths(ctx context.Context, sess *session, pl *columnPlan
 		}
 		src, decoded = encoded, true
 	default:
-		return nil, false
+		// A number or boolean document: paths describe objects and arrays only.
+		return RedactedMarker, true
 	}
 	if !jsontext.Value(src).IsValid() {
-		return nil, false
+		// The driver hands a jsonb string scalar over as the bare string.
+		return RedactedMarker, true
 	}
 	var buf bytes.Buffer
 	dec := jsontext.NewDecoder(bytes.NewReader(src))
@@ -94,13 +97,24 @@ func (r *Redactor) walkJSON(ctx context.Context, sess *session, pl *columnPlan, 
 		if err := enc.WriteToken(jsontext.BeginObject); err != nil {
 			return err
 		}
+		hidden := 0
 		for dec.PeekKind() != jsontext.KindEndObject {
 			name, err := dec.ReadToken()
 			if err != nil {
 				return err
 			}
 			child := path + "." + name.String()
-			if err := enc.WriteToken(jsontext.String(name.String())); err != nil {
+			shown := name.String()
+			if !pathLeadsToDeclared(pl.paths, child) {
+				// The key is data too. Hidden keys need distinct names for the
+				// object to stay valid.
+				hidden++
+				shown = RedactedMarker
+				if hidden > 1 {
+					shown = RedactedSpan(strconv.Itoa(hidden))
+				}
+			}
+			if err := enc.WriteToken(jsontext.String(shown)); err != nil {
 				return err
 			}
 			if err := r.walkJSON(ctx, sess, pl, dec, enc, child, depth+1, now); err != nil {
@@ -141,6 +155,17 @@ func (r *Redactor) walkJSON(ctx context.Context, sess *session, pl *columnPlan, 
 		out := r.applyLeaf(ctx, sess, pl, path, raw, now)
 		return enc.WriteValue(out)
 	}
+}
+
+// pathLeadsToDeclared reports whether path is declared or is a prefix of a
+// declared one, which is when its key may be shown.
+func pathLeadsToDeclared(paths map[string]types.ColumnPolicy, path string) bool {
+	for p := range paths {
+		if p == path || strings.HasPrefix(p, path+".") || strings.HasPrefix(p, path+"[") {
+			return true
+		}
+	}
+	return false
 }
 
 // applyLeaf applies a path's policy to one scalar leaf.

@@ -16,9 +16,12 @@ type binding struct {
 	value      string // the value as bound and as it would leave keeper
 	normalized string // the value as hashed, per its namespace's rule
 	namespace  string
-	version    int
-	policy     types.Policy // the policy that caused this value to be tokenized
-	expires    time.Time
+	// connID is the connection whose key made the token. A token means nothing
+	// on another connection of the same session.
+	connID  string
+	version int
+	policy  types.Policy // the policy that caused this value to be tokenized
+	expires time.Time
 	// seq is the order the binding was created in. Two namespaces can bind the
 	// same value to two different tokens; the emission scan has to pick one,
 	// and picking the first one bound is both deterministic and consistent with
@@ -47,7 +50,9 @@ type session struct {
 	// equality instead. Dropping them entirely would be a hole; substring
 	// matching them would rewrite every cell containing "Li".
 	short map[string]*binding
-	dirty bool
+	// tokens are the rendered tokens bound at the last rebuild.
+	tokens map[string]bool
+	dirty  bool
 }
 
 func newSession() *session {
@@ -88,11 +93,11 @@ func (s *session) bind(b *binding, now time.Time) (bound *binding, collision boo
 
 // resolve returns the value a token stands for, refreshing its lifetime: a
 // session still using a token has not finished with it.
-func (s *session) resolve(token string, now time.Time, ttl time.Duration) (*binding, bool) {
+func (s *session) resolve(token, connID string, now time.Time, ttl time.Duration) (*binding, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, ok := s.byToken[token]
-	if !ok || !b.expires.After(now) {
+	if !ok || b.connID != connID || !b.expires.After(now) {
 		return nil, false
 	}
 	b.expires = now.Add(ttl)
@@ -116,6 +121,7 @@ type index struct {
 	matcher *Matcher
 	owners  []*binding
 	short   map[string]*binding
+	tokens  map[string]bool
 }
 
 // buildIndex returns the scan index, rebuilding it if the map changed.
@@ -131,7 +137,7 @@ func (s *session) buildIndex(minMatch int, now time.Time) index {
 	if s.dirty || s.matcher == nil {
 		s.rebuildLocked(minMatch)
 	}
-	return index{matcher: s.matcher, owners: s.owners, short: s.short}
+	return index{matcher: s.matcher, owners: s.owners, short: s.short, tokens: s.tokens}
 }
 
 // rebuildLocked builds a fresh index. Fresh, not reused: buildIndex hands the
@@ -166,6 +172,10 @@ func (s *session) rebuildLocked(minMatch int) {
 	for _, b := range ordered {
 		add(b.value, b)
 		add(b.normalized, b)
+	}
+	s.tokens = make(map[string]bool, len(s.byToken))
+	for tok := range s.byToken {
+		s.tokens[tok] = true
 	}
 	s.owners = owners
 	s.short = short

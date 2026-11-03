@@ -14,86 +14,85 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// --- R7.6 type-family inheritance ------------------------------------------
+// --- computed-column inheritance --------------------------------------------
 
-// A computed column of numeric, boolean, date/time or uuid type inherits the
-// strictest policy among the same-type-family non-allow columns of the
-// referenced relations. users holds salary numeric redact, so every aggregate on
-// users — and on anything joined to it — is masked.
-func TestComputedNumericInheritsWithinItsFamily(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{computed("count", "int8")}
-		h.exec.rows = [][]any{{int64(42)}}
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT count(*) FROM users"})
-
-	if dec.Error != nil {
-		t.Fatalf("unexpected refusal: %v", dec.Error)
+func flowing(oid uint32, atts ...uint16) []ports.ColumnRef {
+	var out []ports.ColumnRef
+	for _, a := range atts {
+		out = append(out, ports.ColumnRef{TableOID: oid, AttNum: a})
 	}
-	tr := transformFor(t, dec, "count")
-	if tr.Policy != types.PolicyRedact {
-		t.Errorf("count(*) over users = %q, want redact (salary numeric redact is in the same family)", tr.Policy)
-	}
-	if tr.Basis != types.BasisInherited {
-		t.Errorf("basis = %q, want inherited", tr.Basis)
+	return out
+}
+
+// A computed column takes the strictest non-allow policy among the columns that
+// flow out of a scan, whatever the type of either. A column that only filters,
+// or is not selected, does not flow, so aggregates over a table with masked
+// columns stay usable.
+func TestComputedColumnInheritsFromTheColumnsThatFlow(t *testing.T) {
+	unknownRel := ports.PlanFacts{Relations: []uint32{9999}}
+	for _, tc := range []struct {
+		name  string
+		typ   string
+		plan  func(*ports.PlanFacts)
+		want  types.Policy
+		basis types.Basis
+	}{
+		{"count star flows nothing", "int8", func(p *ports.PlanFacts) {}, types.PolicyAllow, types.BasisInherited},
+		{"sum of an allowed column", "numeric", func(p *ports.PlanFacts) { p.Flows = flowing(ordersOID, 2) }, types.PolicyAllow, types.BasisInherited},
+		{"number from a redacted number", "int8", func(p *ports.PlanFacts) { p.Flows = flowing(usersOID, 4) }, types.PolicyRedact, types.BasisInherited},
+		{"number from a redacted text", "int8", func(p *ports.PlanFacts) { p.Flows = flowing(usersOID, 3) }, types.PolicyRedact, types.BasisInherited},
+		{"date from a token column", "date", func(p *ports.PlanFacts) { p.Flows = flowing(usersOID, 2) }, types.PolicyRedact, types.BasisInherited},
+		{"text from a scan column", "text", func(p *ports.PlanFacts) { p.Flows = flowing(usersOID, 5) }, types.PolicyScan, types.BasisInherited},
+		{"allowed and masked together", "text", func(p *ports.PlanFacts) { p.Flows = flowing(usersOID, 1, 2) }, types.PolicyRedact, types.BasisInherited},
+		{"a column the catalog does not know", "int8", func(p *ports.PlanFacts) { p.Flows = flowing(usersOID, 77) }, types.PolicyRedact, types.BasisInherited},
+		{"a relation the catalog does not know", "int8", func(p *ports.PlanFacts) { p.Relations = append(p.Relations, unknownRel.Relations...) }, types.PolicyRedact, types.BasisInherited},
+		{"a function outside pg_catalog", "text", func(p *ports.PlanFacts) { p.Opaque = true }, types.PolicyRedact, types.BasisInherited},
+		{"a volatile function", "int8", func(p *ports.PlanFacts) { p.Uncertain = true }, types.PolicyRedact, types.BasisInherited},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, func(h *harness) {
+				h.exec.cols = []types.ColumnMeta{computed("v", tc.typ)}
+				h.exec.rows = [][]any{{"x"}}
+				h.authority.conn.Reads = types.ReadsNever
+				h.exec.plan = readPlan(1, usersRef, ordersRef)
+				tc.plan(h.exec.plan)
+			})
+			dec := h.query(t, Request{SQL: "SELECT 1"})
+			if dec.Error != nil {
+				t.Fatalf("unexpected refusal: %v", dec.Error)
+			}
+			tr := transformFor(t, dec, "v")
+			if tr.Policy != tc.want || tr.Basis != tc.basis {
+				t.Errorf("policy = %q basis = %q, want %q %q", tr.Policy, tr.Basis, tc.want, tc.basis)
+			}
+		})
 	}
 }
 
-// The same aggregate over a relation with no sensitive numeric column is allow
-// with tripwires — this is the half of R7.6 that keeps ordinary aggregates
-// usable. orders holds a token text column, and the numeric branch ignores it.
-func TestComputedNumericIgnoresOtherFamilies(t *testing.T) {
+// A JSON column allowed with only some paths is not an allowed column once its
+// text flows into a computed value.
+func TestComputedColumnFromAJSONColumnWithPathsRedacts(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{computed("count", "int8")}
-		h.exec.rows = [][]any{{int64(7)}}
+		h.catalog.byIdentity[colKey{ordersOID, 2}] = types.ColumnPolicy{Policy: types.PolicyAllow, Paths: map[string]types.ColumnPolicy{"$.ip": {Policy: types.PolicyAllow}}}
+		h.exec.cols = []types.ColumnMeta{computed("v", "text")}
+		h.exec.rows = [][]any{{"x"}}
 		h.exec.plan = readPlan(1, ordersRef)
+		h.exec.plan.Flows = flowing(ordersOID, 2)
 	})
-
-	dec := h.query(t, Request{SQL: "SELECT count(DISTINCT user_email) FROM orders"})
-
-	if dec.Error != nil {
-		t.Fatalf("unexpected refusal: %v", dec.Error)
-	}
-	if got := transformFor(t, dec, "count").Policy; got != types.PolicyAllow {
-		t.Errorf("count over orders = %q, want allow", got)
-	}
-	if dec.Result.Rows[0][0] != int64(7) {
-		t.Errorf("an allow column was masked: %v", dec.Result.Rows[0][0])
+	dec := h.query(t, Request{SQL: "SELECT metadata::text FROM orders"})
+	if got := transformFor(t, dec, "v").Policy; got != types.PolicyRedact {
+		t.Errorf("policy = %q, want redact", got)
 	}
 }
 
-// A computed column of text-like or unknown type inherits the strictest policy
-// among ALL non-allow columns of the referenced relations. orders' only
-// sensitive column is text, and it still poisons a text expression.
-func TestComputedTextInheritsFromEveryFamily(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{computed("upper", "text")}
-		h.exec.rows = [][]any{{"NEW"}}
-		h.exec.plan = readPlan(1, ordersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT upper(status) FROM orders"})
-
-	tr := transformFor(t, dec, "upper")
-	// token participates in the ordering and collapses to redact on inheritance
-	// (R7.6b): a computed value has no namespace to tokenize under.
-	if tr.Policy != types.PolicyRedact {
-		t.Errorf("upper(...) over orders = %q, want redact", tr.Policy)
-	}
-	if dec.Result.Rows[0][0] != maskMarker {
-		t.Errorf("a redacted value survived: %v", dec.Result.Rows[0][0])
-	}
-}
-
-// With nothing sensitive in the referenced relation, the text branch is allow
-// too — the rule masks broadly, not unconditionally.
+// With nothing sensitive in the referenced relation, the computed column is
+// allow too.
 func TestComputedTextOverACleanRelationIsAllowed(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.exec.cols = []types.ColumnMeta{computed("label", "text")}
 		h.exec.rows = [][]any{{"ok"}}
 		h.exec.plan = readPlan(1, cleanRef)
+		h.exec.plan.Flows = flowing(cleanOID, 2)
 	})
 
 	dec := h.query(t, Request{SQL: "SELECT label || '-x' FROM clean_ids"})
@@ -355,7 +354,7 @@ func TestAuditIsNeverSkipped(t *testing.T) {
 		{"escalation", func(h *harness) {
 			h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
 			h.exec.plan = readPlan(1, cleanRef)
-			h.authority.conn.Reads = types.ReadsAlways
+			h.authority.conn.Reads = types.ReadsNever
 		}, Request{SQL: "SELECT id FROM clean_ids"}},
 		{"result", func(h *harness) {
 			h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}

@@ -155,45 +155,6 @@ func (c *Catalog) Relation(tableOID uint32) (types.RelationRef, bool) {
 	return ref, ok
 }
 
-// RelationPolicies returns every non-allow column of a relation, each with
-// the type family SPEC R7.6's inheritance rule consumes.
-func (c *Catalog) RelationPolicies(tableOID uint32) []ports.FamilyPolicy {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	cols, err := c.cache.relationColumns(tableOID)
-	if err != nil || len(cols) == 0 {
-		return nil
-	}
-	out := make([]ports.FamilyPolicy, 0, len(cols))
-	for _, col := range cols {
-		p, ok := c.merged[col.Column]
-		if !ok {
-			// R5.4a: a column with no entry is redacted when it is output, so a
-			// value computed from it is too. Leaving it out made upper(email)
-			// cleartext while SELECT email was redacted.
-			p = types.ColumnPolicy{Policy: types.PolicyRedact}
-		}
-		if p.Policy == types.PolicyAllow {
-			// A declared path can be extracted from an otherwise allowed column.
-			strictest := types.PolicyAllow
-			for _, sub := range p.Paths {
-				strictest = types.Strictest(strictest, sub.Policy)
-			}
-			if strictest == types.PolicyAllow {
-				continue
-			}
-			p = types.ColumnPolicy{Policy: strictest}
-		}
-		out = append(out, ports.FamilyPolicy{
-			Column: col.Column.Column,
-			Family: Family(col.TypeOID),
-			Policy: p,
-		})
-	}
-	return out
-}
-
 // Readable reports the columns has_column_privilege allows the connection's
 // role to read, so get_schema can omit the rest and an error can name what
 // may be read. SPEC R5.5.

@@ -18,8 +18,10 @@ package pgdb
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -501,7 +503,7 @@ func (db *DB) Run(ctx context.Context, connID, sql string, params []ports.Param,
 		if facts.Writes || facts.StatementType == StmtDDL {
 			return keeperError(types.CodeApprovalRequired)
 		}
-		r, err := c.fetch(ctx, sql, params, effectiveMaxRows(maxRows, c.limits))
+		r, err := c.fetch(ctx, sql, params, effectiveMaxRows(maxRows, c.limits), true)
 		if err != nil {
 			return err
 		}
@@ -548,7 +550,7 @@ func (db *DB) write(ctx context.Context, connID, sql string, params []ports.Para
 				return nil
 			}
 		}
-		r, err := c.fetch(ctx, sql, params, c.limits.MaxRowsCeiling)
+		r, err := c.fetch(ctx, sql, params, c.limits.MaxRowsCeiling, false)
 		if err != nil {
 			return err
 		}
@@ -567,7 +569,7 @@ func (db *DB) write(ctx context.Context, connID, sql string, params []ports.Para
 }
 
 // fetch executes the statement and reads at most maxRows rows.
-func (c *conn) fetch(ctx context.Context, sql string, params []ports.Param, maxRows int) (*ports.RawResult, error) {
+func (c *conn) fetch(ctx context.Context, sql string, params []ports.Param, maxRows int, cancelOnCut bool) (*ports.RawResult, error) {
 	start := time.Now()
 	rows, err := c.tx.Query(ctx, sql, args(params)...)
 	if err != nil {
@@ -577,6 +579,11 @@ func (c *conn) fetch(ctx context.Context, sql string, params []ports.Param, maxR
 	defer rows.Close()
 
 	res := &ports.RawResult{Columns: c.columnsOf(rows.FieldDescriptions())}
+	maxBytes := c.limits.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = types.DefaultLimits().MaxBytes
+	}
+	size := 0
 	for rows.Next() {
 		if len(res.Rows) >= maxRows {
 			// One row past the ceiling is what distinguishes "exactly maxRows"
@@ -584,17 +591,37 @@ func (c *conn) fetch(ctx context.Context, sql string, params []ports.Param, maxR
 			res.Truncated = true
 			break
 		}
+		// The wire size is counted before the row is decoded and kept, so a few
+		// wide rows stop here and do not pile up in memory.
+		for _, raw := range rows.RawValues() {
+			size += len(raw)
+		}
+		if size > maxBytes {
+			res.Truncated, res.BytesCut = true, true
+			if cancelOnCut {
+				// Closing the rows would otherwise read the rest of a result
+				// nobody will see. A write is never cancelled: it must finish.
+				_ = c.pg.CancelRequest(ctx)
+				c.aborted = true
+			}
+			break
+		}
 		vals, err := rows.Values()
 		if err != nil {
 			c.aborted = true
 			return nil, convert(err)
+		}
+		for i := range vals {
+			vals[i] = jsonSafe(vals[i])
 		}
 		res.Rows = append(res.Rows, vals)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		c.aborted = true
-		return nil, convert(err)
+		if pgErr, ok := errors.AsType[*pgconn.PgError](err); !(ok && pgErr.Code == "57014" && res.BytesCut && cancelOnCut) {
+			return nil, convert(err)
+		}
 	}
 	tag := rows.CommandTag()
 
@@ -613,4 +640,36 @@ func effectiveMaxRows(requested int, lim types.Limits) int {
 		return ceiling
 	}
 	return min(requested, ceiling)
+}
+
+// jsonSafe turns the values JSON cannot encode into the strings PostgreSQL
+// prints for them: NaN and infinite floats, and infinite dates and timestamps.
+func jsonSafe(v any) any {
+	switch t := v.(type) {
+	case float64:
+		return nonFinite(t, v)
+	case float32:
+		return nonFinite(float64(t), v)
+	case pgtype.InfinityModifier:
+		return t.String()
+	case []any:
+		out := make([]any, len(t))
+		for i := range t {
+			out[i] = jsonSafe(t[i])
+		}
+		return out
+	}
+	return v
+}
+
+func nonFinite(f float64, orig any) any {
+	switch {
+	case math.IsNaN(f):
+		return "NaN"
+	case math.IsInf(f, 1):
+		return "Infinity"
+	case math.IsInf(f, -1):
+		return "-Infinity"
+	}
+	return orig
 }

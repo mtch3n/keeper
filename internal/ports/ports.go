@@ -101,10 +101,6 @@ type Catalog interface {
 	LookupName(rel types.RelationRef, column string) (types.ColumnPolicy, bool)
 	// Relation names a table OID, for error messages and audit records.
 	Relation(tableOID uint32) (types.RelationRef, bool)
-	// RelationPolicies returns every non-allow policy of a relation, with the
-	// type family of the column that carries it. This is what R7.6's type-family
-	// inheritance consumes; the caller does not read the catalog directly.
-	RelationPolicies(tableOID uint32) []FamilyPolicy
 	// Readable reports the columns has_column_privilege allows, so get_schema can
 	// omit the rest and an error can name what may be read. SPEC R5.5.
 	Readable(ctx context.Context, rel types.RelationRef) ([]string, error)
@@ -126,13 +122,6 @@ const (
 	FamilyText     TypeFamily = "text"
 	FamilyUnknown  TypeFamily = "unknown"
 )
-
-// FamilyPolicy is one column's policy with the family it belongs to.
-type FamilyPolicy struct {
-	Column string
-	Family TypeFamily
-	Policy types.ColumnPolicy
-}
 
 // CatalogStore is the write side of internal/catalog, used by the CLI and the UI.
 type CatalogStore interface {
@@ -325,10 +314,17 @@ type PlanFacts struct {
 	// Uncertain is set when a volatile function name appears as a call in the
 	// plan, or when keeper could not look that up.
 	Uncertain bool
+	// Opaque is set when the plan calls a function outside pg_catalog, refers to
+	// a whole row, or has a node whose output keeper cannot read. A computed
+	// column of such a plan can carry anything.
+	Opaque    bool
 	HasFilter bool
 	// Filters are the columns the plan's conditions name: filters, index and
 	// join conditions.
 	Filters []ColumnRef
+	// Flows are the columns of the scanned relations whose values can reach the
+	// result, read from the Output lists of the plan.
+	Flows []ColumnRef
 }
 
 // ColumnRef is one column of a relation, by identity and by name.
@@ -345,6 +341,8 @@ type RawResult struct {
 	Rows      [][]any
 	RowCount  int
 	Truncated bool
+	// BytesCut is set when the rows stopped at the byte limit, before redaction.
+	BytesCut bool
 	// CommandTag carries the affected-row count for a write.
 	CommandTag int64
 	// Changes is set by PreviewWrite: the rows the write changes, in cleartext.

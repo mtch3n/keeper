@@ -32,7 +32,7 @@ func (c *conn) previewChanges(ctx context.Context, sql string, params []ports.Pa
 		if _, err := c.tx.Exec(ctx, "SAVEPOINT keeper_preview"); err != nil {
 			return nil, false
 		}
-		r, err := c.fetch(ctx, sql+clause, params, types.PreviewRows)
+		r, err := c.fetch(ctx, sql+clause, params, types.PreviewRows, false)
 		if err == nil {
 			return &ports.RawResult{
 				CommandTag: r.CommandTag,

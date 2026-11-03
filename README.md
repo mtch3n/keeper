@@ -99,7 +99,8 @@ accepts.
 keeper classifies a column on its own by its name and its type only. A name that
 says personal data gets `token` (or `redact` when the column is not text). Other
 text columns are redacted. Numeric, boolean, date and time, and UUID columns are
-allowed. `keeper catalog init <profile> --sample N` samples N rows per column and
+allowed, except in a view or materialized view, where every column is
+redacted. `keeper catalog init <profile> --sample N` samples N rows per column and
 prints proposals in two groups, safe to accept in bulk and needs review. It only
 proposes: it changes nothing until you run `keeper catalog edit`. To set the
 policy of one column yourself:
