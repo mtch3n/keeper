@@ -63,3 +63,26 @@ func TestDialogMessageShowsASQLControlCharacterVisibly(t *testing.T) {
 		t.Errorf("a bidirectional control reached the dialog: %q", msg)
 	}
 }
+
+func TestDialogShowsSQLInItsFirstLines(t *testing.T) {
+	item := dialogItem(false)
+	item.SQL = "SELECT  email\n  FROM customers\n\tWHERE id = 4"
+	msg := dialogMessage(item, "shop_ro", "http://127.0.0.1:1/r/t1")
+	lines := strings.Split(msg, "\n")
+	if lines[0] != "SELECT email FROM customers WHERE id = 4" {
+		t.Errorf("the first line is not the collapsed SQL: %q", lines[0])
+	}
+	if strings.Contains(msg, "/r/t1") {
+		t.Errorf("a short read SQL needs no link:\n%s", msg)
+	}
+
+	item.SQL = "SELECT " + strings.Repeat("a, ", 100) + "z FROM customers"
+	msg = dialogMessage(item, "shop_ro", "http://127.0.0.1:1/r/t1")
+	lines = strings.Split(msg, "\n")
+	if n := len([]rune(lines[0])); n > 72 || !strings.HasSuffix(lines[0], "…") {
+		t.Errorf("a long SQL is not cut with the mark within 72 characters (%d): %q", n, lines[0])
+	}
+	if !strings.Contains(strings.Join(lines[:3], "\n"), "http://127.0.0.1:1/r/t1") {
+		t.Errorf("the link is not in the first three lines:\n%s", msg)
+	}
+}
