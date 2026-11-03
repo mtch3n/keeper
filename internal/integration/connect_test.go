@@ -172,3 +172,30 @@ func TestConnect_PLG_C18_reads_stdin_and_refuses_argv(t *testing.T) {
 		t.Errorf("argv attempt registered something: hosts %d->%d, connections %d->%d", hosts1, h, conns1, c)
 	}
 }
+
+func TestConnectUnreachableNamesReachability(t *testing.T) {
+	e := newLeanEnv(t)
+	bin := buildKeeper(t)
+	hosts0, conns0 := e.counts(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+
+	out, err := runKeeper(t, bin, connString("127.0.0.1", port, "u", "pw-closed-port", "shop")+"\n", "connect")
+	if err == nil {
+		t.Fatalf("want a failure:\n%s", out)
+	}
+	low := strings.ToLower(out)
+	if !strings.Contains(low, "reach") || strings.Contains(low, "refused the login") {
+		t.Errorf("output must say the server could not be reached, not that a login was refused:\n%s", out)
+	}
+	if strings.Contains(out, "pw-closed-port") || !strings.Contains(out, "nothing was registered") {
+		t.Errorf("bad output:\n%s", out)
+	}
+	if h, c := e.counts(t); h != hosts0 || c != conns0 {
+		t.Errorf("registered something: hosts %d->%d, connections %d->%d", hosts0, h, conns0, c)
+	}
+}

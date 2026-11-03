@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/url"
@@ -147,9 +148,20 @@ func connectProfile(ctx context.Context, cli *client.Client, t connTarget) error
 	if err != nil {
 		_ = cli.RemoveConnection(ctx, conn.ID)
 		undoHost()
-		return fmt.Errorf("the server refused the login for user %q on database %q; check the user, the password and the database in the string, then run `keeper connect` again; nothing was registered", t.user, t.database)
+		return testFailure(err)
 	}
 	fmt.Printf("profile %q registered with writes off\n", t.profile)
 	fmt.Printf("connected as %s · PostgreSQL %s · %s\n", res.User, res.ServerVersion, time.Duration(res.RoundTrip).Round(time.Millisecond))
 	return nil
+}
+
+func testFailure(err error) error {
+	if ke, ok := errors.AsType[*types.Error](err); ok {
+		msg := ke.Summary
+		if ke.Action != "" {
+			msg += ". " + ke.Action
+		}
+		return fmt.Errorf("%s; nothing was registered", msg)
+	}
+	return errors.New("the login test failed; check the connection string and run `keeper connect` again; nothing was registered")
 }
