@@ -245,3 +245,14 @@ func TestPlg_LauncherRefusesAKeeperOlderThanTheManifestNeeds(t *testing.T) {
 		t.Errorf("a new enough keeper must run: %q, %q, %v", out, errOut, err)
 	}
 }
+
+func TestPlg_LauncherRunsKeeperBuildsItCannotCompare(t *testing.T) {
+	for _, version := range []string{"dev", "0.1.0-3-gabc1234-dirty", "v9.0.0", ""} {
+		e := newLauncherEnv(t)
+		script := "#!/bin/sh\nif [ \"$1\" = version ]; then echo \"client   " + version + "\"; exit 0; fi\necho \"fixture keeper $*\"\n"
+		must(t, os.WriteFile(filepath.Join(e.bin, "keeper"), []byte(script), 0o755))
+		if out, errOut, err := e.run(); err != nil || out != "fixture keeper mcp version\n" {
+			t.Errorf("version %q: %q, %q, %v", version, out, errOut, err)
+		}
+	}
+}

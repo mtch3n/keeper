@@ -38,7 +38,8 @@ check_version() {
     min="$(sed -n 's/.*"keeper_min_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" 2>/dev/null | head -n 1)"
     have="$("$1" version 2>/dev/null | awk '$1 == "client" { print $2; exit }')" || have=""
     have="${have#v}"
-    [ -n "$min" ] && [ -n "$have" ] || return 0
+    case "$min" in [0-9]*) ;; *) return 0 ;; esac
+    case "$have" in [0-9]*) ;; *) return 0 ;; esac
     if older_than "$have" "$min"; then
         fail "keeper $have at $1 is older than the $min this plugin needs. Run \`keeper update\`, or download a release from https://github.com/mtch3n/keeper/releases, then restart."
     fi
