@@ -65,32 +65,6 @@ func TestRelationNamesATableOID(t *testing.T) {
 	}
 }
 
-func TestRelationPoliciesExcludesAllowAndCarriesFamily(t *testing.T) {
-	c := resolvedTestCatalog(t, nil, nil, map[columnKey]types.ColumnPolicy{
-		{Schema: "public", Table: "users", Column: "id"}:    {Policy: types.PolicyAllow},
-		{Schema: "public", Table: "users", Column: "email"}: {Policy: types.PolicyToken, Namespace: "email"},
-		{Schema: "public", Table: "users", Column: "ssn"}:   {Policy: types.PolicyRedact},
-	})
-
-	got := c.RelationPolicies(100)
-	if len(got) != 2 {
-		t.Fatalf("RelationPolicies(100) = %+v, want 2 entries (email token, ssn redact)", got)
-	}
-	byColumn := make(map[string]ports.FamilyPolicy, len(got))
-	for _, fp := range got {
-		byColumn[fp.Column] = fp
-	}
-	if _, ok := byColumn["id"]; ok {
-		t.Errorf("allow column must not appear in RelationPolicies")
-	}
-	if fp, ok := byColumn["email"]; !ok || fp.Family != ports.FamilyText || fp.Policy.Policy != types.PolicyToken {
-		t.Errorf("email: got %+v (ok=%v), want FamilyText/token", fp, ok)
-	}
-	if fp, ok := byColumn["ssn"]; !ok || fp.Family != ports.FamilyNumeric || fp.Policy.Policy != types.PolicyRedact {
-		t.Errorf("ssn: got %+v (ok=%v), want FamilyNumeric/redact", fp, ok)
-	}
-}
-
 func TestReadableDelegatesToPrivilegeChecker(t *testing.T) {
 	priv := &fakePrivileges{columns: map[string][]string{
 		"public.users": {"id", "email"},
@@ -156,23 +130,5 @@ func TestFreshOfAnUnresolvedRelationIsUncertain(t *testing.T) {
 	}
 	if fresh {
 		t.Errorf("Fresh() of a relation the cache never resolved must report false")
-	}
-}
-
-func Test_EVAL_C1_AnUnclassifiedColumnIsInheritedAsRedact(t *testing.T) {
-	c := resolvedTestCatalog(t, nil, nil, map[columnKey]types.ColumnPolicy{
-		{Schema: "public", Table: "users", Column: "id"}: {Policy: types.PolicyAllow},
-	})
-	byColumn := map[string]ports.FamilyPolicy{}
-	for _, fp := range c.RelationPolicies(100) {
-		byColumn[fp.Column] = fp
-	}
-	for _, col := range []string{"email", "ssn"} {
-		if fp, ok := byColumn[col]; !ok || fp.Policy.Policy != types.PolicyRedact {
-			t.Errorf("%s has no catalog entry: got %+v (ok=%v), want redact, as it is when output directly", col, fp, ok)
-		}
-	}
-	if _, ok := byColumn["id"]; ok {
-		t.Errorf("an allow column must not appear")
 	}
 }

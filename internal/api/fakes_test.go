@@ -172,9 +172,6 @@ func (c *fakeCatalog) LookupName(rel types.RelationRef, col string) (types.Colum
 }
 
 func (c *fakeCatalog) Relation(uint32) (types.RelationRef, bool) { return types.RelationRef{}, false }
-func (c *fakeCatalog) RelationPolicies(uint32) []ports.FamilyPolicy {
-	return nil
-}
 
 func (c *fakeCatalog) Readable(_ context.Context, rel types.RelationRef) ([]string, error) {
 	c.mu.Lock()

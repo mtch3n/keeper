@@ -11,7 +11,12 @@ import (
 // classifyDefault is the policy a column gets when nobody has classified it:
 // a name that says personal data wins, then the column's type decides. A token
 // needs a text value to hash, so a personal name on any other type is redacted.
-func classifyDefault(col ports.Column) types.ColumnPolicy {
+func classifyDefault(kind byte, col ports.Column) types.ColumnPolicy {
+	if kind == 'v' || kind == 'm' {
+		// A view column can be a base column under another name; its mask is not
+		// carried over, so only a person's declaration lets it through.
+		return types.ColumnPolicy{Policy: types.PolicyRedact}
+	}
 	family := Family(col.TypeOID)
 	if p, ok := contactByName(col.Name); ok {
 		return tokenIfText(p, family)
@@ -67,7 +72,7 @@ func (c *Catalog) classify(relations []ports.Relation) error {
 			if _, ok := merged[key]; ok {
 				continue
 			}
-			overlay[key] = classifyDefault(col)
+			overlay[key] = classifyDefault(rel.Kind, col)
 			added = true
 		}
 	}

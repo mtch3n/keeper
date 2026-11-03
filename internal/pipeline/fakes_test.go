@@ -37,7 +37,6 @@ type fakeCatalog struct {
 	byIdentity map[colKey]types.ColumnPolicy
 	byName     map[types.RelationRef]map[string]types.ColumnPolicy
 	relations  map[uint32]types.RelationRef
-	policies   map[uint32][]ports.FamilyPolicy
 	readable   map[types.RelationRef][]string
 	fresh      bool
 	freshErr   error
@@ -48,7 +47,6 @@ func newCatalog(rels ...testRelation) *fakeCatalog {
 		byIdentity: map[colKey]types.ColumnPolicy{},
 		byName:     map[types.RelationRef]map[string]types.ColumnPolicy{},
 		relations:  map[uint32]types.RelationRef{},
-		policies:   map[uint32][]ports.FamilyPolicy{},
 		readable:   map[types.RelationRef][]string{},
 		fresh:      true,
 	}
@@ -59,11 +57,6 @@ func newCatalog(rels ...testRelation) *fakeCatalog {
 			c.byIdentity[colKey{r.oid, col.attnum}] = col.policy
 			c.byName[r.ref][col.name] = col.policy
 			c.readable[r.ref] = append(c.readable[r.ref], col.name)
-			if col.policy.Policy != types.PolicyAllow {
-				c.policies[r.oid] = append(c.policies[r.oid], ports.FamilyPolicy{
-					Column: col.name, Family: col.family, Policy: col.policy,
-				})
-			}
 		}
 	}
 	return c
@@ -83,8 +76,6 @@ func (c *fakeCatalog) Relation(oid uint32) (types.RelationRef, bool) {
 	r, ok := c.relations[oid]
 	return r, ok
 }
-
-func (c *fakeCatalog) RelationPolicies(oid uint32) []ports.FamilyPolicy { return c.policies[oid] }
 
 func (c *fakeCatalog) Readable(_ context.Context, rel types.RelationRef) ([]string, error) {
 	return c.readable[rel], nil

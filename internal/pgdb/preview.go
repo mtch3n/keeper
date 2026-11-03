@@ -44,7 +44,7 @@ func (c *conn) previewChanges(ctx context.Context, sql string, params []ports.Pa
 			}
 			continue
 		}
-		r, err := c.fetch(ctx, sql+clause, params, types.PreviewRows)
+		r, err := c.fetch(ctx, sql+clause, params, types.PreviewRows, false)
 		if err != nil {
 			// A role that cannot read every column is refused RETURNING when
 			// the executor starts, before any row changes, so the count-only

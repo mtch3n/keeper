@@ -2,6 +2,7 @@ package redact
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 )
 
@@ -49,15 +50,24 @@ func rewriteStrings(v any, fn func(string) string) any {
 		}
 		return []byte(s)
 	}
-	nv, changed := rewriteValue(reflect.ValueOf(v), fn, 0)
+	tooDeep := false
+	nv, changed := rewriteValue(reflect.ValueOf(v), fn, 0, &tooDeep)
+	if tooDeep {
+		// Text below the limit was never looked at, so none of the cell is shown.
+		return RedactedMarker
+	}
 	if !changed {
 		return v
 	}
 	return nv.Interface()
 }
 
-func rewriteValue(rv reflect.Value, fn func(string) string, depth int) (reflect.Value, bool) {
-	if depth > maxWalkDepth || !rv.IsValid() {
+func rewriteValue(rv reflect.Value, fn func(string) string, depth int, tooDeep *bool) (reflect.Value, bool) {
+	if depth > maxWalkDepth {
+		*tooDeep = true
+		return rv, false
+	}
+	if !rv.IsValid() {
 		return rv, false
 	}
 	switch rv.Kind() {
@@ -75,7 +85,7 @@ func rewriteValue(rv reflect.Value, fn func(string) string, depth int) (reflect.
 		if rv.IsNil() {
 			return rv, false
 		}
-		ev, changed := rewriteValue(rv.Elem(), fn, depth+1)
+		ev, changed := rewriteValue(rv.Elem(), fn, depth+1, tooDeep)
 		if !changed {
 			return rv, false
 		}
@@ -87,7 +97,7 @@ func rewriteValue(rv reflect.Value, fn func(string) string, depth int) (reflect.
 		if rv.IsNil() {
 			return rv, false
 		}
-		ev, changed := rewriteValue(rv.Elem(), fn, depth+1)
+		ev, changed := rewriteValue(rv.Elem(), fn, depth+1, tooDeep)
 		if !changed {
 			return rv, false
 		}
@@ -114,7 +124,7 @@ func rewriteValue(rv reflect.Value, fn func(string) string, depth int) (reflect.
 		changed := false
 		out := reflect.MakeSlice(reflect.SliceOf(rv.Type().Elem()), rv.Len(), rv.Len())
 		for i := range rv.Len() {
-			ev, c := rewriteValue(rv.Index(i), fn, depth+1)
+			ev, c := rewriteValue(rv.Index(i), fn, depth+1, tooDeep)
 			if c {
 				changed = true
 				out.Index(i).Set(ev)
@@ -142,8 +152,8 @@ func rewriteValue(rv reflect.Value, fn func(string) string, depth int) (reflect.
 		out := reflect.MakeMapWithSize(rv.Type(), rv.Len())
 		iter := rv.MapRange()
 		for iter.Next() {
-			k, kc := rewriteValue(iter.Key(), fn, depth+1)
-			v, vc := rewriteValue(iter.Value(), fn, depth+1)
+			k, kc := rewriteValue(iter.Key(), fn, depth+1, tooDeep)
+			v, vc := rewriteValue(iter.Value(), fn, depth+1, tooDeep)
 			if !kc {
 				k = iter.Key()
 			}
@@ -167,7 +177,7 @@ func rewriteValue(rv reflect.Value, fn func(string) string, depth int) (reflect.
 			if t.Field(i).PkgPath != "" { // unexported: time.Time, netip.Addr
 				continue
 			}
-			fv, c := rewriteValue(rv.Field(i), fn, depth+1)
+			fv, c := rewriteValue(rv.Field(i), fn, depth+1, tooDeep)
 			if c {
 				changed = true
 				out.Field(i).Set(fv)
@@ -207,7 +217,65 @@ func (t *retokenizer) rewrite(s string) string {
 	if s == "" {
 		return s
 	}
-	if len(t.idx.short) > 0 {
+	protected := t.protectedSpans(s)
+	if len(protected) == 0 {
+		return t.rewriteText(s, true)
+	}
+	// keeper's own tokens and markers are not data. Text between them is.
+	var b strings.Builder
+	at := 0
+	for _, loc := range protected {
+		b.WriteString(t.rewriteText(s[at:loc[0]], false))
+		b.WriteString(s[loc[0]:loc[1]])
+		at = loc[1]
+	}
+	b.WriteString(t.rewriteText(s[at:], false))
+	return b.String()
+}
+
+var bracketed = regexp.MustCompile(TokenOpen + `[^` + TokenOpen + TokenClose + `]*` + TokenClose)
+
+var markerType = regexp.MustCompile(`^` + TokenOpen + `redacted:([a-z][a-z_]*)` + TokenClose + `$`)
+
+// protectedSpans finds the tokens bound in this session and the markers keeper
+// writes. A span only looks like one when it is exactly one: text in brackets
+// that merely resembles a marker is data, and is scanned. A marker's type is
+// protected unless a bound value is the whole of it.
+func (t *retokenizer) protectedSpans(s string) [][]int {
+	var out [][]int
+	for _, loc := range bracketed.FindAllStringIndex(s, -1) {
+		span := s[loc[0]:loc[1]]
+		switch {
+		case t.idx.tokens[span], span == RedactedMarker:
+			out = append(out, loc)
+		default:
+			if m := markerType.FindStringSubmatch(span); m != nil && !t.coversWhole(m[1]) {
+				out = append(out, loc)
+			}
+		}
+	}
+	return out
+}
+
+func (t *retokenizer) coversWhole(s string) bool {
+	if _, ok := t.idx.short[s]; ok {
+		return true
+	}
+	for _, h := range t.idx.matcher.FindAll(s) {
+		if h.Start == 0 && h.End == len(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// rewriteText replaces bound values in text that holds no token. whole says
+// the text is the entire cell, which is when a short value may match it.
+func (t *retokenizer) rewriteText(s string, whole bool) string {
+	if s == "" {
+		return s
+	}
+	if whole && len(t.idx.short) > 0 {
 		lower := strings.ToLower(s)
 		if b, ok := t.idx.short[lower]; ok {
 			t.hits++

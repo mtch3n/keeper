@@ -54,6 +54,8 @@ func TestMask_MASK_C1_aTokenColumnStaysATokenThroughAliasCTEAndView(t *testing.T
 	e := newLeanEnv(t)
 	entries := allowAll("public.customers.id")
 	entries["public.customers.email"] = token("email")
+	entries["public.customer_contacts.id"] = types.ColumnPolicy{Policy: types.PolicyAllow}
+	entries["public.customer_contacts.email"] = token("email")
 	e.declare(t, e.ro, entries)
 
 	email := customerFourEmail(t, e)

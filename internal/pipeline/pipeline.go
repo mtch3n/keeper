@@ -311,6 +311,9 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	if raw.Truncated {
 		cut = types.CutByRows
 	}
+	if raw.BytesCut {
+		cut = types.CutBySize
+	}
 	if kept := withinBytes(rows, conn.Limits.MaxBytes); kept < len(rows) {
 		rows, cut = rows[:kept], types.CutBySize
 	}
@@ -678,7 +681,9 @@ func withinBytes(rows [][]any, limit int) int {
 	for i, row := range rows {
 		b, err := json.Marshal(row)
 		if err != nil {
-			return i
+			// A row JSON cannot encode is not a row over the limit. Its printed
+			// form is a close enough measure.
+			b = fmt.Appendf(nil, "%v", row)
 		}
 		total += len(b) + 1
 		if total > limit {

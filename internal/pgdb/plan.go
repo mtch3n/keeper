@@ -4,12 +4,9 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"regexp"
 	"slices"
 	"strings"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
@@ -49,6 +46,10 @@ type planNode struct {
 	IndexCond    string     `json:"Index Cond"`
 	RecheckCond  string     `json:"Recheck Cond"`
 	JoinFilter   string     `json:"Join Filter"`
+	Output       []string   `json:"Output"`
+	ParentRel    string     `json:"Parent Relationship"`
+	FunctionName string     `json:"Function Name"`
+	FunctionCall string     `json:"Function Call"`
 	HashCond     string     `json:"Hash Cond"`
 	MergeCond    string     `json:"Merge Cond"`
 	Plans        []planNode `json:"Plans"`
@@ -86,20 +87,30 @@ type walkResult struct {
 	filters []colRef
 	rows    int64
 	cost    float64
+	// flows are the relation columns whose values can reach the result, and
+	// opaque is set when the plan has a part this walk cannot read. See flow.go.
+	flows     []colRef
+	opaque    bool
+	functions []string
 }
 
-func walkPlan(root *planNode) walkResult {
+func walkPlan(roots []explainRoot) walkResult {
 	var w walkResult
-	w.rows = int64(root.PlanRows)
-	w.cost = root.TotalCost
+	w.rows = int64(roots[0].Plan.PlanRows)
+	w.cost = roots[0].Plan.TotalCost
 
 	seenRel := map[relRef]bool{}
 	seenTarget := map[relRef]bool{}
 	aliases := map[string]relRef{}
 	var conds []string
+	var fl flowReader
 
-	var visit func(n *planNode, depth int)
-	visit = func(n *planNode, depth int) {
+	var visit func(n, parent *planNode, depth int)
+	visit = func(n, parent *planNode, depth int) {
+		fl.node(n, parent)
+		if n.FunctionName != "" {
+			w.functions = append(w.functions, n.FunctionName)
+		}
 		if n.filtered() {
 			w.filtered = true
 			conds = append(conds, n.conditions()...)
@@ -121,16 +132,19 @@ func walkPlan(root *planNode) walkResult {
 		}
 		// A ModifyTable with no RETURNING estimates zero rows; the count a human
 		// needs on the approval screen is the rows feeding it.
-		if n.NodeType == "ModifyTable" && depth == 0 && w.rows == 0 {
+		if n.NodeType == "ModifyTable" && depth == 0 && w.rows == 0 && n == &roots[0].Plan {
 			for i := range n.Plans {
 				w.rows = max(w.rows, int64(n.Plans[i].PlanRows))
 			}
 		}
 		for i := range n.Plans {
-			visit(&n.Plans[i], depth+1)
+			visit(&n.Plans[i], n, depth+1)
 		}
 	}
-	visit(root, 0)
+	for i := range roots {
+		visit(&roots[i].Plan, nil, 0)
+	}
+	w.flows, w.opaque = fl.result()
 	for _, cond := range conds {
 		for _, q := range qualifiedNames(cond) {
 			if r, ok := aliases[q[0]]; ok {
@@ -200,14 +214,16 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 		return nil, keeperError(types.CodeInternal)
 	}
 
-	w := walkPlan(&roots[0].Plan)
+	w := walkPlan(roots)
+	volatile, foreign := callsUnsafe(ctx, c, raw, w.functions)
 
 	facts := &ports.PlanFacts{
 		EstimatedRows: w.rows,
 		EstimatedCost: w.cost,
 		HasFilter:     w.filtered,
 		Writes:        len(w.targets) > 0,
-		Uncertain:     volatileCalled(ctx, c, raw),
+		Uncertain:     volatile,
+		Opaque:        w.opaque || foreign,
 	}
 
 	switch {
@@ -248,6 +264,9 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 	if facts.Filters, err = resolveColumns(ctx, c, w.filters); err != nil {
 		return nil, err
 	}
+	if facts.Flows, err = resolveColumns(ctx, c, w.flows); err != nil {
+		return nil, err
+	}
 	return facts, nil
 }
 
@@ -256,35 +275,56 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 // that looks like a call matches too, which can only add a question.
 var callName = regexp.MustCompile(`(?:\\"([^"\\]+)\\"|([A-Za-z_][A-Za-z0-9_$]*))\(`)
 
-const volatileSQL = `SELECT 1 FROM pg_proc WHERE provolatile = 'v' AND lower(proname) = ANY($1) LIMIT 1`
+// callsSQL answers two questions about the function names a plan calls: is any
+// of them volatile, and is any of them defined outside pg_catalog. A body in a
+// user schema is not in the plan, so a column computed by one can carry data
+// from a relation the plan never names.
+// maxScannedPlan bounds the plan text the call and flow readers will scan.
+const maxScannedPlan = 1 << 20
 
-// volatileCalled reports whether a function the catalog marks volatile is named
-// as a call in the plan. keeper reads no statement text for this. A failed
-// lookup counts as uncertain.
-func volatileCalled(ctx context.Context, c *conn, planJSON []byte) bool {
-	var names []string
+const callsSQL = `SELECT coalesce(bool_or(provolatile = 'v'), false),
+       coalesce(bool_or(pronamespace <> 'pg_catalog'::regnamespace), false)
+  FROM pg_proc WHERE lower(proname) = ANY($1)`
+
+// operatorCall is a schema-qualified operator, which the server prints only for
+// an operator outside pg_catalog.
+var operatorCall = regexp.MustCompile(`OPERATOR\(`)
+
+// callsUnsafe reports whether the plan calls a volatile function or one outside
+// pg_catalog. keeper reads no statement text for this. A failed lookup counts as
+// both.
+func callsUnsafe(ctx context.Context, c *conn, planJSON []byte, functions []string) (volatile, foreign bool) {
+	if len(planJSON) > maxScannedPlan {
+		// A plan this large holds a folded constant. Scanning it for call names
+		// costs more than the statement, and nothing can be said of it anyway.
+		return true, true
+	}
+	foreign = operatorCall.Match(planJSON)
+	names := functions
 	for _, m := range callName.FindAllSubmatch(planJSON, -1) {
-		names = append(names, strings.ToLower(cmp.Or(string(m[1]), string(m[2]))))
+		names = append(names, cmp.Or(string(m[1]), string(m[2])))
+	}
+	for i := range names {
+		names[i] = strings.ToLower(names[i])
 	}
 	if len(names) == 0 {
-		return false
+		return false, foreign
 	}
 	// A savepoint, because a failed lookup (a role that cannot read pg_proc)
 	// would otherwise abort the statement's own transaction.
 	sp, err := c.tx.Begin(ctx)
 	if err != nil {
-		return true
+		return true, true
 	}
-	var one int
-	err = sp.QueryRow(ctx, volatileSQL, names).Scan(&one)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	var v, f bool
+	if err := sp.QueryRow(ctx, callsSQL, names).Scan(&v, &f); err != nil {
 		_ = sp.Rollback(ctx)
-		return true
+		return true, true
 	}
 	if sp.Commit(ctx) != nil {
-		return true
+		return true, true
 	}
-	return err == nil
+	return v, foreign || f
 }
 
 // resolveColumnsSQL turns (schema, relation, column) names into the

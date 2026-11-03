@@ -205,6 +205,7 @@ func (r *Redactor) Mint(ctx context.Context, sessionID, connID, namespace, value
 		value:      stored,
 		normalized: normalized,
 		namespace:  namespace,
+		connID:     connID,
 		version:    version,
 		policy:     types.PolicyToken,
 		expires:    now.Add(r.ttl),
@@ -237,7 +238,7 @@ func (r *Redactor) Resolve(ctx context.Context, sessionID, connID, token string)
 		if !ok {
 			return "", "", ErrUnknownToken
 		}
-		b, ok := s.resolve(token, r.now(), r.ttl)
+		b, ok := s.resolve(token, connID, r.now(), r.ttl)
 		if !ok {
 			return "", "", ErrUnknownToken
 		}
@@ -278,6 +279,7 @@ type columnPlan struct {
 	key       []byte
 	version   int
 	sessionID string
+	connID    string
 
 	spans      int
 	collisions int
@@ -447,6 +449,7 @@ func (r *Redactor) plan(ctx context.Context, st Statement, sessionID string, col
 			plans[j].key = key
 			plans[j].version = version
 			plans[j].sessionID = sessionID
+			plans[j].connID = st.ConnectionID
 		}
 	}
 	return plans, nil
@@ -512,6 +515,7 @@ func (r *Redactor) tokenize(sess *session, pl *columnPlan, value string, now tim
 		value:      value,
 		normalized: normalized,
 		namespace:  pl.namespace,
+		connID:     pl.connID,
 		version:    pl.version,
 		policy:     types.PolicyToken,
 		expires:    now.Add(r.ttl),

@@ -175,35 +175,6 @@ func (c *identityCache) relation(tableOID uint32) (types.RelationRef, byte, bool
 	return types.RelationRef{Schema: schema, Relation: table}, kind[0], true
 }
 
-// relationColumns lists every column the cache knows for tableOID.
-func (c *identityCache) relationColumns(tableOID uint32) ([]cachedColumn, error) {
-	rows, err := c.db.Query(`
-		SELECT r.schema_name, r.table_name, c.att_num, c.column_name, c.type_oid
-		FROM columns c JOIN relations r ON r.table_oid = c.table_oid
-		WHERE c.table_oid = ?`, tableOID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []cachedColumn
-	for rows.Next() {
-		var schema, table, column string
-		var attNum uint16
-		var typeOID uint32
-		if err := rows.Scan(&schema, &table, &attNum, &column, &typeOID); err != nil {
-			return nil, err
-		}
-		out = append(out, cachedColumn{
-			TableOID: tableOID,
-			AttNum:   attNum,
-			Column:   columnKey{Schema: schema, Table: table, Column: column},
-			TypeOID:  typeOID,
-		})
-	}
-	return out, rows.Err()
-}
-
 // storedFingerprint returns the fingerprint recorded at the last resolve.
 func (c *identityCache) storedFingerprint(tableOID uint32) (string, bool) {
 	row := c.db.QueryRow(`SELECT fingerprint FROM relations WHERE table_oid = ?`, tableOID)

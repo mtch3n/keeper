@@ -1,0 +1,1114 @@
+[
+ {
+  "name": "count star with filter on masked column",
+  "sql": "select count(*) from customers where email='x'",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Aggregate",
+     "Strategy": "Plain",
+     "Partial Mode": "Simple",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 17.63,
+     "Total Cost": 17.64,
+     "Plan Rows": 1,
+     "Plan Width": 8,
+     "Disabled": false,
+     "Output": [
+      "count(*)"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "customers",
+       "Schema": "public",
+       "Alias": "customers",
+       "Startup Cost": 0.0,
+       "Total Cost": 17.62,
+       "Plan Rows": 3,
+       "Plan Width": 0,
+       "Disabled": false,
+       "Output": [
+        "id",
+        "email",
+        "ssn",
+        "dob",
+        "tags"
+       ],
+       "Filter": "(customers.email = 'x'::text)"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "count star",
+  "sql": "select count(*) from orders",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Aggregate",
+     "Strategy": "Plain",
+     "Partial Mode": "Simple",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 20.12,
+     "Total Cost": 20.14,
+     "Plan Rows": 1,
+     "Plan Width": 8,
+     "Disabled": false,
+     "Output": [
+      "count(*)"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "orders",
+       "Schema": "public",
+       "Alias": "orders",
+       "Startup Cost": 0.0,
+       "Total Cost": 18.1,
+       "Plan Rows": 810,
+       "Plan Width": 0,
+       "Disabled": false,
+       "Output": [
+        "id",
+        "customer_id",
+        "total",
+        "note"
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "sum of allowed column",
+  "sql": "select sum(total) from orders",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Aggregate",
+     "Strategy": "Plain",
+     "Partial Mode": "Simple",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 20.13,
+     "Total Cost": 20.14,
+     "Plan Rows": 1,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "sum(total)"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "orders",
+       "Schema": "public",
+       "Alias": "orders",
+       "Startup Cost": 0.0,
+       "Total Cost": 18.1,
+       "Plan Rows": 810,
+       "Plan Width": 32,
+       "Disabled": false,
+       "Output": [
+        "id",
+        "customer_id",
+        "total",
+        "note"
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "upper of one column",
+  "sql": "select upper(note) from orders",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "orders",
+     "Schema": "public",
+     "Alias": "orders",
+     "Startup Cost": 0.0,
+     "Total Cost": 20.12,
+     "Plan Rows": 810,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "upper(note)"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "join with aliases",
+  "sql": "select o.total, c.email from orders o join customers c on c.id=o.customer_id",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Hash Join",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Join Type": "Inner",
+     "Startup Cost": 23.73,
+     "Total Cost": 43.96,
+     "Plan Rows": 810,
+     "Plan Width": 64,
+     "Disabled": false,
+     "Output": [
+      "o.total",
+      "c.email"
+     ],
+     "Inner Unique": true,
+     "Hash Cond": "(o.customer_id = c.id)",
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "orders",
+       "Schema": "public",
+       "Alias": "o",
+       "Startup Cost": 0.0,
+       "Total Cost": 18.1,
+       "Plan Rows": 810,
+       "Plan Width": 36,
+       "Disabled": false,
+       "Output": [
+        "o.id",
+        "o.customer_id",
+        "o.total",
+        "o.note"
+       ]
+      },
+      {
+       "Node Type": "Hash",
+       "Parent Relationship": "Inner",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Startup Cost": 16.1,
+       "Total Cost": 16.1,
+       "Plan Rows": 610,
+       "Plan Width": 36,
+       "Disabled": false,
+       "Output": [
+        "c.email",
+        "c.id"
+       ],
+       "Plans": [
+        {
+         "Node Type": "Seq Scan",
+         "Parent Relationship": "Outer",
+         "Parallel Aware": false,
+         "Async Capable": false,
+         "Relation Name": "customers",
+         "Schema": "public",
+         "Alias": "c",
+         "Startup Cost": 0.0,
+         "Total Cost": 16.1,
+         "Plan Rows": 610,
+         "Plan Width": 36,
+         "Disabled": false,
+         "Output": [
+          "c.email",
+          "c.id"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "count over a join",
+  "sql": "select count(*) from orders o join customers c on c.id=o.customer_id",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Aggregate",
+     "Strategy": "Plain",
+     "Partial Mode": "Simple",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 45.99,
+     "Total Cost": 46.0,
+     "Plan Rows": 1,
+     "Plan Width": 8,
+     "Disabled": false,
+     "Output": [
+      "count(*)"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Hash Join",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Join Type": "Inner",
+       "Startup Cost": 23.73,
+       "Total Cost": 43.96,
+       "Plan Rows": 810,
+       "Plan Width": 0,
+       "Disabled": false,
+       "Inner Unique": true,
+       "Hash Cond": "(o.customer_id = c.id)",
+       "Plans": [
+        {
+         "Node Type": "Seq Scan",
+         "Parent Relationship": "Outer",
+         "Parallel Aware": false,
+         "Async Capable": false,
+         "Relation Name": "orders",
+         "Schema": "public",
+         "Alias": "o",
+         "Startup Cost": 0.0,
+         "Total Cost": 18.1,
+         "Plan Rows": 810,
+         "Plan Width": 4,
+         "Disabled": false,
+         "Output": [
+          "o.id",
+          "o.customer_id",
+          "o.total",
+          "o.note"
+         ]
+        },
+        {
+         "Node Type": "Hash",
+         "Parent Relationship": "Inner",
+         "Parallel Aware": false,
+         "Async Capable": false,
+         "Startup Cost": 16.1,
+         "Total Cost": 16.1,
+         "Plan Rows": 610,
+         "Plan Width": 4,
+         "Disabled": false,
+         "Output": [
+          "c.id"
+         ],
+         "Plans": [
+          {
+           "Node Type": "Seq Scan",
+           "Parent Relationship": "Outer",
+           "Parallel Aware": false,
+           "Async Capable": false,
+           "Relation Name": "customers",
+           "Schema": "public",
+           "Alias": "c",
+           "Startup Cost": 0.0,
+           "Total Cost": 16.1,
+           "Plan Rows": 610,
+           "Plan Width": 4,
+           "Disabled": false,
+           "Output": [
+            "c.id"
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "whole row",
+  "sql": "select c from customers c",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "customers",
+     "Schema": "public",
+     "Alias": "c",
+     "Startup Cost": 0.0,
+     "Total Cost": 16.1,
+     "Plan Rows": 610,
+     "Plan Width": 128,
+     "Disabled": false,
+     "Output": [
+      "c.*"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "whole row inside a function",
+  "sql": "select row_to_json(c) from customers c",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "customers",
+     "Schema": "public",
+     "Alias": "c",
+     "Startup Cost": 0.0,
+     "Total Cost": 17.62,
+     "Plan Rows": 610,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "row_to_json(c.*)"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "group by with sort",
+  "sql": "select sum(total) from orders group by customer_id order by 1",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Sort",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 32.29,
+     "Total Cost": 32.79,
+     "Plan Rows": 200,
+     "Plan Width": 36,
+     "Disabled": false,
+     "Output": [
+      "(sum(total))",
+      "customer_id"
+     ],
+     "Sort Key": [
+      "(sum(orders.total))"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Aggregate",
+       "Strategy": "Hashed",
+       "Partial Mode": "Simple",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Startup Cost": 22.15,
+       "Total Cost": 24.65,
+       "Plan Rows": 200,
+       "Plan Width": 36,
+       "Disabled": false,
+       "Output": [
+        "sum(total)",
+        "customer_id"
+       ],
+       "Group Key": [
+        "orders.customer_id"
+       ],
+       "Planned Partitions": 0,
+       "Plans": [
+        {
+         "Node Type": "Seq Scan",
+         "Parent Relationship": "Outer",
+         "Parallel Aware": false,
+         "Async Capable": false,
+         "Relation Name": "orders",
+         "Schema": "public",
+         "Alias": "orders",
+         "Startup Cost": 0.0,
+         "Total Cost": 18.1,
+         "Plan Rows": 810,
+         "Plan Width": 36,
+         "Disabled": false,
+         "Output": [
+          "id",
+          "customer_id",
+          "total",
+          "note"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "renaming subquery",
+  "sql": "select * from (select total t from orders offset 0) s",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "orders",
+     "Schema": "public",
+     "Alias": "orders",
+     "Startup Cost": 0.0,
+     "Total Cost": 18.1,
+     "Plan Rows": 810,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "orders.total"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "subquery with limit",
+  "sql": "select * from (select total t from orders order by id limit 3) s",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Subquery Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Alias": "s",
+     "Startup Cost": 0.15,
+     "Total Cost": 0.39,
+     "Plan Rows": 3,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "s.t"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Limit",
+       "Parent Relationship": "Subquery",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Startup Cost": 0.15,
+       "Total Cost": 0.36,
+       "Plan Rows": 3,
+       "Plan Width": 36,
+       "Disabled": false,
+       "Output": [
+        "orders.total",
+        "orders.id"
+       ],
+       "Plans": [
+        {
+         "Node Type": "Index Scan",
+         "Parent Relationship": "Outer",
+         "Parallel Aware": false,
+         "Async Capable": false,
+         "Scan Direction": "Forward",
+         "Index Name": "orders_pkey",
+         "Relation Name": "orders",
+         "Schema": "public",
+         "Alias": "orders",
+         "Startup Cost": 0.15,
+         "Total Cost": 56.3,
+         "Plan Rows": 810,
+         "Plan Width": 36,
+         "Disabled": false,
+         "Output": [
+          "orders.total",
+          "orders.id"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "materialized cte",
+  "sql": "with x as materialized (select * from customers) select count(*) from x",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Aggregate",
+     "Strategy": "Plain",
+     "Partial Mode": "Simple",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 29.83,
+     "Total Cost": 29.84,
+     "Plan Rows": 1,
+     "Plan Width": 8,
+     "Disabled": false,
+     "Output": [
+      "count(*)"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "InitPlan",
+       "Subplan Name": "CTE x",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "customers",
+       "Schema": "public",
+       "Alias": "customers",
+       "Startup Cost": 0.0,
+       "Total Cost": 16.1,
+       "Plan Rows": 610,
+       "Plan Width": 104,
+       "Disabled": false,
+       "Output": [
+        "customers.id",
+        "customers.email",
+        "customers.ssn",
+        "customers.dob",
+        "customers.tags"
+       ]
+      },
+      {
+       "Node Type": "CTE Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "CTE Name": "x",
+       "Alias": "x",
+       "Startup Cost": 0.0,
+       "Total Cost": 12.2,
+       "Plan Rows": 610,
+       "Plan Width": 0,
+       "Disabled": false,
+       "Output": [
+        "x.id",
+        "x.email",
+        "x.ssn",
+        "x.dob",
+        "x.tags"
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "union",
+  "sql": "select id from orders union all select id from customers",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Append",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 0.0,
+     "Total Cost": 41.3,
+     "Plan Rows": 1420,
+     "Plan Width": 4,
+     "Disabled": false,
+     "Subplans Removed": 0,
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Member",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "orders",
+       "Schema": "public",
+       "Alias": "orders",
+       "Startup Cost": 0.0,
+       "Total Cost": 18.1,
+       "Plan Rows": 810,
+       "Plan Width": 4,
+       "Disabled": false,
+       "Output": [
+        "orders.id"
+       ]
+      },
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Member",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "customers",
+       "Schema": "public",
+       "Alias": "customers",
+       "Startup Cost": 0.0,
+       "Total Cost": 16.1,
+       "Plan Rows": 610,
+       "Plan Width": 4,
+       "Disabled": false,
+       "Output": [
+        "customers.id"
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "lateral join",
+  "sql": "select o.id, l.s from orders o, lateral (select ssn s from customers c where c.id=o.customer_id) l",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Hash Join",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Join Type": "Inner",
+     "Startup Cost": 23.73,
+     "Total Cost": 43.96,
+     "Plan Rows": 810,
+     "Plan Width": 36,
+     "Disabled": false,
+     "Output": [
+      "o.id",
+      "c.ssn"
+     ],
+     "Inner Unique": true,
+     "Hash Cond": "(o.customer_id = c.id)",
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "orders",
+       "Schema": "public",
+       "Alias": "o",
+       "Startup Cost": 0.0,
+       "Total Cost": 18.1,
+       "Plan Rows": 810,
+       "Plan Width": 8,
+       "Disabled": false,
+       "Output": [
+        "o.id",
+        "o.customer_id",
+        "o.total",
+        "o.note"
+       ]
+      },
+      {
+       "Node Type": "Hash",
+       "Parent Relationship": "Inner",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Startup Cost": 16.1,
+       "Total Cost": 16.1,
+       "Plan Rows": 610,
+       "Plan Width": 36,
+       "Disabled": false,
+       "Output": [
+        "c.ssn",
+        "c.id"
+       ],
+       "Plans": [
+        {
+         "Node Type": "Seq Scan",
+         "Parent Relationship": "Outer",
+         "Parallel Aware": false,
+         "Async Capable": false,
+         "Relation Name": "customers",
+         "Schema": "public",
+         "Alias": "c",
+         "Startup Cost": 0.0,
+         "Total Cost": 16.1,
+         "Plan Rows": 610,
+         "Plan Width": 36,
+         "Disabled": false,
+         "Output": [
+          "c.ssn",
+          "c.id"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "scalar subquery",
+  "sql": "select (select ssn from customers where id=1) from orders",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "orders",
+     "Schema": "public",
+     "Alias": "orders",
+     "Startup Cost": 8.17,
+     "Total Cost": 26.27,
+     "Plan Rows": 810,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "(InitPlan 1).col1"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Index Scan",
+       "Parent Relationship": "InitPlan",
+       "Subplan Name": "InitPlan 1",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Scan Direction": "Forward",
+       "Index Name": "customers_pkey",
+       "Relation Name": "customers",
+       "Schema": "public",
+       "Alias": "customers",
+       "Startup Cost": 0.15,
+       "Total Cost": 8.17,
+       "Plan Rows": 1,
+       "Plan Width": 32,
+       "Disabled": false,
+       "Output": [
+        "customers.ssn"
+       ],
+       "Index Cond": "(customers.id = 1)"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "sql function inlined",
+  "sql": "select cust_ssn(id) from orders",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "orders",
+     "Schema": "public",
+     "Alias": "orders",
+     "Startup Cost": 0.0,
+     "Total Cost": 220.6,
+     "Plan Rows": 810,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "cust_ssn(id)"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "plpgsql call",
+  "sql": "select plp(id) from orders",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "orders",
+     "Schema": "public",
+     "Alias": "orders",
+     "Startup Cost": 0.0,
+     "Total Cost": 220.6,
+     "Plan Rows": 810,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "plp(id)"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "function scan",
+  "sql": "select * from orders, plp(1)",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Nested Loop",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Join Type": "Inner",
+     "Startup Cost": 0.25,
+     "Total Cost": 26.46,
+     "Plan Rows": 810,
+     "Plan Width": 104,
+     "Disabled": false,
+     "Output": [
+      "orders.id",
+      "orders.customer_id",
+      "orders.total",
+      "orders.note",
+      "plp.plp"
+     ],
+     "Inner Unique": false,
+     "Plans": [
+      {
+       "Node Type": "Function Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Function Name": "plp",
+       "Schema": "public",
+       "Alias": "plp",
+       "Startup Cost": 0.25,
+       "Total Cost": 0.26,
+       "Plan Rows": 1,
+       "Plan Width": 32,
+       "Disabled": false,
+       "Output": [
+        "plp.plp"
+       ],
+       "Function Call": "plp(1)"
+      },
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Inner",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "orders",
+       "Schema": "public",
+       "Alias": "orders",
+       "Startup Cost": 0.0,
+       "Total Cost": 18.1,
+       "Plan Rows": 810,
+       "Plan Width": 72,
+       "Disabled": false,
+       "Output": [
+        "orders.id",
+        "orders.customer_id",
+        "orders.total",
+        "orders.note"
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "quoted alias",
+  "sql": "select \"id\" from orders \"O\"",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "orders",
+     "Schema": "public",
+     "Alias": "O",
+     "Startup Cost": 0.0,
+     "Total Cost": 18.1,
+     "Plan Rows": 810,
+     "Plan Width": 4,
+     "Disabled": false,
+     "Output": [
+      "id"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "sort by unselected column",
+  "sql": "select id from orders where total > 1 order by note",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Sort",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Startup Cost": 31.03,
+     "Total Cost": 31.7,
+     "Plan Rows": 270,
+     "Plan Width": 36,
+     "Disabled": false,
+     "Output": [
+      "id",
+      "note"
+     ],
+     "Sort Key": [
+      "orders.note"
+     ],
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "orders",
+       "Schema": "public",
+       "Alias": "orders",
+       "Startup Cost": 0.0,
+       "Total Cost": 20.12,
+       "Plan Rows": 270,
+       "Plan Width": 36,
+       "Disabled": false,
+       "Output": [
+        "id",
+        "note"
+       ],
+       "Filter": "(orders.total > '1'::numeric)"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "date arithmetic",
+  "sql": "select dob - date '1970-01-01' from customers",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "customers",
+     "Schema": "public",
+     "Alias": "customers",
+     "Startup Cost": 0.0,
+     "Total Cost": 17.62,
+     "Plan Rows": 610,
+     "Plan Width": 4,
+     "Disabled": false,
+     "Output": [
+      "(dob - '1970-01-01'::date)"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "unnest of a column",
+  "sql": "select u from customers c, unnest(c.tags) u",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Nested Loop",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Join Type": "Inner",
+     "Startup Cost": 0.0,
+     "Total Cost": 138.1,
+     "Plan Rows": 6100,
+     "Plan Width": 4,
+     "Disabled": false,
+     "Output": [
+      "u.u"
+     ],
+     "Inner Unique": false,
+     "Plans": [
+      {
+       "Node Type": "Seq Scan",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Relation Name": "customers",
+       "Schema": "public",
+       "Alias": "c",
+       "Startup Cost": 0.0,
+       "Total Cost": 16.1,
+       "Plan Rows": 610,
+       "Plan Width": 32,
+       "Disabled": false,
+       "Output": [
+        "c.id",
+        "c.email",
+        "c.ssn",
+        "c.dob",
+        "c.tags"
+       ]
+      },
+      {
+       "Node Type": "Function Scan",
+       "Parent Relationship": "Inner",
+       "Parallel Aware": false,
+       "Async Capable": false,
+       "Function Name": "unnest",
+       "Schema": "pg_catalog",
+       "Alias": "u",
+       "Startup Cost": 0.0,
+       "Total Cost": 0.1,
+       "Plan Rows": 10,
+       "Plan Width": 4,
+       "Disabled": false,
+       "Output": [
+        "u.u"
+       ],
+       "Function Call": "unnest(c.tags)"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "values lateral",
+  "sql": "select v.x from customers c, lateral (values (c.ssn)) v(x)",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "customers",
+     "Schema": "public",
+     "Alias": "c",
+     "Startup Cost": 0.0,
+     "Total Cost": 16.1,
+     "Plan Rows": 610,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "c.ssn"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "query_to_xml",
+  "sql": "select query_to_xml('select email,ssn from customers',true,true,'')::text from orders",
+  "plan": [
+   {
+    "Plan": {
+     "Node Type": "Seq Scan",
+     "Parallel Aware": false,
+     "Async Capable": false,
+     "Relation Name": "orders",
+     "Schema": "public",
+     "Alias": "orders",
+     "Startup Cost": 0.0,
+     "Total Cost": 220.6,
+     "Plan Rows": 810,
+     "Plan Width": 32,
+     "Disabled": false,
+     "Output": [
+      "(query_to_xml('select email,ssn from customers'::text, true, true, ''::text))::text"
+     ]
+    }
+   }
+  ]
+ }
+]

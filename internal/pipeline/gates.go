@@ -61,7 +61,7 @@ func (p *Pipeline) resolveColumns(cat ports.Catalog, raw []types.ColumnMeta, pla
 			}
 		} else {
 			// (0,0) is the server saying "computed". SPEC §7.6.
-			pol, basis := p.inherit(cat, rc, plan, req)
+			pol, basis := p.inherit(cat, plan, req)
 			c.entry = types.ColumnPolicy{Policy: pol}
 			c.basis = basis
 		}
@@ -87,11 +87,12 @@ func (p *Pipeline) resolveColumns(cat ports.Catalog, raw []types.ColumnMeta, pla
 	return cols
 }
 
-// inherit is SPEC R7.6, exactly.
-func (p *Pipeline) inherit(cat ports.Catalog, col types.ColumnMeta, plan *ports.PlanFacts, req Request) (types.Policy, types.Basis) {
-	family := pgdb.FamilyForName(col.Type)
-
-	if plan == nil || len(plan.Relations) == 0 {
+// inherit gives a computed column the strictest non-allow policy among the
+// columns that flow out of a scan, as read from the plan. Anything keeper cannot
+// follow redacts: a relation the catalog does not know, a function whose body is
+// not in the plan, a whole-row reference.
+func (p *Pipeline) inherit(cat ports.Catalog, plan *ports.PlanFacts, req Request) (types.Policy, types.Basis) {
+	if plan == nil || (len(plan.Relations) == 0 && !plan.Opaque) {
 		// A computed column with no referenced relation inherits from its
 		// parameters (§8.4), and is redact if that is indeterminable — which,
 		// with no parameters at all, it is.
@@ -101,31 +102,30 @@ func (p *Pipeline) inherit(cat ports.Catalog, col types.ColumnMeta, plan *ports.
 		}
 		return types.Inherited(types.Strictest(policies...)), types.BasisParameter
 	}
-
-	// Numeric, boolean, date/time and uuid inherit from the same family only.
-	// Text-like and unknown inherit from every non-allow column of the
-	// referenced relations.
-	broad := pgdb.TextLike(family)
-
-	var candidates []types.Policy
+	if plan.Opaque || plan.Uncertain {
+		return types.PolicyRedact, types.BasisInherited
+	}
 	for _, oid := range plan.Relations {
-		for _, fp := range cat.RelationPolicies(oid) {
-			switch fp.Policy.Policy {
-			case types.PolicyAllow:
-				continue
-			}
-			if broad || fp.Family == family {
-				candidates = append(candidates, fp.Policy.Policy)
-			}
+		if _, ok := cat.Relation(oid); !ok {
+			return types.PolicyRedact, types.BasisInherited
 		}
 	}
-	if len(candidates) == 0 {
-		// allow, with the tripwires of §5.4 still running in G7.
-		return types.PolicyAllow, types.BasisInherited
+
+	strictest := types.PolicyAllow
+	for _, f := range plan.Flows {
+		entry, ok := cat.Lookup(f.TableOID, f.AttNum)
+		switch {
+		case !ok:
+			entry = types.ColumnPolicy{Policy: types.PolicyRedact}
+		case entry.Policy == types.PolicyAllow && len(entry.Paths) > 0:
+			entry = types.ColumnPolicy{Policy: types.PolicyRedact}
+		}
+		strictest = types.Strictest(strictest, entry.Policy)
 	}
-	// Inherited caps at redact: token under someone else's namespace produces an
-	// HMAC where a month label belongs.
-	return types.Inherited(types.Strictest(candidates...)), types.BasisInherited
+	// allow, with the tripwires of §5.4 still running in G7. Inherited caps at
+	// redact: token under someone else's namespace produces an HMAC where a
+	// month label belongs.
+	return types.Inherited(strictest), types.BasisInherited
 }
 
 // noteColumns records why a result is narrower than the table, so an approver

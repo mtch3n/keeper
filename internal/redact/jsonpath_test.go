@@ -48,7 +48,8 @@ func TestJSONKeyPaths(t *testing.T) {
 		t.Errorf("an array path was masked: %s", out)
 	}
 	// R5.7: an uncatalogued path is an unknown column. It redacts.
-	if !strings.Contains(out, `"extra":"`+RedactedMarker+`"`) {
+	// Its key is data too, and is redacted with it.
+	if !strings.Contains(out, `"`+RedactedMarker+`":"`+RedactedMarker+`"`) || strings.Contains(out, "extra") {
 		t.Errorf("an uncatalogued path was not redacted: %s", out)
 	}
 	// Member order survives, because the document is rewritten through the
