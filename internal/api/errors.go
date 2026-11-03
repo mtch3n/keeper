@@ -22,7 +22,7 @@ func status(c types.Code) int {
 		types.CodeDDLRefused, types.CodeWritesOff,
 		types.CodeApprovalRefused, types.CodeRowCap:
 		return http.StatusForbidden
-	case types.CodeTicketUnknown:
+	case types.CodeTicketUnknown, types.CodeUnknownConnection:
 		return http.StatusNotFound
 	case types.CodeApprovalRequired:
 		return http.StatusConflict

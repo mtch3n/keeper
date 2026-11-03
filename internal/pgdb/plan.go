@@ -269,9 +269,22 @@ func volatileCalled(ctx context.Context, c *conn, planJSON []byte) bool {
 	if len(names) == 0 {
 		return false
 	}
+	// A savepoint, because a failed lookup (a role that cannot read pg_proc)
+	// would otherwise abort the statement's own transaction.
+	sp, err := c.tx.Begin(ctx)
+	if err != nil {
+		return true
+	}
 	var one int
-	err := c.tx.QueryRow(ctx, volatileSQL, names).Scan(&one)
-	return !errors.Is(err, pgx.ErrNoRows)
+	err = sp.QueryRow(ctx, volatileSQL, names).Scan(&one)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		_ = sp.Rollback(ctx)
+		return true
+	}
+	if sp.Commit(ctx) != nil {
+		return true
+	}
+	return err == nil
 }
 
 // resolveColumnsSQL turns (schema, relation, column) names into the

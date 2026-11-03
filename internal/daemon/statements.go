@@ -46,22 +46,46 @@ func (d *Daemon) resolveParams(ctx context.Context, sessionID, connID string, pa
 	return out, nil
 }
 
-// usableConnection is the admission check every statement passes: the
-// connection exists.
-func (d *Daemon) usableConnection(ctx context.Context, id string) (*types.Connection, error) {
-	c, err := d.deps.Vault.Connection(ctx, id)
-	if err != nil || c == nil {
+// usableConnection is the admission check every statement passes, and the one
+// place an agent's connection_id is resolved: ref is a connection id or the
+// exact name of one profile. Callers use the returned connection's ID.
+func (d *Daemon) usableConnection(ctx context.Context, ref string) (*types.Connection, error) {
+	if c, err := d.deps.Vault.Connection(ctx, ref); err == nil && c != nil {
+		return c, nil
+	}
+	all, err := d.deps.Vault.Connections(ctx)
+	if err != nil {
 		return nil, errUnknownConnection
 	}
-	return c, nil
+	var named []*types.Connection
+	for _, c := range all {
+		if c.Name == ref {
+			named = append(named, c)
+		}
+	}
+	switch len(named) {
+	case 0:
+		return nil, errUnknownConnection
+	case 1:
+		return named[0], nil
+	}
+	ids := make([]string, len(named))
+	for i, c := range named {
+		ids[i] = c.ID
+	}
+	return nil, keeperErr(types.CodeUnknownConnection,
+		"more than one connection is named "+ref+": "+strings.Join(ids, ", "),
+		"call again with one of these ids")
 }
 
 // Explain is §6.1's dry run: what would be masked and whether the statement
 // would escalate, without spending an approval.
 func (d *Daemon) Explain(ctx context.Context, s *Session, connID, sql string, params []Param) (*types.ExplainResult, error) {
-	if _, err := d.usableConnection(ctx, connID); err != nil {
+	conn, err := d.usableConnection(ctx, connID)
+	if err != nil {
 		return nil, err
 	}
+	connID = conn.ID
 	bound, err := d.resolveParams(ctx, s.ID(), connID, params)
 	if err != nil {
 		return nil, err
@@ -77,6 +101,7 @@ func (d *Daemon) Query(ctx context.Context, s *Session, connID, sql string, para
 	if err != nil {
 		return nil, nil, err
 	}
+	connID = conn.ID
 	bound, err := d.resolveParams(ctx, info.ID, connID, params)
 	if err != nil {
 		return nil, nil, err

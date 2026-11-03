@@ -10,9 +10,9 @@ func keeperErr(code types.Code, summary, action string) *types.Error {
 }
 
 var (
-	errUnknownConnection = keeperErr(types.CodeTicketUnknown,
-		"no connection with that id is registered",
-		"run `keeper connection list`")
+	errUnknownConnection = keeperErr(types.CodeUnknownConnection,
+		"no connection has that id or profile name",
+		"call list_connections")
 
 	errUnknownHost = keeperErr(types.CodeTicketUnknown,
 		"no host with that id is registered",

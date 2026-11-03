@@ -16,7 +16,7 @@ import (
 func registerTools(s *mcp.Server, h *daemonHolder) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_connections",
-		Description: "List every registered database connection available to this session.",
+		Description: "List every registered database connection available to this session. Every connection_id and id argument accepts a connection id or the exact profile name.",
 	}, h.listConnections)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -105,7 +105,7 @@ func (h *daemonHolder) listConnections(ctx context.Context, req *mcp.CallToolReq
 // --- describe_connection ---
 
 type DescribeConnectionIn struct {
-	ID string `json:"id" jsonschema:"the connection id from list_connections"`
+	ID string `json:"id" jsonschema:"the connection id from list_connections, or the exact profile name"`
 }
 
 func (h *daemonHolder) describeConnection(ctx context.Context, req *mcp.CallToolRequest, in DescribeConnectionIn) (*mcp.CallToolResult, client.ConnectionDetail, error) {
@@ -123,7 +123,7 @@ func (h *daemonHolder) describeConnection(ctx context.Context, req *mcp.CallTool
 // --- get_schema ---
 
 type GetSchemaIn struct {
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"connection_id" jsonschema:"a connection id, or the exact profile name"`
 	Schema       string `json:"schema,omitzero" jsonschema:"restrict to this schema name"`
 	TablePattern string `json:"table_pattern,omitzero" jsonschema:"restrict to tables matching this pattern"`
 }
@@ -359,7 +359,7 @@ func (h *daemonHolder) getResult(ctx context.Context, req *mcp.CallToolRequest, 
 // --- request_input ---
 
 type RequestInputIn struct {
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"connection_id" jsonschema:"a connection id, or the exact profile name"`
 	Namespace    string `json:"namespace" jsonschema:"the token namespace; two columns tokenized under the same namespace can be joined on"`
 	Purpose      string `json:"purpose,omitzero" jsonschema:"screened, user-visible task text; never a value"`
 }

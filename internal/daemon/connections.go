@@ -90,11 +90,12 @@ func (d *Daemon) profile(ctx context.Context, c *types.Connection) Profile {
 
 // Describe is describe_connection. Every layer that could not be consulted is
 // reported as a degradation rather than left to look like a clean answer (§7.10).
-func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, error) {
-	c, err := d.deps.Vault.Connection(ctx, id)
-	if err != nil || c == nil {
-		return nil, errUnknownConnection
+func (d *Daemon) Describe(ctx context.Context, ref string) (*ConnectionDetail, error) {
+	c, err := d.usableConnection(ctx, ref)
+	if err != nil {
+		return nil, err
 	}
+	id := c.ID
 	det := &ConnectionDetail{
 		ID: c.ID, Name: c.Name, Engine: c.Engine, Version: c.Version,
 		Profile:       d.profile(ctx, c),
@@ -179,9 +180,11 @@ type SchemaView struct {
 // Schema is get_schema, filtered: a few hundred columns in one response is not
 // usable (§6.1).
 func (d *Daemon) Schema(ctx context.Context, connID, schema, table string) (*SchemaView, error) {
-	if _, err := d.usableConnection(ctx, connID); err != nil {
+	conn, err := d.usableConnection(ctx, connID)
+	if err != nil {
 		return nil, err
 	}
+	connID = conn.ID
 	rels, err := d.deps.Executor.Introspect(ctx, connID)
 	if err != nil {
 		return nil, err

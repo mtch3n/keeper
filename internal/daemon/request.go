@@ -94,6 +94,11 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 	if spec.ConnectionID == "" {
 		return nil, errValidation("connection_id", "is required")
 	}
+	conn, err := d.usableConnection(ctx, spec.ConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	spec.ConnectionID = conn.ID
 	if spec.Purpose != "" {
 		// R8.7c: purpose is screened user-visible task text. It never carries a
 		// value, and R10c's screen is what makes that true rather than hoped.
