@@ -46,6 +46,8 @@ func run(args []string) error {
 		return runDaemon(rest)
 	case "ui":
 		return runUI(rest)
+	case "settings":
+		return runSettings(rest)
 	case "hook":
 		return runHook(rest)
 	case "version":
@@ -87,7 +89,8 @@ Usage:
   keeper update [--check] [--force]
   keeper vault export > file | import [--replace] file
   keeper daemon start | restart | status
-  keeper ui
+  keeper ui [<path>]
+  keeper settings [set ui on|off]
   keeper hook session-start | pre-tool-use | waiting
       for the agent plugin's hooks; prints JSON for the client
   keeper mcp

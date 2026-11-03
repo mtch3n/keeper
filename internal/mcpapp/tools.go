@@ -256,10 +256,14 @@ func (h *daemonHolder) query(ctx context.Context, req *mcp.CallToolRequest, in Q
 // waiting is what an agent gets when no dialog can settle its ticket: the
 // ticket, the local page where a person can, and how to collect the rows.
 func waiting(id string, state types.TicketState, reason, auditID, url string) QueryOut {
+	who := "A person must accept this statement. Show them the link, or they can use keeper's Inbox."
+	if url == "" {
+		who = "A person must accept this statement: ask them to run `keeper approve` in a terminal."
+	}
 	return QueryOut{
 		ResultOut: ResultOut{AuditID: auditID},
 		Ticket:    id, State: state, Reason: reason, Link: url,
-		Next: "A person must accept this statement. Show them the link, or they can use keeper's Inbox. Then call get_result with the ticket; do not resubmit the statement.",
+		Next: who + " Then call get_result with the ticket; do not resubmit the statement.",
 	}
 }
 

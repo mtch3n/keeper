@@ -104,7 +104,7 @@ func TestPlg_PLG_C10_ReadOnlyKeeperCommandsPass(t *testing.T) {
 	cases := []string{
 		`keeper version`,
 		`keeper doctor`,
-		`keeper ui`,
+		`keeper settings`,
 		`keeper activity --limit 5`,
 		`keeper connection ls`,
 		`keeper catalog ls prod`,

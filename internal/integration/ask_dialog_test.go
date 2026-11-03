@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -566,11 +567,12 @@ type loopback struct {
 
 func (e *leanEnv) loopback(t *testing.T) *loopback {
 	t.Helper()
-	rep, err := e.op.GetDoctor(t.Context())
-	if err != nil || rep.UIBase == "" {
-		t.Fatalf("doctor: %v %q", err, rep.UIBase)
+	sess, err := e.op.GetUISession(t.Context())
+	if err != nil {
+		t.Fatalf("ui session: %v", err)
 	}
-	l := &loopback{base: rep.UIBase, hc: &http.Client{}}
+	jar, _ := cookiejar.New(nil)
+	l := &loopback{base: sess.Base, hc: &http.Client{Jar: jar}}
 	resp, err := l.hc.Get(l.base + "/")
 	if err != nil {
 		t.Fatal(err)
@@ -580,6 +582,9 @@ func (e *leanEnv) loopback(t *testing.T) *loopback {
 		if c.Name == "keeper_csrf" {
 			l.csrf = c.Value
 		}
+	}
+	if code, out := l.do(t, http.MethodPost, "/v1/ui-session/claim", `{"secret":"`+sess.Secret+`"}`); code/100 != 2 {
+		t.Fatalf("claim: %d %s", code, out)
 	}
 	return l
 }

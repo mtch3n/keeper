@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "keeper",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "keeper_min_version": "0.1.0",
   "description": "Query a database through keeper, which masks results before they reach the conversation. Tokens that still join, redaction of free text, approval in the agent's terminal, and a local form for values that must never be typed into chat.",
   "author": {

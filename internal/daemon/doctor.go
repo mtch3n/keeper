@@ -51,7 +51,7 @@ type ConnectionHealth struct {
 func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 	rep := &DoctorReport{
 		Version:   d.cfg.Version,
-		UIBase:    d.cfg.UIBase,
+		UIBase:    d.UIBase(),
 		KeySource: d.deps.Vault.KeySource(),
 		Sessions:  d.Sessions(),
 	}

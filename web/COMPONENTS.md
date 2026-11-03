@@ -48,6 +48,7 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Separator | `@/components/ui/separator` | Dividers, replacing `border-t` spacer divs |
 | Sheet | `@/components/ui/sheet` | The off-canvas panel the agents indicator opens |
 | Skeleton | `@/components/ui/skeleton` | Loading placeholders |
+| Switch | `@/components/ui/switch` | One on/off setting that takes effect when flipped: the local dashboard. A `Checkbox` reads as a form field waiting for Save |
 | Table | `@/components/ui/table` | Rows of like things with columns — `Catalog`, `Activity`, query results |
 | Toast | `@/components/ui/toast` | Transient action failures. Base UI ships `toast`; `sonner` is the Radix/React-Aria equivalent and is not used here |
 | Tooltip | `@/components/ui/tooltip` | The label of every icon-only button, through `IconButton`. `TooltipProvider` is mounted once in `main.tsx` |
@@ -201,6 +202,7 @@ it is the row you have selected.
 | TicketPage | `ApprovalCard` | A ticket's own page at `/r/:ticket`, opened from the link in a fallback answer or a desktop notification: the Inbox's card for the one waiting ticket, decided in place. It follows the queue: when another surface decides the ticket or it expires, the card is replaced by a closed notice. An unknown id falls to the request page, which says so and offers no decision |
 | InputRequest | `Input`, `Button` | A value the agent must never see. Never echoed back, on success or in an error |
 | Page | none (layout) | The local page's frame: one column, no navigation |
+| SessionNeeded | none (layout, `Page`) | What every page shows when the daemon does not know this browser (the page was opened without `keeper ui`, or the daemon restarted): the one command to run. A ticket link names the command with the ticket, so the person lands back on it |
 | ConnectionPage | `Skeleton`, `Empty`, `Separator`, `Button` | One database's page. Its tabs are routes, so each can be linked to, and the header picker chooses the database. An id that names nothing says so and links back to Connections |
 | OverviewTab | `Facts`, `Separator` | The connection in one screen: host, database, role, reads, writes, detection and unclassified columns, each a link to the tab that acts on it, and Remove at the foot |
 | RemoveConnection | `Input`, `Button` | Deleting a connection, with its name retyped rather than a click confirmed. Its credential goes with it. The catalog file stays: it lives in the project repo and is reviewed like code |

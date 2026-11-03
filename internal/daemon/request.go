@@ -106,6 +106,10 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 			return nil, errTextScreened
 		}
 	}
+	base := d.UIBase()
+	if base == "" {
+		return nil, ErrUIOff
+	}
 	now := d.now()
 	id := capability()
 	r := &localRequest{
@@ -116,7 +120,7 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 			ConnectionID: spec.ConnectionID,
 			Namespace:    spec.Namespace,
 			Purpose:      spec.Purpose,
-			URL:          d.cfg.UIBase + "/r/" + id,
+			URL:          base + "/r/" + id,
 			State:        statePending,
 			ExpiresAt:    now.Add(d.cfg.RequestTTL),
 		},

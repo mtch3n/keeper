@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/wrappers/AppShell'
 import { Toaster } from '@/components/ui/toast'
@@ -8,9 +9,17 @@ import { InboxPage } from '@/pages/InboxPage'
 import { ActivityPage } from '@/pages/ActivityPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { ConnectionPage } from '@/pages/connection/ConnectionPage'
-import { LocalRequestPage } from '@/pages/LocalRequestPage'
+import { LocalRequestPage, SessionNeeded } from '@/pages/LocalRequestPage'
+import { SESSION_NEEDED } from '@/lib/api'
 
 function App() {
+  const [sessionNeeded, setSessionNeeded] = useState(false)
+  useEffect(() => {
+    const on = () => setSessionNeeded(true)
+    window.addEventListener(SESSION_NEEDED, on)
+    return () => window.removeEventListener(SESSION_NEEDED, on)
+  }, [])
+  if (sessionNeeded) return <SessionNeeded />
   return (
     <>
       <Toaster />

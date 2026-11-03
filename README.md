@@ -34,6 +34,13 @@ under GDPR Article 4(11).
    folder to `PATH` so that your terminal finds `keeper`:
    `export PATH="$HOME/.local/bin:$PATH"`.
 
+   The daemon that `keeper mcp` starts also serves a local dashboard on
+   `127.0.0.1`. Run `keeper ui` in your terminal for a link that opens it: the
+   link carries a secret that lasts until the daemon stops, and keeper never
+   opens a browser by itself. A process that runs as your OS user can still read
+   the daemon's socket, so the secret keeps out other users and sandboxes with
+   loopback only, not another process of yours.
+
 2. Register a database. Run this in your own terminal, not in the agent:
 
    ```sh
@@ -91,9 +98,11 @@ accepts.
 - A write: the person must choose "Run once" or "Refuse". Nothing is
   preselected, so a stray Enter does not commit a write.
 - Esc, or a client that cannot show a dialog (a headless run), does not decide
-  the statement. The agent gets a ticket and a local link. The ticket waits in
-  the Inbox of the dashboard, and keeper sends a desktop notification with the
-  link. The agent polls `get_result` until a person decides.
+  the statement. The agent gets a ticket and a local link, which opens nothing until
+  you have run `keeper ui` in a terminal. The ticket waits in the Inbox of the
+  dashboard, and keeper sends a desktop notification with a link that signs you
+  in. With the dashboard off, there is no link and `keeper approve` decides the
+  ticket. The agent polls `get_result` until a person decides.
 
 `keeper approve` lists and decides tickets from a terminal.
 
@@ -219,7 +228,8 @@ want the daemon to stay up.
 ```sh
 keeper doctor                    # daemon, key source, connections
 keeper daemon status
-keeper ui                        # the dashboard's local URL
+keeper ui                        # the dashboard's link, with its secret
+keeper settings set ui off       # no dashboard, no open port; "on" turns it back on
 keeper activity --since 24h      # what ran, and what was applied to it
 ```
 

@@ -22,6 +22,8 @@ func status(c types.Code) int {
 		types.CodeDDLRefused, types.CodeWritesOff,
 		types.CodeApprovalRefused, types.CodeRowCap:
 		return http.StatusForbidden
+	case codeUISessionNeeded:
+		return http.StatusUnauthorized
 	case types.CodeTicketUnknown, types.CodeUnknownConnection:
 		return http.StatusNotFound
 	case types.CodeApprovalRequired:
@@ -81,7 +83,19 @@ func denied(summary, action string) *types.Error {
 	return &types.Error{Code: types.CodePermissionDenied, Summary: summary, Action: action}
 }
 
+const codeUISessionNeeded types.Code = "ui_session_needed"
+
 var (
+	errUISessionNeeded = &types.Error{
+		Code:    codeUISessionNeeded,
+		Summary: "this browser has not opened the keeper dashboard",
+		Action:  "run `keeper ui` in your terminal",
+	}
+
+	errCLIOnly = denied(
+		"this route is served on the keeper socket only",
+		"use the `keeper` command")
+
 	errAgentOnly = denied(
 		"this route is served on the keeper socket only",
 		"call it over the keeper socket")

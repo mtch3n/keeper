@@ -5,6 +5,12 @@ import "github.com/mtchen/keeper/internal/types"
 // keeperErr composes the only error shape that may reach an agent. Every summary
 // here is written by keeper: SPEC R6.4a forbids copying a server's text, because
 // PostgreSQL interpolates offending values into its messages.
+// ErrUIOff is what anything that needs the dashboard answers while the operator
+// has it off.
+var ErrUIOff = keeperErr(types.CodePermissionDenied,
+	"the keeper dashboard is off, so there is no local page; run `keeper settings set ui on` to turn it on",
+	"run `keeper settings set ui on`")
+
 func keeperErr(code types.Code, summary, action string) *types.Error {
 	return &types.Error{Code: code, Summary: summary, Action: action}
 }

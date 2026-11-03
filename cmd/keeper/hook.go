@@ -174,6 +174,8 @@ var humanOnly = map[string]map[string]bool{
 	"host":       nil,
 	"vault":      nil,
 	"update":     nil,
+	"settings":   {"set": true},
+	"ui":         nil,
 	"connection": {"set": true, "rm": true},
 	"catalog":    {"edit": true, "init": true},
 }

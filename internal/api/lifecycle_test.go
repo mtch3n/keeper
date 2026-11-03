@@ -186,7 +186,7 @@ func TestTheApprovalEventsCarryNoStatementAndNoRow(t *testing.T) {
 
 func TestAVaultImportClosesEveryPoolAndCatalog(t *testing.T) {
 	r := newRig(t)
-	r.browser().mustJSON("POST", "/v1/vault/import", map[string]any{"data": []byte("x"), "passphrase": "p"}, nil)
+	r.socket().mustJSON("POST", "/v1/vault/import", map[string]any{"data": []byte("x"), "passphrase": "p"}, nil)
 	if r.replaced.Load() != 1 {
 		t.Errorf("the import closed pools and catalogs %d times, want once", r.replaced.Load())
 	}

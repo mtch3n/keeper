@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -13,7 +14,7 @@ import { getDoctor, getSettings, updateSettings, type DoctorReport, type Setting
 import { usePaging } from '@/lib/paging'
 import { age } from '@/lib/render'
 import { positiveInt, useSave } from '@/lib/save'
-import { SettingSection } from '@/components/wrappers/SettingSection'
+import { ConfirmWiden, SettingSection } from '@/components/wrappers/SettingSection'
 
 /**
  * What this daemon is doing.
@@ -30,6 +31,7 @@ import { SettingSection } from '@/components/wrappers/SettingSection'
  */
 function Preferences({ onSaved }: { onSaved: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [confirmOff, setConfirmOff] = useState(false)
   const save = useSave()
 
   useEffect(() => {
@@ -48,6 +50,32 @@ function Preferences({ onSaved }: { onSaved: () => void }) {
   return (
     <SettingSection title="Preferences" save={save}>
       <FieldGroup>
+        <Field>
+          <div className="flex items-center gap-3">
+            <Switch
+              id="ui"
+              checked={!settings?.ui_off}
+              disabled={settings === null || save.busy}
+              onCheckedChange={(on) => (on ? store({ ui_off: false }) : setConfirmOff(true))}
+            />
+            <FieldLabel htmlFor="ui">Local dashboard</FieldLabel>
+          </div>
+          <FieldDescription>
+            This page and the local links keeper gives for approvals and for typing a value. Off, keeper opens no port;
+            approve in the terminal with keeper approve.
+          </FieldDescription>
+        </Field>
+        <ConfirmWiden
+          open={confirmOff}
+          title="Turn the dashboard off?"
+          description="This page stops working at once. Turn it back on with keeper settings set ui on."
+          action="Turn off"
+          onCancel={() => setConfirmOff(false)}
+          onConfirm={() => {
+            setConfirmOff(false)
+            store({ ui_off: true })
+          }}
+        />
         <NumberSetting
           id="retention"
           label="Keep the activity log for (days)"

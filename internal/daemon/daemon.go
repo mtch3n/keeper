@@ -15,6 +15,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"net"
@@ -46,6 +47,16 @@ type Deps struct {
 	// VaultReplaced is optional: it runs after an import replaced the vault,
 	// and closes every pool and catalog opened under the old one.
 	VaultReplaced func()
+	// UI binds and releases the loopback listener. Optional: without it the
+	// dashboard is Config.UIBase while the setting is on.
+	UI UIControl
+}
+
+// UIControl is the loopback listener's lifecycle. Start returns the base
+// address it now serves; Stop releases the port.
+type UIControl interface {
+	Start() (base string, err error)
+	Stop()
 }
 
 // Config is the daemon's tuning. Everything has a default; New fills the zeroes.
@@ -54,7 +65,7 @@ type Config struct {
 	// handshake. SPEC §3.4 version skew.
 	Version string
 	// UIBase is the loopback origin local request URLs are built from,
-	// "http://127.0.0.1:7773".
+	// "http://127.0.0.1:7773". With Deps.UI set, StartUI fills it.
 	UIBase string
 	// RequestTTL is how long a local request stays open. SPEC R8.7c: initial
 	// default 10 minutes.
@@ -123,6 +134,9 @@ type Daemon struct {
 	cfg          Config
 	deps         Deps
 	hub          *Hub
+	uiSecret     string
+	uiMu         sync.Mutex
+	uiBase       atomic.Value
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -170,11 +184,13 @@ func New(cfg Config, deps Deps) (*Daemon, error) {
 		byConn:   map[net.Conn]*Session{},
 		tickets:  map[string]*ticket{},
 		requests: map[string]*localRequest{},
+		uiSecret: rand.Text() + rand.Text(),
 	}
 
 	// The clock starts at startup, not at the first request. A daemon nobody ever
 	// connected to is the most eligible thing there is to stop, and treating
 	// "never touched" as "not idle" had it running forever.
+	d.uiBase.Store(cfg.UIBase)
 	d.lastActivity.Store(d.now().UnixNano())
 
 	d.wg.Go(d.sweep)
@@ -325,4 +341,55 @@ func (d *Daemon) exitIfIdle() {
 	}
 	d.cfg.Logger.Info("stopping after idle", "idle", d.idleFor().Round(time.Second))
 	d.RequestShutdown()
+}
+
+// UIBase is the dashboard's address, or "" while it is off.
+func (d *Daemon) UIBase() string { return d.uiBase.Load().(string) }
+
+// UISession is the base address and the secret that opens the dashboard. The
+// secret is new on every start and leaves the daemon only over the unix socket
+// and in the desktop notification to the person.
+func (d *Daemon) UISession() (base, secret string) { return d.UIBase(), d.uiSecret }
+
+// uiLink is the notification's link: the ticket's page behind the secret.
+// Empty while the dashboard is off, so nothing hands out a dead address.
+func (d *Daemon) uiLink(next string) string {
+	base := d.UIBase()
+	if base == "" {
+		return ""
+	}
+	return base + "/auth?next=" + next + "#" + d.uiSecret
+}
+
+// StartUI applies the stored setting at start: the listener is bound unless the
+// operator turned the dashboard off.
+func (d *Daemon) StartUI(ctx context.Context) error {
+	st, err := d.deps.Vault.Settings(ctx)
+	if err != nil {
+		return err
+	}
+	return d.applyUI(!st.UIOff)
+}
+
+// applyUI binds or releases the listener to match the setting.
+func (d *Daemon) applyUI(on bool) error {
+	d.uiMu.Lock()
+	defer d.uiMu.Unlock()
+	switch {
+	case on && d.UIBase() == "":
+		base := d.cfg.UIBase
+		if d.deps.UI != nil {
+			var err error
+			if base, err = d.deps.UI.Start(); err != nil {
+				return err
+			}
+		}
+		d.uiBase.Store(base)
+	case !on && d.UIBase() != "":
+		if d.deps.UI != nil {
+			d.deps.UI.Stop()
+		}
+		d.uiBase.Store("")
+	}
+	return nil
 }

@@ -106,6 +106,7 @@ func (d *Daemon) Settings(ctx context.Context) (types.Settings, error) {
 type SettingsPatch struct {
 	LogRetentionDays      *int
 	ConnectionIdleMinutes *int
+	UIOff                 *bool
 }
 
 // UpdateSettings applies a patch. Retention must keep at least a day: a log that
@@ -129,8 +130,16 @@ func (d *Daemon) UpdateSettings(ctx context.Context, p SettingsPatch) (types.Set
 		}
 		s.ConnectionIdleMinutes = *p.ConnectionIdleMinutes
 	}
+	if p.UIOff != nil {
+		s.UIOff = *p.UIOff
+	}
 	if err := d.deps.Vault.SetSettings(ctx, s); err != nil {
 		return types.Settings{}, err
+	}
+	if p.UIOff != nil {
+		if err := d.applyUI(!s.UIOff); err != nil {
+			return types.Settings{}, err
+		}
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "settings"}})
 	return s, nil

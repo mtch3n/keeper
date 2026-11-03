@@ -37,7 +37,11 @@ type desktopNotifier struct {
 func (n desktopNotifier) Notify(ctx context.Context, title, link string) {
 	switch n.goos {
 	case "linux":
-		_ = n.run(ctx, "notify-send", "--app-name=keeper", title, link)
+		args := []string{"--app-name=keeper", title}
+		if link != "" {
+			args = append(args, link)
+		}
+		_ = n.run(ctx, "notify-send", args...)
 	case "darwin":
 		quote := strings.NewReplacer(`\`, ``, `"`, ``).Replace
 		_ = n.run(ctx, "osascript", "-e", `display notification "`+quote(link)+`" with title "`+quote(title)+`"`)
