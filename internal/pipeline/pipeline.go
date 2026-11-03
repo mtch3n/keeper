@@ -191,7 +191,10 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 	// freely. Resolving here rather than holding one is what keeps a statement
 	// against staging from being masked by production's classifications.
 	cat, err := p.catalogs(req.ConnID)
-	if err != nil || cat == nil {
+	if err != nil {
+		return refuse(asKeeperError(err))
+	}
+	if cat == nil {
 		return refuse(
 			keeperError(types.CodeInternal, "this connection has no catalog",
 				"run keeper catalog init for this connection"))
@@ -427,7 +430,10 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 	// freely. Resolving here rather than holding one is what keeps a statement
 	// against staging from being masked by production's classifications.
 	cat, err := p.catalogs(req.ConnID)
-	if err != nil || cat == nil {
+	if err != nil {
+		return nil, asKeeperError(err)
+	}
+	if cat == nil {
 		return nil, keeperError(types.CodeInternal, "this connection has no catalog",
 			"run keeper catalog init for this connection")
 	}
@@ -469,7 +475,6 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		At:            st.started,
 		SessionID:     req.Session.ID,
 		Client:        req.Session.Client,
-		Intent:        req.Session.Intent,
 		Connection:    req.ConnID,
 		Statement:     p.audit.Normalize(req.SQL, p.knownIdentifier(st)),
 		OutputColumns: st.outputColumns,
@@ -482,7 +487,6 @@ func (p *Pipeline) writeAudit(ctx context.Context, req Request, st *state) error
 		Collisions:    st.collisions,
 		Duration:      p.now().Sub(st.started),
 		ErrorCode:     st.errCode,
-		TokenScope:    req.Session.TokenScope,
 	}
 	if st.plan != nil {
 		rec.StatementType = st.plan.StatementType
@@ -567,7 +571,6 @@ func (p *Pipeline) Facts(ctx context.Context, req Request) (*types.ApprovalFacts
 // approvalFacts describes the statement st planned.
 func (p *Pipeline) approvalFacts(req Request, st *state) types.ApprovalFacts {
 	f := types.ApprovalFacts{
-		Intent:  req.Session.Intent,
 		Egress:  egressSummary(st.cols),
 		Reasons: st.reasons,
 	}

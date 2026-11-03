@@ -51,24 +51,8 @@ func (s *Server) openSession(ctx context.Context, _ *reqInfo, w http.ResponseWri
 	return sessionResponse{SessionID: sess.ID(), DaemonVersion: s.d.Version()}, nil
 }
 
-type intentRequest struct {
-	Intent     string           `json:"intent"`
-	TokenScope types.TokenScope `json:"token_scope,omitzero"`
-}
-
 type okResponse struct {
 	OK bool `json:"ok"`
-}
-
-func (s *Server) setIntent(ctx context.Context, rq *reqInfo, w http.ResponseWriter, r *http.Request) (any, error) {
-	var req intentRequest
-	if err := s.readJSON(w, r, &req); err != nil {
-		return nil, err
-	}
-	if err := s.d.SetIntent(ctx, rq.session, req.Intent, req.TokenScope); err != nil {
-		return nil, err
-	}
-	return okResponse{OK: true}, nil
 }
 
 type statementRequest struct {

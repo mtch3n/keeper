@@ -12,7 +12,6 @@ import (
 // registered: register_connection, set_policy, catalog init, approve and the
 // reads and writes settings are CLI/UI only.
 var wantTools = []string{
-	"set_session_intent",
 	"list_connections",
 	"describe_connection",
 	"get_schema",

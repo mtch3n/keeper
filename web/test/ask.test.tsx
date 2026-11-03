@@ -57,4 +57,12 @@ describe('the ticket page', () => {
     expect(screen.queryByRole('button', { name: 'Refuse' })).toBeNull()
     expect(d.calls.some((c) => c.startsWith('POST'))).toBe(false)
   })
+
+  test('the ticket page shows no tier text', async () => {
+    const d = daemon()
+    d.on('GET', '/v1/approvals/t1', () => [200, item])
+    renderApp('/r/t1')
+    expect(await screen.findByRole('article')).toBeTruthy()
+    expect(screen.queryByText(/tier/i)).toBeNull()
+  })
 })

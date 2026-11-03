@@ -9,7 +9,6 @@ import "net/http"
 func (s *Server) routes() {
 	// --- agent surface, socket only -------------------------------------
 	s.handle("POST /v1/session", accessHandshake, s.openSession)
-	s.handle("POST /v1/session/intent", accessAgent, s.setIntent)
 	s.handle("POST /v1/connections/{id}/explain", accessAgent, s.explain)
 	s.handle("POST /v1/connections/{id}/query", accessAgent, s.query)
 	s.handle("GET /v1/tickets/{id}", accessAgent, s.ticket)
@@ -31,7 +30,6 @@ func (s *Server) routes() {
 	s.handle("POST /v1/connections", accessHuman, s.registerConnection)
 	s.handle("PATCH /v1/connections/{id}", accessHuman, s.patchConnection)
 	s.handle("DELETE /v1/connections/{id}", accessHuman, s.removeConnection)
-	s.handle("PUT /v1/connections/{id}/terms", accessHuman, s.putTerms)
 	s.handle("POST /v1/connections/{id}/test", accessHuman, s.testConnection)
 
 	s.handle("GET /v1/approvals", accessHuman, s.listApprovals)
@@ -42,7 +40,6 @@ func (s *Server) routes() {
 	s.handle("GET /v1/catalog/{connection}", accessHuman, s.getCatalog)
 	s.handle("PUT /v1/catalog/{connection}/columns", accessHuman, s.putCatalogColumns)
 	s.handle("POST /v1/catalog/{connection}/init", accessHuman, s.initCatalog)
-	s.handle("POST /v1/catalog/{connection}/grants", accessHuman, s.suggestGrants)
 
 	s.handle("GET /v1/activity", accessHuman, s.activity)
 	s.handle("GET /v1/activity/{audit_id}", accessHuman, s.activityRecord)
@@ -58,7 +55,6 @@ func (s *Server) routes() {
 	// every connection keeper exists to stand in front of.
 	s.handle("POST /v1/vault/export", accessHuman, s.exportVault)
 	s.handle("POST /v1/vault/import", accessHuman, s.importVault)
-	s.handle("POST /v1/vault/rotate-master", accessHuman, s.rotateMaster)
 
 	s.raw("GET /v1/events", accessHuman, s.events)
 

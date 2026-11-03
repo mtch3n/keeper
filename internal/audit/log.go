@@ -56,9 +56,9 @@ type Config struct {
 	// it from the vault's master key, so the log reads only where the vault
 	// opens. Required: there is no plaintext mode.
 	Key func() ([]byte, error)
-	// Detector is the patterns pass [Log.ScreenIntent] runs. Required: R10c
-	// screens the session intent, and without one there is no screen. It is
-	// never a connection's chain: an intent belongs to a session.
+	// Detector is the patterns pass [Log.ScreenText] runs. Required: R10c
+	// screens user-visible task text, and without one there is no screen. It is
+	// never a connection's chain: the text belongs to a request.
 	Detector ports.Detector
 	// Now is the clock, for tests.
 	Now func() time.Time
@@ -85,7 +85,7 @@ var _ ports.AuditLog = (*Log)(nil)
 // the daemon is wired, and the first write or read asks for the key.
 func New(cfg Config) (*Log, error) {
 	if cfg.Detector == nil {
-		return nil, errors.New("audit: a detector is required to screen session intent (R10c)")
+		return nil, errors.New("audit: a detector is required to screen task text (R10c)")
 	}
 	if cfg.Dir == "" || cfg.Key == nil {
 		return nil, errors.New("audit: a directory and a key are required")
@@ -171,19 +171,6 @@ func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 	if hasStrippableLiteral(r.Statement) {
 		r.Statement = Normalize(r.Statement, nil)
 	}
-	// R10c screens the intent at set_session_intent; screening it again here
-	// means a record cannot carry PII because one call site forgot. A hit is
-	// replaced by the kinds that matched, never by the text.
-	if r.Intent != "" {
-		if err := l.ScreenIntent(ctx, r.Intent); err != nil {
-			kinds := "unscreened text"
-			if ie, ok := errors.AsType[*IntentError](err); ok {
-				kinds = strings.Join(ie.Types, ", ")
-			}
-			r.Intent = "\u27e8withheld: " + kinds + "\u27e9"
-		}
-	}
-
 	line, err := json.Marshal(r, durationMarshaler)
 	if err != nil {
 		return fmt.Errorf("audit: encode record: %w", err)
@@ -387,44 +374,43 @@ func (l *Log) Prune(ctx context.Context, retentionDays int) error {
 	return nil
 }
 
-// IntentError is a rejected session intent. It names the kinds of identifier
+// TextError is rejected task text. It names the kinds of identifier
 // that were found and never the text: an error about PII that quotes the PII
 // has moved the problem rather than solved it.
-type IntentError struct {
+type TextError struct {
 	// Types are the detector labels that matched, deduplicated.
 	Types []string
 }
 
-func (e *IntentError) Error() string {
-	return "session intent carries " + strings.Join(e.Types, ", ") +
+func (e *TextError) Error() string {
+	return "the text carries " + strings.Join(e.Types, ", ") +
 		"; describe the task without the value and pass it as a token parameter instead"
 }
 
-// ScreenIntent rejects a session intent that carries PII.
+// ScreenText rejects user-visible task text that carries PII.
 //
 // R10c: stripping literals from the statement is not sufficient, because
-// comments, quoted identifiers and the session intent are all attacker- or
-// user-supplied text that can carry PII. The intent is screened by the same rule
+// comments, quoted identifiers and a request's purpose are all attacker- or
+// user-supplied text that can carry PII. The text is screened by the same rule
 // pass a `scan` column gets, and a hit is a rejection rather than a redaction —
-// the intent is written once by a human or an agent, and asking for it again
-// costs nothing, while a silently redacted intent would read as if it had been
-// accepted as written.
+// asking again costs nothing, while silently redacted text would read as if it
+// had been accepted as written.
 //
-// The daemon maps *[IntentError] to an agent-facing error; this package does not
+// The daemon maps *[TextError] to an agent-facing error; this package does not
 // compose one, because CONTRACT §2 converts at the API boundary and nowhere else.
-func (l *Log) ScreenIntent(ctx context.Context, intent string) error {
-	if strings.TrimSpace(intent) == "" {
+func (l *Log) ScreenText(ctx context.Context, text string) error {
+	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	res, err := l.detector.Detect(ctx, []string{intent})
+	res, err := l.detector.Detect(ctx, []string{text})
 	if err == nil && (len(res) == 0 || res[0] == nil) {
-		err = errors.New("the detector did not examine the intent")
+		err = errors.New("the detector did not examine the text")
 	}
 	if err != nil {
 		// A detector that failed screened nothing. Text that was not screened
-		// is not text that is clean, and the intent is stored and shown to
-		// humans on the approval screen, so it fails closed.
-		return &IntentError{Types: []string{"unscreened text (the detector did not run)"}}
+		// is not text that is clean, and the text is shown to humans on the
+		// approval screen, so it fails closed.
+		return &TextError{Types: []string{"unscreened text (the detector did not run)"}}
 	}
 	spans := res[0]
 	if len(spans) == 0 {
@@ -439,7 +425,7 @@ func (l *Log) ScreenIntent(ctx context.Context, intent string) error {
 		}
 	}
 	slices.Sort(kinds)
-	return &IntentError{Types: kinds}
+	return &TextError{Types: kinds}
 }
 
 // Normalize is [Normalize] as a method, satisfying ports.AuditLog.

@@ -8,7 +8,7 @@ type Basis string
 
 const (
 	BasisCatalog   Basis = "catalog"   // a human or catalog init classified it
-	BasisRules     Basis = "rules"     // the connection's detection stages, over every row
+	BasisRules     Basis = "rules"     // the connection's detector, over every row
 	BasisInherited Basis = "inherited" // a computed column, from R7.6
 	BasisParameter Basis = "parameter" // from a token-resolved parameter, R8.4b
 	BasisUnknown   Basis = "unknown"   // an unresolved column redacted under R5.4a
@@ -19,10 +19,9 @@ const (
 
 // Transform is what happened to one output column, declared in every response.
 type Transform struct {
-	Policy    Policy      `json:"policy"`
-	Namespace string      `json:"namespace,omitzero"`
-	Form      PartialForm `json:"form,omitzero"`
-	Basis     Basis       `json:"basis"`
+	Policy    Policy `json:"policy"`
+	Namespace string `json:"namespace,omitzero"`
+	Basis     Basis  `json:"basis"`
 	// SpansRedacted counts rule hits replaced inside text values. SPEC R8.5a.
 	SpansRedacted int `json:"spans_redacted,omitzero"`
 	// Collisions counts cells redacted because a token was already bound to a
@@ -146,7 +145,6 @@ type AuditRecord struct {
 	At         time.Time  `json:"at"`
 	SessionID  string     `json:"session_id"`
 	Client     ClientInfo `json:"client"`
-	Intent     string     `json:"intent,omitzero"`
 	Connection string     `json:"connection"`
 	// Statement is normalized with literals stripped and comments discarded.
 	// Quoted identifiers survive only when they match a catalogued relation or
@@ -166,8 +164,6 @@ type AuditRecord struct {
 	// Decision is how a human, or the clock, settled an escalated statement.
 	// Empty for a statement that never waited.
 	Decision Decision `json:"decision,omitzero"`
-	// TokenScope is how long the session declared its tokens live.
-	TokenScope TokenScope `json:"token_scope,omitzero"`
 }
 
 // Decision is how an escalated statement was settled.

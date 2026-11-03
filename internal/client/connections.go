@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
 
@@ -57,13 +56,12 @@ type ConnectionDetail struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version,omitzero"`
 	Profile
-	Schemas          []string             `json:"schemas,omitzero"`
-	CatalogStatus    CatalogStatus        `json:"catalog_status"`
-	PolicySummary    map[types.Policy]int `json:"policy_summary,omitzero"`
-	Limits           types.Limits         `json:"limits"`
-	PersistentTokens bool                 `json:"persistent_tokens"`
-	Detection        []types.Stage        `json:"detection"`
-	Degradations     []types.Degradation  `json:"degradations,omitzero"`
+	Schemas       []string             `json:"schemas,omitzero"`
+	CatalogStatus CatalogStatus        `json:"catalog_status"`
+	PolicySummary map[types.Policy]int `json:"policy_summary,omitzero"`
+	Limits        types.Limits         `json:"limits"`
+	Detection     types.Detection      `json:"detection"`
+	Degradations  []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // DescribeConnection returns describe_connection's field set for one
@@ -108,40 +106,15 @@ func (c *Client) RegisterConnection(ctx context.Context, p RegisterConnectionPar
 type PatchConnectionParams struct {
 	Reads types.Reads `json:"reads,omitzero"`
 	// Limits replaces all of the connection's limits when set.
-	Limits *types.Limits `json:"limits,omitzero"`
-	// Detection replaces the connection's passes when set; an empty list turns
-	// detection off.
-	Detection        *[]types.Stage `json:"detection,omitzero"`
-	Writes           types.Writes   `json:"writes,omitzero"`
-	PersistentTokens *bool          `json:"persistent_tokens,omitzero"`
+	Limits    *types.Limits   `json:"limits,omitzero"`
+	Detection types.Detection `json:"detection,omitzero"`
+	Writes    types.Writes    `json:"writes,omitzero"`
 }
 
 // PatchConnection updates a connection's settings.
 func (c *Client) PatchConnection(ctx context.Context, id string, p PatchConnectionParams) (*types.Connection, error) {
 	var out types.Connection
 	if err := c.do(ctx, http.MethodPatch, "/v1/connections/"+url.PathEscape(id), p, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// TermCounts is how many list-pass terms a connection holds. The terms
-// themselves never come back from the daemon.
-type TermCounts struct {
-	Deny     int `json:"deny"`
-	Allow    int `json:"allow"`
-	Patterns int `json:"patterns"`
-}
-
-// SetTerms replaces a connection's list-stage terms and expressions.
-func (c *Client) SetTerms(ctx context.Context, id string, t ports.Terms) (*TermCounts, error) {
-	body := struct {
-		Deny     []string        `json:"deny"`
-		Allow    []string        `json:"allow"`
-		Patterns []ports.Pattern `json:"patterns"`
-	}{Deny: t.Deny, Allow: t.Allow, Patterns: t.Patterns}
-	var out TermCounts
-	if err := c.do(ctx, http.MethodPut, "/v1/connections/"+url.PathEscape(id)+"/terms", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -157,13 +130,11 @@ type SchemaColumn struct {
 	Policy   types.Policy `json:"policy"`
 }
 
-// SchemaTable is one table of get_schema's response. HiddenCount is how many
-// hide_name columns were omitted from Columns (SPEC R6.4b).
+// SchemaTable is one table of get_schema's response.
 type SchemaTable struct {
-	Schema      string         `json:"schema"`
-	Name        string         `json:"name"`
-	Columns     []SchemaColumn `json:"columns"`
-	HiddenCount int            `json:"hidden_count,omitzero"`
+	Schema  string         `json:"schema"`
+	Name    string         `json:"name"`
+	Columns []SchemaColumn `json:"columns"`
 }
 
 // SchemaResult is get_schema's whole response.

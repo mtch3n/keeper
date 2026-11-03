@@ -97,8 +97,8 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 	if spec.Purpose != "" {
 		// R8.7c: purpose is screened user-visible task text. It never carries a
 		// value, and R10c's screen is what makes that true rather than hoped.
-		if err := d.deps.Audit.ScreenIntent(ctx, spec.Purpose); err != nil {
-			return nil, errIntentScreened
+		if err := d.deps.Audit.ScreenText(ctx, spec.Purpose); err != nil {
+			return nil, errTextScreened
 		}
 	}
 	now := d.now()
@@ -232,7 +232,7 @@ func (d *Daemon) AnswerInput(ctx context.Context, id, connectionID, namespace, v
 	sessionID, connID, ns := r.r.SessionID, r.r.ConnectionID, r.r.Namespace
 	d.mu.Unlock()
 
-	token, err := d.deps.Redactor.Mint(ports.WithStatement(ctx, ports.Statement{ConnectionID: connID, Persistent: d.persistentTokens(ctx, sessionID, connID)}), sessionID, connID, ns, value)
+	token, err := d.deps.Redactor.Mint(ports.WithStatement(ctx, ports.Statement{ConnectionID: connID}), sessionID, connID, ns, value)
 	if err != nil {
 		return err
 	}
@@ -343,17 +343,4 @@ func (d *Daemon) PendingRequests() []types.LocalRequest {
 	}
 	slices.SortFunc(out, func(a, b types.LocalRequest) int { return strings.Compare(a.ID, b.ID) })
 	return out
-}
-
-// persistentTokens reports whether a session's tokens on a connection persist:
-// its agent declared persistent and the connection allows it.
-func (d *Daemon) persistentTokens(ctx context.Context, sessionID, connID string) bool {
-	d.mu.Lock()
-	s := d.sessions[sessionID]
-	d.mu.Unlock()
-	if s == nil || s.Info().TokenScope != types.ScopePersistent {
-		return false
-	}
-	c, err := d.deps.Vault.Connection(ctx, connID)
-	return err == nil && c != nil && c.PersistentTokens
 }

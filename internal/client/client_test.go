@@ -112,9 +112,9 @@ func TestSessionHeaderCarried(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
 	})
 	var gotHeader string
-	mux.HandleFunc("POST /v1/session/intent", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		gotHeader = r.Header.Get("X-Keeper-Session")
-		writeJSON(t, w, http.StatusOK, okResponse{OK: true})
+		writeJSON(t, w, http.StatusOK, []ConnectionSummary{})
 	})
 	sock, _ := newTestServer(t, mux)
 
@@ -124,8 +124,8 @@ func TestSessionHeaderCarried(t *testing.T) {
 	}
 	defer c.Close()
 
-	if err := c.SetSessionIntent(t.Context(), "reconciliation OPS-441", ""); err != nil {
-		t.Fatalf("SetSessionIntent: %v", err)
+	if _, err := c.ListConnections(t.Context()); err != nil {
+		t.Fatalf("ListConnections: %v", err)
 	}
 	if gotHeader != "sess-1" {
 		t.Errorf("X-Keeper-Session = %q, want sess-1", gotHeader)
@@ -155,33 +155,6 @@ func TestListConnections(t *testing.T) {
 	}
 	if len(conns) != 1 || conns[0].Name != "prod" {
 		t.Errorf("conns = %+v", conns)
-	}
-}
-
-// The daemon answers catalog grants with {"statements": [...]}, the shape the UI
-// reads. The client decoded a bare array, so `keeper catalog grants` failed on
-// every connection.
-func TestCatalogGrantsReadsTheDaemonsShape(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/session", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, map[string]string{"session_id": "sess-1"})
-	})
-	mux.HandleFunc("POST /v1/catalog/c1/grants", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, map[string][]string{"statements": {"GRANT SELECT (id) ON public.users TO app_ro;"}})
-	})
-	sock, _ := newTestServer(t, mux)
-	c, err := Dial(t.Context(), sock, types.ClientInfo{Name: "keeper"})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer c.Close()
-
-	stmts, err := c.CatalogGrants(t.Context(), "c1")
-	if err != nil {
-		t.Fatalf("CatalogGrants: %v", err)
-	}
-	if len(stmts) != 1 {
-		t.Errorf("statements = %q", stmts)
 	}
 }
 

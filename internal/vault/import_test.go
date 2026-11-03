@@ -1,11 +1,11 @@
 package vault
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
 	"github.com/mtchen/keeper/internal/ports"
-	"github.com/mtchen/keeper/internal/redact"
 	"github.com/mtchen/keeper/internal/sealed"
 )
 
@@ -38,30 +38,6 @@ func registered(t *testing.T, v *Vault) string {
 	return conn.ID
 }
 
-func Test_TOKEN_C3_APersistentTokenResolvesOnAnotherMachine(t *testing.T) {
-	a := machine(t, 0x42)
-	id := registered(t, a)
-	ra, _ := redact.New(redact.Config{Keys: a})
-	ctx := redact.WithStatement(t.Context(), redact.Statement{ConnectionID: id, Persistent: true})
-	token, err := ra.Mint(ctx, "s1", id, "email", "jane@example.com")
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	export, err := exportOf(t, a)
-	if err != nil {
-		t.Fatalf("Export: %v", err)
-	}
-
-	b := machine(t, 0x77)
-	if err := b.Import(t.Context(), export, "correct horse"); err != nil {
-		t.Fatalf("Import: %v", err)
-	}
-	rb, _ := redact.New(redact.Config{Keys: b})
-	if v, _, err := rb.Resolve(t.Context(), "another-session", id, token); err != nil || v != "jane@example.com" {
-		t.Errorf("the token did not resolve on the other machine: %q %v", v, err)
-	}
-}
-
 func Test_TOKEN_C8_ABadExportIsRefusedAndTheVaultIsUnchanged(t *testing.T) {
 	a := machine(t, 0x42)
 	registered(t, a)
@@ -85,5 +61,29 @@ func Test_TOKEN_C8_ABadExportIsRefusedAndTheVaultIsUnchanged(t *testing.T) {
 		if len(cs) != 1 || cs[0].ID != before {
 			t.Errorf("%s: the vault changed: %+v", name, cs)
 		}
+	}
+}
+
+func TestImportIgnoresFieldsAnOlderVaultCarried(t *testing.T) {
+	a := machine(t, 0x42)
+	id := registered(t, a)
+	plain, err := a.Export(t.Context())
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	old := bytes.Replace(plain, []byte(`"id": "`+id+`"`), []byte(`"persistent_tokens": true, "intent": "x", "id": "`+id+`"`), 1)
+	if bytes.Equal(old, plain) {
+		t.Fatal("test did not add the old fields")
+	}
+	sealedOld, err := sealed.Seal(old, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := machine(t, 0x77)
+	if err := b.Import(t.Context(), sealedOld, "correct horse"); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if _, err := b.Connection(t.Context(), id); err != nil {
+		t.Errorf("the connection is gone: %v", err)
 	}
 }

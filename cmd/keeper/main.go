@@ -75,19 +75,17 @@ Usage:
   keeper host rm <name>
   keeper connection ls
   keeper connection show <name>
-  keeper connection set <name> [--reads always|uncertain|never] [--detection kind[:entity+entity][@raw],...|off] [--writes off|ask|allow] [--persistent-tokens on|off] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]
-  keeper connection terms <name> [--deny T]... [--allow T]... [--regex label=expr]...
+  keeper connection set <name> [--reads always|uncertain|never] [--detection off|scan|all] [--writes off|ask|allow] [--max-rows N] [--max-bytes N] [--timeout D] [--scan-sample N]
   keeper connection test <name>
   keeper connection rm <name>
   keeper catalog init <name> [--sample N]
-  keeper catalog edit <name> <schema.table.column> --policy P [--namespace N] [--form F] [--hide-name]
-  keeper catalog grants <name>
+  keeper catalog edit <name> <schema.table.column> --policy P [--namespace N]
   keeper catalog ls <name> [--unclassified]
   keeper approve [<ticket>]
   keeper activity [--session S] [--connection C] [--since D] [--limit N]
   keeper doctor
   keeper update [--check] [--force]
-  keeper vault export > file | import [--replace] file | rotate-master
+  keeper vault export > file | import [--replace] file
   keeper daemon start | restart | status
   keeper ui
 

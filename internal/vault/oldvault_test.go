@@ -41,3 +41,16 @@ func TestPerm_PERM_C13_oldModeDenylistAndGrantsOpenAndAreIgnored(t *testing.T) {
 		t.Errorf("writes = %q: the retired value approve must not count as a setting", c.Writes)
 	}
 }
+
+func TestOldDetectionStagesAndTermsOpenAndAreIgnored(t *testing.T) {
+	old := []byte(`{"connections":[{"conn":{"id":"c1","name":"prod","detection":[{"kind":"patterns"},{"kind":"list","raw":true}],` +
+		`"limits":{"max_rows_ceiling":1000}},"deny":["Acme"],"allow":["a@b.c"],"patterns":[{"expr":"x"}],"read_dsn":"postgres://x"}]}`)
+	var doc document
+	if err := jsonUnmarshalForTest(old, &doc); err != nil {
+		t.Fatalf("a vault with detection stages and terms does not open: %v", err)
+	}
+	c := doc.Connections[0].Conn
+	if c.Name != "prod" || c.Detection != "" || c.Detection.Effective() != "scan" {
+		t.Errorf("connection = %+v, want detection unset and acting as scan", c)
+	}
+}

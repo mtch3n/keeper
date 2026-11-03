@@ -40,23 +40,23 @@ var today = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 
 func Test_LOG_C1_ARecordReadsBackWithTheKey(t *testing.T) {
 	l, _ := newEncryptedLog(t, today)
-	if err := l.Write(context.Background(), &types.AuditRecord{ID: "a1", Intent: "reconcile refunds", Statement: "SELECT id FROM orders", Connection: "c1"}); err != nil {
+	if err := l.Write(context.Background(), &types.AuditRecord{ID: "a1", Statement: "SELECT id FROM orders", Connection: "c1"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := l.Get(context.Background(), "a1")
-	if err != nil || got.Intent != "reconcile refunds" || got.Statement != "SELECT id FROM orders" || got.Connection != "c1" {
+	if err != nil || got.Statement != "SELECT id FROM orders" || got.Connection != "c1" {
 		t.Fatalf("Get = %+v, %v", got, err)
 	}
 }
 
 func Test_LOG_C2_TheFileHoldsNoReadableText(t *testing.T) {
 	l, dir := newEncryptedLog(t, today)
-	if err := l.Write(context.Background(), &types.AuditRecord{ID: "a1", Intent: "reconcile refunds", Statement: "SELECT id FROM orders"}); err != nil {
+	if err := l.Write(context.Background(), &types.AuditRecord{ID: "a1", Statement: "SELECT id FROM orders"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range dayFiles(t, dir) {
 		raw, _ := os.ReadFile(filepath.Join(dir, name))
-		for _, s := range []string{"reconcile refunds", "SELECT id FROM orders", "orders"} {
+		for _, s := range []string{"SELECT id FROM orders", "orders"} {
 			if bytes.Contains(raw, []byte(s)) {
 				t.Errorf("%s holds %q in the clear", name, s)
 			}
@@ -129,7 +129,7 @@ func Test_LOG_C5_ShorterRetentionPrunesOnTheNextRun(t *testing.T) {
 func Test_LOG_C6_APlaintextLogIsReportedAndNeverRead(t *testing.T) {
 	root := t.TempDir()
 	legacy := filepath.Join(root, "audit.log")
-	if err := os.WriteFile(legacy, []byte(`{"id":"plain","intent":"old"}`+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(legacy, []byte(`{"id":"plain"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	l, err := New(Config{Dir: filepath.Join(root, "activity"), Key: testKey, Detector: detect.NewPatterns(), Now: func() time.Time { return today }})

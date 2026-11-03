@@ -19,13 +19,14 @@ function App() {
         <Route path="/" element={<Navigate to="/inbox" replace />} />
 
         <Route path="/connections" element={<AppShell section="settings" settingsTab="connections"><ConnectionsPage /></AppShell>} />
-        <Route path="/connections/:id" element={<AppShell section="settings" settingsTab="connections"><ConnectionPage /></AppShell>} />
-        <Route path="/connections/:id/:tab" element={<AppShell section="settings" settingsTab="connections"><ConnectionPage /></AppShell>} />
+        <Route path="/connections/:id" element={<AppShell section="settings" settingsTab="connections"><ConnectionPage tab="overview" /></AppShell>} />
+        <Route path="/connections/:id/settings" element={<AppShell section="settings" settingsTab="connections"><ConnectionPage tab="settings" /></AppShell>} />
+        <Route path="/connections/:id/catalog" element={<AppShell section="settings" settingsTab="connections"><ConnectionPage tab="catalog" /></AppShell>} />
         <Route path="/inbox" element={<AppShell section="inbox"><InboxPage /></AppShell>} />
         <Route path="/activity" element={<AppShell section="activity"><ActivityPage /></AppShell>} />
         <Route path="/settings" element={<AppShell section="settings" settingsTab="general"><SettingsPage /></AppShell>} />
 
-        {/* The local one-use decision page (SPEC R8.7g). No AppShell: this is
+        {/* The local one-use decision page. No AppShell: this is
             reached from a blocked agent's loopback link, not the app's own nav. */}
         <Route path="/r/:requestId" element={<LocalRequestPage />} />
 

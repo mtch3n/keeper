@@ -100,12 +100,6 @@ func (r *Redactor) walkJSON(ctx context.Context, sess *session, pl *columnPlan, 
 				return err
 			}
 			child := path + "." + name.String()
-			if p, ok := pl.paths[child]; ok && p.Policy == types.PolicyDrop {
-				if err := dec.SkipValue(); err != nil {
-					return err
-				}
-				continue
-			}
 			if err := enc.WriteToken(jsontext.String(name.String())); err != nil {
 				return err
 			}
@@ -158,7 +152,10 @@ func (r *Redactor) applyLeaf(ctx context.Context, sess *session, pl *columnPlan,
 		return quoteJSON(RedactedMarker)
 	}
 	policy := p.Policy
-	if pl.floor != types.PolicyAllow && policy != types.PolicyDrop {
+	if !policy.Valid() {
+		policy = types.PolicyRedact
+	}
+	if pl.floor != types.PolicyAllow {
 		if raised := types.Strictest(policy, pl.floor); raised != policy {
 			policy = raised
 		}
@@ -166,29 +163,22 @@ func (r *Redactor) applyLeaf(ctx context.Context, sess *session, pl *columnPlan,
 	if policy == types.PolicyToken && p.Namespace == "" {
 		policy = types.PolicyRedact
 	}
-	if policy == types.PolicyPartial && !p.Form.Valid() {
-		policy = types.PolicyRedact
-	}
 	if raw.Kind() == jsontext.KindNull {
 		return raw
 	}
 	if pl.scan != nil && pl.scan.collecting {
-		if policy == types.PolicyScan && raw.Kind() == jsontext.KindString {
+		if pl.examinesText(policy) && raw.Kind() == jsontext.KindString {
 			r.redactSpans(pl, jsonScalarString(raw))
 		}
 		return raw
 	}
 	switch policy {
-	case types.PolicyAllow:
-		return raw
 	case types.PolicyToken:
 		sub := *pl
 		sub.namespace = p.Namespace
 		return quoteJSON(r.tokenizeLeaf(sess, pl, &sub, jsonScalarString(raw), now))
-	case types.PolicyPartial:
-		return quoteJSON(Partial(p.Form, jsonScalarString(raw)))
-	case types.PolicyScan:
-		if raw.Kind() != jsontext.KindString {
+	case types.PolicyAllow, types.PolicyScan:
+		if raw.Kind() != jsontext.KindString || !pl.examinesText(policy) {
 			return raw
 		}
 		out, n := r.redactSpans(pl, jsonScalarString(raw))

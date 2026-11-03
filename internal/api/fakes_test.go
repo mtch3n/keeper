@@ -16,7 +16,6 @@ type fakeVault struct {
 	mu         sync.Mutex
 	hosts      map[string]*types.Host
 	conns      map[string]*types.Connection
-	terms      map[string]ports.Terms
 	settings   *types.Settings
 	registered []*types.Connection
 }
@@ -27,7 +26,6 @@ func newVault(cs ...*types.Connection) *fakeVault {
 	v := &fakeVault{
 		hosts: map[string]*types.Host{"h1": {ID: "h1", Name: "db1", Address: "h", Port: 5432, SSLMode: "prefer"}},
 		conns: map[string]*types.Connection{},
-		terms: map[string]ports.Terms{},
 	}
 	for _, c := range cs {
 		v.conns[c.ID] = c
@@ -135,25 +133,11 @@ func (v *fakeVault) SetSettings(_ context.Context, s types.Settings) error {
 	return nil
 }
 
-func (v *fakeVault) Terms(_ context.Context, id string) (ports.Terms, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return v.terms[id], nil
-}
-
-func (v *fakeVault) SetTerms(_ context.Context, id string, t ports.Terms) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.terms[id] = t
-	return nil
-}
-
 func (v *fakeVault) TokenKey(context.Context, string, int) ([]byte, int, error) {
 	return []byte("k"), 1, nil
 }
 func (v *fakeVault) Export(context.Context) ([]byte, error)       { return nil, nil }
 func (v *fakeVault) Import(context.Context, []byte, string) error { return nil }
-func (v *fakeVault) RotateMaster(context.Context) error           { return nil }
 
 // ---------------------------------------------------------------- catalog
 
@@ -230,10 +214,6 @@ func (c *fakeCatalog) Raise(context.Context, string, string, types.ColumnPolicy)
 
 func (c *fakeCatalog) Init(context.Context, string, int) (*ports.InitProposal, error) {
 	return &ports.InitProposal{SafeToBulkAccept: map[string]types.ColumnPolicy{}}, nil
-}
-
-func (c *fakeCatalog) SuggestGrants(context.Context, string) ([]string, error) {
-	return []string{"GRANT SELECT (id) ON public.users TO app_ro;"}, nil
 }
 
 func (c *fakeCatalog) Unclassified(context.Context, string) ([]string, error) {
@@ -362,7 +342,6 @@ func (r *fakeRedactor) droppedSessions() []string {
 type fakeAuditLog struct {
 	mu      sync.Mutex
 	records []types.AuditRecord
-	reject  string
 }
 
 func (a *fakeAuditLog) Write(_ context.Context, r *types.AuditRecord) error {
@@ -391,14 +370,7 @@ func (a *fakeAuditLog) Get(_ context.Context, id string) (*types.AuditRecord, er
 
 func (a *fakeAuditLog) Normalize(sql string, _ func(string) bool) string { return sql }
 
-func (a *fakeAuditLog) ScreenIntent(_ context.Context, intent string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.reject != "" && intent == a.reject {
-		return errors.New("intent carries identifying text")
-	}
-	return nil
-}
+func (a *fakeAuditLog) ScreenText(context.Context, string) error { return nil }
 
 // ---------------------------------------------------------------- detector
 

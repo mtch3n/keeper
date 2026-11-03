@@ -15,11 +15,6 @@ import (
 // CLI/UI only and must never be added here.
 func registerTools(s *mcp.Server, h *daemonHolder) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "set_session_intent",
-		Description: "Optionally state this session's task, shown to the human beside anything that waits for approval, and declare how long its tokens live (token_scope). Queries do not require it.",
-	}, h.setSessionIntent)
-
-	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_connections",
 		Description: "List every registered database connection available to this session.",
 	}, h.listConnections)
@@ -31,7 +26,7 @@ func registerTools(s *mcp.Server, h *daemonHolder) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_schema",
-		Description: "Get a connection's schema, filterable by schema and table pattern. Columns whose names are marked sensitive are omitted and counted, not listed.",
+		Description: "Get a connection's schema, filterable by schema and table pattern.",
 	}, h.getSchema)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -69,28 +64,6 @@ func registerTools(s *mcp.Server, h *daemonHolder) {
 		Description: "Poll an input request. A ready result carries only an opaque token and its namespace, never the value itself.",
 	}, h.getInputResult)
 
-}
-
-// --- set_session_intent ---
-
-type SetSessionIntentIn struct {
-	Intent     string           `json:"intent,omitzero" jsonschema:"optional: the session's task, e.g. 'reconciliation investigation OPS-441'"`
-	TokenScope types.TokenScope `json:"token_scope,omitzero" jsonschema:"session (default): tokens resolve only in this session; persistent: tokens mean the same value across sessions and machines, where the connection allows it"`
-}
-
-type OkOut struct {
-	OK bool `json:"ok"`
-}
-
-func (h *daemonHolder) setSessionIntent(ctx context.Context, req *mcp.CallToolRequest, in SetSessionIntentIn) (*mcp.CallToolResult, OkOut, error) {
-	cli, err := h.get(ctx, req)
-	if err != nil {
-		return nil, OkOut{}, err
-	}
-	if err := cli.SetSessionIntent(ctx, in.Intent, in.TokenScope); err != nil {
-		return nil, OkOut{}, err
-	}
-	return nil, OkOut{OK: true}, nil
 }
 
 // --- list_connections ---

@@ -69,12 +69,12 @@ func TestRelationPoliciesExcludesAllowAndCarriesFamily(t *testing.T) {
 	c := resolvedTestCatalog(t, nil, nil, map[columnKey]types.ColumnPolicy{
 		{Schema: "public", Table: "users", Column: "id"}:    {Policy: types.PolicyAllow},
 		{Schema: "public", Table: "users", Column: "email"}: {Policy: types.PolicyToken, Namespace: "email"},
-		{Schema: "public", Table: "users", Column: "ssn"}:   {Policy: types.PolicyDrop},
+		{Schema: "public", Table: "users", Column: "ssn"}:   {Policy: types.PolicyRedact},
 	})
 
 	got := c.RelationPolicies(100)
 	if len(got) != 2 {
-		t.Fatalf("RelationPolicies(100) = %+v, want 2 entries (email token, ssn drop)", got)
+		t.Fatalf("RelationPolicies(100) = %+v, want 2 entries (email token, ssn redact)", got)
 	}
 	byColumn := make(map[string]ports.FamilyPolicy, len(got))
 	for _, fp := range got {
@@ -86,8 +86,8 @@ func TestRelationPoliciesExcludesAllowAndCarriesFamily(t *testing.T) {
 	if fp, ok := byColumn["email"]; !ok || fp.Family != ports.FamilyText || fp.Policy.Policy != types.PolicyToken {
 		t.Errorf("email: got %+v (ok=%v), want FamilyText/token", fp, ok)
 	}
-	if fp, ok := byColumn["ssn"]; !ok || fp.Family != ports.FamilyNumeric || fp.Policy.Policy != types.PolicyDrop {
-		t.Errorf("ssn: got %+v (ok=%v), want FamilyNumeric/drop", fp, ok)
+	if fp, ok := byColumn["ssn"]; !ok || fp.Family != ports.FamilyNumeric || fp.Policy.Policy != types.PolicyRedact {
+		t.Errorf("ssn: got %+v (ok=%v), want FamilyNumeric/redact", fp, ok)
 	}
 }
 

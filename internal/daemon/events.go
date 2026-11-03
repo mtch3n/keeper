@@ -45,7 +45,7 @@ type RequestEvent struct {
 
 // SessionEvent narrates the session list the approval screen attributes to.
 type SessionEvent struct {
-	Action  string        `json:"action"` // opened, intent, closed
+	Action  string        `json:"action"` // opened, closed
 	Session types.Session `json:"session"`
 }
 

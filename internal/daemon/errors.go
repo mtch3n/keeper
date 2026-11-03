@@ -26,9 +26,9 @@ var (
 		"no local request with that id belongs to this session",
 		"open a new request")
 
-	errIntentScreened = keeperErr(types.CodePermissionDenied,
-		"the intent text matched a sensitive-data rule and was not recorded",
-		"restate the intent without identifying values")
+	errTextScreened = keeperErr(types.CodePermissionDenied,
+		"the text matched a sensitive-data rule and was not recorded",
+		"restate it without identifying values")
 
 	errSessionRequired = keeperErr(types.CodePermissionDenied,
 		"this route requires an agent session established on this connection",

@@ -103,30 +103,6 @@ func TestComputedTextOverACleanRelationIsAllowed(t *testing.T) {
 	}
 }
 
-// drop is never inherited (R7.6b). users.ssn is drop, and a computed text column
-// over users must land on redact rather than deleting itself from the response —
-// measured, SELECT upper(status), count(*) ... GROUP BY 1 returned counts with no
-// group key when the rule got this wrong.
-func TestDropIsNeverInheritedByAComputedColumn(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{computed("upper", "text"), computed("count", "int8")}
-		h.exec.rows = [][]any{{"ACTIVE", int64(3)}}
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT upper(status), count(*) FROM users GROUP BY 1"})
-
-	if got := transformFor(t, dec, "upper").Policy; got != types.PolicyRedact {
-		t.Errorf("computed text over users = %q, want redact", got)
-	}
-	if names := columnNames(dec.Result.Columns); len(names) != 2 {
-		t.Fatalf("the group key was dropped from the response: %v", names)
-	}
-	if dec.Result.Rows[0][1] != maskMarker {
-		t.Error("count(*) over users should be redacted, not returned")
-	}
-}
-
 // R7.6's third branch: a computed column with no referenced relation inherits
 // from its parameters, and is redact if that is indeterminable.
 func TestComputedColumnWithNoRelationRedactsWhenIndeterminable(t *testing.T) {
@@ -206,72 +182,6 @@ func TestUnresolvedColumnRedactsAndStillRuns(t *testing.T) {
 	}
 	if got := h.audit.last(t).Transforms["payload"].Basis; got != types.BasisUnknown {
 		t.Errorf("the audit record's basis for the unresolved column = %q, want unknown", got)
-	}
-}
-
-// --- R7.7a: a drop column is simply absent ---
-
-func TestDropColumnRunsAndIsAbsentFromTheResponse(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{
-			fromColumn("id", "int8", usersOID, 1),
-			fromColumn("ssn", "text", usersOID, 3),
-		}
-		h.exec.rows = [][]any{{int64(1), "123-45-6789"}, {int64(2), "987-65-4321"}}
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT id, ssn FROM users"})
-
-	if dec.Error != nil || dec.Escalation != nil {
-		t.Fatalf("a drop column is not an escalation: err=%v esc=%v", dec.Error, dec.Escalation)
-	}
-	if names := columnNames(dec.Result.Columns); len(names) != 1 || names[0] != "id" {
-		t.Errorf("columns = %v, want only id", names)
-	}
-	for _, row := range dec.Result.Rows {
-		if len(row) != 1 {
-			t.Fatalf("row still carries the dropped column: %v", row)
-		}
-		for _, v := range row {
-			if s, ok := v.(string); ok && strings.Contains(s, "-") {
-				t.Fatalf("an SSN survived into the response: %v", v)
-			}
-		}
-	}
-	// transforms still reports the removal, which is what tells the agent the
-	// column exists and why it is not here.
-	if got := transformFor(t, dec, "ssn").Policy; got != types.PolicyDrop {
-		t.Errorf("transforms[ssn] = %q, want drop", got)
-	}
-}
-
-// --- R6.4b: a hidden name is hidden on every surface -------------------------
-
-func TestHideNameIsSuppressedInColumnsAndTransforms(t *testing.T) {
-	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{
-			fromColumn("id", "int8", usersOID, 1),
-			fromColumn("internal_flag", "bool", usersOID, 6),
-		}
-		h.exec.rows = [][]any{{int64(1), true}}
-		h.exec.plan = readPlan(1, usersRef)
-	})
-
-	dec := h.query(t, Request{SQL: "SELECT id, internal_flag FROM users"})
-
-	for _, name := range columnNames(dec.Result.Columns) {
-		if name == "internal_flag" {
-			t.Fatal("a hide_name column's name reached the response")
-		}
-	}
-	for name := range dec.Result.Transforms {
-		if name == "internal_flag" {
-			t.Fatal("a hide_name column's name reached the transforms map")
-		}
-	}
-	if len(dec.Result.Columns) != 2 {
-		t.Errorf("columns = %v, want the hidden column kept under a placeholder", columnNames(dec.Result.Columns))
 	}
 }
 
@@ -428,9 +338,6 @@ func TestPermissionDeniedNamesTheReadableColumns(t *testing.T) {
 	if !strings.Contains(dec.Error.Summary, "email") || !strings.Contains(dec.Error.Summary, "status") {
 		t.Errorf("the error must name what may be read; got %q", dec.Error.Summary)
 	}
-	if strings.Contains(dec.Error.Summary, "internal_flag") {
-		t.Error("a hide_name column was disclosed in an error message")
-	}
 	if h.audit.last(t).ErrorCode != types.CodePermissionDenied {
 		t.Error("a permission denial must be logged as Invariant A working")
 	}
@@ -463,7 +370,7 @@ func TestAuditIsNeverSkipped(t *testing.T) {
 		if rec.ID != dec.AuditID {
 			t.Errorf("%s: audit id %q does not match the decision's %q", c.name, rec.ID, dec.AuditID)
 		}
-		if rec.SessionID != "sess-1" || rec.Intent == "" {
+		if rec.SessionID != "sess-1" || rec.Client.Name == "" {
 			t.Errorf("%s: the session is missing from the record", c.name)
 		}
 		if !strings.HasPrefix(rec.Statement, "NORMALIZED:") {
@@ -510,10 +417,10 @@ func TestExplainPredictsTheOutcomeWithoutExecuting(t *testing.T) {
 	if res.Outcome != types.OutcomeRun {
 		t.Errorf("outcome = %q, want run", res.Outcome)
 	}
-	if names := columnNames(res.OutputColumns); len(names) != 2 {
-		t.Errorf("output columns = %v, want the drop column omitted", names)
+	if names := columnNames(res.OutputColumns); len(names) != 3 {
+		t.Errorf("output columns = %v, want all three", names)
 	}
-	if !hasReason(res.Reasons, ReasonDropped) || !hasReason(res.Reasons, ReasonMasked) {
+	if !hasReason(res.Reasons, ReasonMasked) {
 		t.Errorf("reasons = %v", res.Reasons)
 	}
 }
@@ -745,7 +652,7 @@ func Test_WRITE_C8_TheCardListsExpandedColumnsAndFlagsASensitiveFilter(t *testin
 	if !slices.Equal(f.Columns, []string{"id", "email", "status"}) {
 		t.Errorf("columns = %v, want SELECT * expanded", f.Columns)
 	}
-	want := []types.FilterColumn{{Relation: usersRef, Column: "ssn", Flag: "sensitive", Policy: types.PolicyDrop}}
+	want := []types.FilterColumn{{Relation: usersRef, Column: "ssn", Flag: "sensitive", Policy: types.PolicyRedact}}
 	if !slices.Equal(f.Filters, want) {
 		t.Errorf("filters = %+v, want ssn flagged sensitive", f.Filters)
 	}
@@ -808,29 +715,5 @@ func Test_WRITE_C14_ARowLargerThanTheCapLeavesNoRows(t *testing.T) {
 	}
 	if len(dec.Result.Rows) != 0 || !dec.Result.Truncated || dec.Result.TruncatedBy != types.CutBySize {
 		t.Errorf("rows = %d, truncated %v by %q; want none, cut by size", len(dec.Result.Rows), dec.Result.Truncated, dec.Result.TruncatedBy)
-	}
-}
-
-func Test_TOKEN_C7_PersistentScopeOnAConnectionThatForbidsItGetsSessionTokens(t *testing.T) {
-	for _, allow := range []bool{false, true} {
-		h := newHarness(t, func(h *harness) {
-			h.authority.conn.PersistentTokens = allow
-			h.exec.cols = []types.ColumnMeta{fromColumn("email", "text", usersOID, 2)}
-			h.exec.rows = [][]any{{"jane@example.com"}}
-			h.exec.plan = readPlan(1, usersRef)
-		})
-		sess := testSession()
-		sess.TokenScope = types.ScopePersistent
-		dec := h.query(t, Request{SQL: "SELECT email FROM users", Session: sess})
-		if dec.Result == nil {
-			t.Fatalf("no result: %v", dec.Error)
-		}
-		if got := h.redactor.statements[len(h.redactor.statements)-1].Persistent; got != allow {
-			t.Errorf("allow=%v: tokens persistent = %v", allow, got)
-		}
-		said := slices.ContainsFunc(dec.Result.Degradations, func(d types.Degradation) bool { return d.Layer == "token" })
-		if said == allow {
-			t.Errorf("allow=%v: the response says tokens are session tokens: %v (degradations %v)", allow, said, dec.Result.Degradations)
-		}
 	}
 }

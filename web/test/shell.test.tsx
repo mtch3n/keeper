@@ -4,16 +4,15 @@ import { describe, expect, test, vi } from 'vitest'
 
 import { detail, doctorReport, emit, fakeDaemon, renderApp, session, summary } from './daemon'
 
-const s1 = session('s1', 'claude-code', '/home/u/shop', 'reconcile OPS-441')
-const s2 = session('s2', 'codex', '/home/u/billing', 'find duplicate invoices')
+const s1 = session('s1', 'claude-code', '/home/u/shop')
+const s2 = session('s2', 'codex', '/home/u/billing')
 
 function pending() {
   return {
     ticket_id: 't1',
     session: s1,
     connection: 'c1',
-    tier: 3,
-    facts: { intent: 'reconcile OPS-441', statement_type: 'SELECT', relations: [{ schema: 'public', relation: 'orders' }], estimated_rows: 900, estimated_cost: 12, reasons: ['near_row_cap'] },
+    facts: { statement_type: 'SELECT', relations: [{ schema: 'public', relation: 'orders' }], estimated_rows: 900, estimated_cost: 12, reasons: ['near_row_cap'] },
     sql: 'SELECT id FROM orders',
     created_at: '2026-10-06T12:00:00Z',
   }
@@ -22,8 +21,8 @@ function pending() {
 function daemon(over: { approvals?: unknown[]; sessions?: unknown[] } = {}) {
   const d = fakeDaemon()
   d.on('GET', '/v1/connections', () => [200, [summary('c1', 'one'), summary('c2', 'two')]])
-  d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one', '2026-10-06T12:00:00Z', [])])
-  d.on('GET', '/v1/connections/c2', () => [200, detail('c2', 'two', '2026-10-06T12:00:00Z', [])])
+  d.on('GET', '/v1/connections/c1', () => [200, detail('c1', 'one')])
+  d.on('GET', '/v1/connections/c2', () => [200, detail('c2', 'two')])
   d.on('GET', '/v1/catalog/c1', () => [200, { connection_id: 'c1', entries: {}, unclassified_count: 0 }])
   d.on('GET', '/v1/catalog/c2', () => [200, { connection_id: 'c2', entries: {}, unclassified_count: 0 }])
   d.on('GET', '/v1/hosts', () => [200, [{ id: 'h1', name: 'prod-db', address: 'db.internal', port: 5432, sslmode: 'require', connections: ['c1', 'c2'] }]])
@@ -66,7 +65,7 @@ describe('the shell', () => {
     await userEvent.click(indicator)
     const list = within(await screen.findByRole('dialog'))
     expect(list.getByText('/home/u/shop')).toBeTruthy()
-    expect(list.getByText('find duplicate invoices')).toBeTruthy()
+    expect(list.getByText('/home/u/billing')).toBeTruthy()
   })
 
   test('SHELL-C3 with no agent connected the indicator says so', async () => {
@@ -92,7 +91,7 @@ describe('the Inbox', () => {
     daemon({ approvals: [pending()] })
     renderApp('/inbox')
     const card = within(await screen.findByRole('article', { name: /claude-code/ }))
-    for (const text of ['claude-code', '/home/u/shop', 'reconcile OPS-441', 'one', 'db.internal', 'one_ro', 'near_row_cap', 'SELECT id FROM orders']) {
+    for (const text of ['claude-code', '/home/u/shop', 'one', 'db.internal', 'one_ro', 'near_row_cap', 'SELECT id FROM orders']) {
       expect(card.getAllByText(new RegExp(text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'))).length).toBeGreaterThan(0)
     }
     expect((await bar()).getByRole('link', { name: /Inbox/ }).textContent).toContain('1')
@@ -106,7 +105,7 @@ describe('the Inbox', () => {
       decided = true
       return [200, { ok: true }]
     })
-    d.on('GET', '/v1/activity', () => [200, decided ? [{ id: 'a1', at: '2026-10-06T12:01:00Z', session_id: 's1', client: s1.client, connection: 'c1', statement: 'SELECT id FROM orders', statement_type: 'SELECT', tier: 3, row_count: 4, approver: 'operator', decision: 'approved', duration: 0 }] : []])
+    d.on('GET', '/v1/activity', () => [200, decided ? [{ id: 'a1', at: '2026-10-06T12:01:00Z', session_id: 's1', client: s1.client, connection: 'c1', statement: 'SELECT id FROM orders', statement_type: 'SELECT', row_count: 4, approver: 'operator', decision: 'approved', duration: 0 }] : []])
     renderApp('/inbox')
     const card = within(await screen.findByRole('article', { name: /claude-code/ }))
     await userEvent.click(card.getByRole('button', { name: 'Approve' }))
@@ -124,7 +123,7 @@ describe('the Inbox', () => {
 })
 
 describe('Activity and Settings', () => {
-  const rec = (id: string, connection: string) => ({ id, at: '2026-10-06T12:00:00Z', session_id: 's1', client: s1.client, connection, statement: 'SELECT 1', statement_type: 'SELECT', tier: 0, row_count: 1, duration: 0 })
+  const rec = (id: string, connection: string) => ({ id, at: '2026-10-06T12:00:00Z', session_id: 's1', client: s1.client, connection, statement: 'SELECT 1', statement_type: 'SELECT', row_count: 1, duration: 0 })
 
   test('SHELL-C10 Activity shows connection names and filters by them', async () => {
     const d = daemon()
@@ -143,14 +142,5 @@ describe('Activity and Settings', () => {
     d.on('GET', '/v1/activity', () => [200, [rec('a1', 'gone')]])
     renderApp('/activity')
     expect(await within(await screen.findByRole('table')).findByText('removed connection')).toBeTruthy()
-  })
-
-  test('SHELL-C13 Settings lists standing allow rules with revoke', async () => {
-    const d = daemon()
-    d.on('GET', '/v1/grants', () => [200, [{ id: 'g1', path: { connection_id: 'c1', relation: { schema: 'public', relation: 'orders' } }, lifetime: 'standing', row_ceiling: 100, created_by: 'ming', created_at: '2026-10-06T12:00:00Z', uses: 2 }]])
-    renderApp('/settings')
-    const perms = within(await screen.findByRole('region', { name: 'Permissions' }))
-    expect(await perms.findByText(/public\.orders/)).toBeTruthy()
-    expect(perms.getByRole('button', { name: /revoke/i })).toBeTruthy()
   })
 })

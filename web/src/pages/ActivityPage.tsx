@@ -16,7 +16,7 @@ import type { ActivityDetail, AuditRecord, ColumnMeta, ConnectionSummary, QueryR
 
 /** The filter value meaning "no filter". */
 const ALL = 'all'
-const NO_FILTER = { session: ALL, connection: ALL, tier: ALL, decision: ALL }
+const NO_FILTER = { session: ALL, connection: ALL, decision: ALL }
 
 /** Rows per page. One more is asked for, to know whether an older page exists. */
 const PAGE = 50
@@ -25,14 +25,14 @@ const PAGE = 50
 const REDACTED = '⟨redacted⟩'
 
 /**
- * The query log (SPEC §10, UI.md §2.6). This is where "what left this machine,
+ * The query log. This is where "what left this machine,
  * and when" gets answered, and it is what makes reviewing worthwhile afterwards.
  *
  * Two of its rules are requirements rather than wording preferences. The log
  * records what keeper *intended* to emit — policies applied, transform counts,
- * spans redacted — and does not verify the emitted bytes (R10d), so nothing here
+ * spans redacted — and does not verify the emitted bytes , so nothing here
  * may say "values masked". And there is no "show full statement" affordance,
- * because literals are never stored (R10a): the normalized statement *is* the
+ * because literals are never stored : the normalized statement *is* the
  * statement as kept, and an affordance implying otherwise would be offering
  * something that does not exist.
  */
@@ -68,7 +68,6 @@ export function ActivityPage() {
       const page = await listActivity({
         session: filters.session === ALL ? undefined : filters.session,
         connection: filters.connection === ALL ? undefined : filters.connection,
-        tier: filters.tier === ALL ? undefined : Number(filters.tier),
         before,
         limit: PAGE + 1,
       })
@@ -124,12 +123,6 @@ export function ActivityPage() {
           options={connections.map((c) => ({ value: c.id, label: c.name }))}
         />
         <Filter
-          label="Tier"
-          value={filters.tier}
-          onChange={(v) => filter({ tier: v })}
-          options={['0', '1', '2', '3', '4'].map((t) => ({ value: t, label: `tier ${t}` }))}
-        />
-        <Filter
           label="Decision"
           value={filters.decision}
           onChange={(v) => filter({ decision: v })}
@@ -163,7 +156,6 @@ export function ActivityPage() {
               <TableHead>Agent</TableHead>
               <TableHead>Connection</TableHead>
               <TableHead>Decision</TableHead>
-              <TableHead className="text-right">Tier</TableHead>
               <TableHead className="text-right">Rows</TableHead>
               <TableHead>Policies applied</TableHead>
               <TableHead>Statement</TableHead>
@@ -188,14 +180,13 @@ export function ActivityPage() {
                   <TableCell className="text-meta">
                     {r.decision ? `${r.decision}${r.approver ? ` by ${r.approver}` : ''}` : '—'}
                   </TableCell>
-                  <TableCell className="text-right text-meta">{r.tier}</TableCell>
                   <TableCell className="text-right text-meta">{r.row_count}</TableCell>
                   <TableCell className="text-meta">{summarize(r.transforms)}</TableCell>
                   <TableCell className="max-w-md truncate text-meta">{renderSQL(r.statement)}</TableCell>
                 </TableRow>
                 {open === r.id ? (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={9} className="p-0 whitespace-normal">
+                    <TableCell colSpan={8} className="p-0 whitespace-normal">
                       {details[r.id] ? (
                         <RecordDetail record={details[r.id]} />
                       ) : (
@@ -270,14 +261,11 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
         <Fact label="audit id">
           <span className="text-meta">{record.id}</span>
         </Fact>
-        <Fact label="intent">{record.intent || '—'}</Fact>
         <Fact label="agent">
           {record.client.name} · {record.client.workspace ?? 'unknown workspace'}
         </Fact>
         <Fact label="relations">{relationList(record.relations)}</Fact>
         <Fact label="duration">{durationMs(record.duration)}</Fact>
-        <Fact label="authorization">{record.authorization || 'tier 0'}</Fact>
-        {record.token_scope ? <Fact label="tokens">{record.token_scope}</Fact> : null}
         {record.approver ? <Fact label="approver">{record.approver}</Fact> : null}
         {record.error_code ? <Fact label="error">{record.error_code}</Fact> : null}
         {record.collisions ? (
@@ -391,14 +379,10 @@ function cellValue(v: unknown, column: ColumnMeta, transforms: Record<string, Tr
       return { kind: 'value', text: renderSQL(text) }
     case 'token':
       return { kind: 'tokenized', token: text }
-    case 'partial':
-      return { kind: 'partial', text }
     case 'redact':
       return { kind: 'redacted' }
     case 'scan':
       return { kind: 'scanned', text: renderSQL(text) }
-    case 'drop':
-      return { kind: 'dropped' }
   }
 }
 

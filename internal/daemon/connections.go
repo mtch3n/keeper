@@ -1,11 +1,8 @@
 package daemon
 
 import (
-	"cmp"
 	"context"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/mtchen/keeper/internal/ports"
@@ -50,13 +47,12 @@ type ConnectionDetail struct {
 	Engine  string `json:"engine"`
 	Version string `json:"version,omitzero"`
 	Profile
-	Schemas          []string             `json:"schemas,omitzero"`
-	CatalogStatus    CatalogStatus        `json:"catalog_status"`
-	PolicySummary    map[types.Policy]int `json:"policy_summary,omitzero"`
-	Detection        []types.Stage        `json:"detection"`
-	Limits           types.Limits         `json:"limits"`
-	PersistentTokens bool                 `json:"persistent_tokens"`
-	Degradations     []types.Degradation  `json:"degradations,omitzero"`
+	Schemas       []string             `json:"schemas,omitzero"`
+	CatalogStatus CatalogStatus        `json:"catalog_status"`
+	PolicySummary map[types.Policy]int `json:"policy_summary,omitzero"`
+	Detection     types.Detection      `json:"detection"`
+	Limits        types.Limits         `json:"limits"`
+	Degradations  []types.Degradation  `json:"degradations,omitzero"`
 }
 
 // Connections lists what is registered.
@@ -101,11 +97,10 @@ func (d *Daemon) Describe(ctx context.Context, id string) (*ConnectionDetail, er
 	}
 	det := &ConnectionDetail{
 		ID: c.ID, Name: c.Name, Engine: c.Engine, Version: c.Version,
-		Profile:          d.profile(ctx, c),
-		CatalogStatus:    CatalogStatus{Path: c.CatalogPath},
-		Detection:        c.Detection,
-		Limits:           c.Limits,
-		PersistentTokens: c.PersistentTokens,
+		Profile:       d.profile(ctx, c),
+		CatalogStatus: CatalogStatus{Path: c.CatalogPath},
+		Detection:     c.Detection.Effective(),
+		Limits:        c.Limits,
 	}
 
 	// Every catalog layer needs the catalog open, and opening is what an
@@ -157,14 +152,13 @@ func (d *Daemon) describeCatalog(ctx context.Context, id string, cat ports.Catal
 
 // ColumnView is one column of get_schema.
 type ColumnView struct {
-	Name      string            `json:"name"`
-	Type      string            `json:"type"`
-	Nullable  bool              `json:"nullable"`
-	IsPK      bool              `json:"is_pk,omitzero"`
-	IsFK      bool              `json:"is_fk,omitzero"`
-	Policy    types.Policy      `json:"policy"`
-	Namespace string            `json:"namespace,omitzero"`
-	Form      types.PartialForm `json:"form,omitzero"`
+	Name      string       `json:"name"`
+	Type      string       `json:"type"`
+	Nullable  bool         `json:"nullable"`
+	IsPK      bool         `json:"is_pk,omitzero"`
+	IsFK      bool         `json:"is_fk,omitzero"`
+	Policy    types.Policy `json:"policy"`
+	Namespace string       `json:"namespace,omitzero"`
 }
 
 // TableView is one relation of get_schema.
@@ -173,11 +167,8 @@ type TableView struct {
 	Name   string       `json:"name"`
 	Kind   string       `json:"kind"`
 	Rows   []ColumnView `json:"columns"`
-	// HiddenColumns counts the columns omitted because their *names* are
-	// disclosive (R6.4b), and the ones the role may not read (R5.5). A name
-	// hidden on one surface and disclosed on another is not hidden.
-	HiddenColumns int `json:"hidden_columns,omitzero"`
-	Unreadable    int `json:"unreadable_columns,omitzero"`
+	// Unreadable counts the columns the role may not read.
+	Unreadable int `json:"unreadable_columns,omitzero"`
 }
 
 // SchemaView is GET /v1/connections/{id}/schema.
@@ -220,13 +211,9 @@ func (d *Daemon) Schema(ctx context.Context, connID, schema, table string) (*Sch
 				// surfaced in Catalog.
 				p = types.ColumnPolicy{Policy: types.PolicyRedact}
 			}
-			if p.HideName {
-				t.HiddenColumns++
-				continue
-			}
 			t.Rows = append(t.Rows, ColumnView{
 				Name: c.Name, Type: c.Type, Nullable: c.Nullable, IsPK: c.IsPK, IsFK: c.IsFK,
-				Policy: p.Policy, Namespace: p.Namespace, Form: p.Form,
+				Policy: p.Policy, Namespace: p.Namespace,
 			})
 		}
 		out.Tables = append(out.Tables, t)
@@ -280,7 +267,7 @@ func (d *Daemon) Register(ctx context.Context, spec RegisterSpec) (*types.Connec
 		Writes:      writes,
 		CatalogPath: spec.CatalogPath,
 		Reads:       types.ReadsUncertain,
-		Detection:   []types.Stage{{Kind: types.KindPatterns}},
+		Detection:   types.DetectionScan,
 		Limits:      types.DefaultLimits(),
 	}
 	if err := d.deps.Vault.Register(ctx, c, spec.Credential); err != nil {
@@ -303,13 +290,10 @@ func (d *Daemon) TestConnection(ctx context.Context, id string) (*ports.PingResu
 // Patch is §4.5's operator limits. Unreachable from MCP (§6.3), which the api
 // enforces by refusing the route to a request carrying a session.
 type Patch struct {
-	Reads  *types.Reads
-	Limits *types.Limits
-	// Detection replaces the connection's pipeline; an empty list turns
-	// detection off.
-	Detection        *[]types.Stage
-	Writes           *types.Writes
-	PersistentTokens *bool
+	Reads     *types.Reads
+	Limits    *types.Limits
+	Detection *types.Detection
+	Writes    *types.Writes
 }
 
 // validWrites accepts off, ask and allow; empty is off.
@@ -342,14 +326,11 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 		}
 		c.Writes = w
 	}
-	if p.PersistentTokens != nil {
-		c.PersistentTokens = *p.PersistentTokens
-	}
 	if p.Detection != nil {
-		if err := validStages(*p.Detection); err != nil {
-			return nil, err
+		if !p.Detection.Valid() {
+			return nil, errValidation("detection", "must be off, scan or all")
 		}
-		c.Detection = slices.Clone(*p.Detection)
+		c.Detection = *p.Detection
 	}
 	if p.Limits != nil {
 		if p.Limits.MaxRowsCeiling <= 0 {
@@ -402,19 +383,13 @@ func (d *Daemon) ExportVault(ctx context.Context, passphrase string) ([]byte, er
 	return sealed.Seal(plain, passphrase)
 }
 
-// ImportVault replaces this daemon's vault with an export, keys included, so a
-// persistent token minted on another machine resolves here.
+// ImportVault replaces this daemon's vault with an export, keys included.
 func (d *Daemon) ImportVault(ctx context.Context, data []byte, passphrase string) error {
 	if err := d.deps.Vault.Import(ctx, data, passphrase); err != nil {
 		return err
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "imported"}})
 	return nil
-}
-
-// RotateMaster re-encrypts the vault under a fresh master key, in place.
-func (d *Daemon) RotateMaster(ctx context.Context) error {
-	return d.deps.Vault.RotateMaster(ctx)
 }
 
 // Remove deletes a connection and its credentials.
@@ -430,97 +405,4 @@ func (d *Daemon) Remove(ctx context.Context, id string) error {
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "removed", "connection_id": id}})
 	return nil
-}
-
-// labelRE is what an entity name or an expression's label may hold: it ends up
-// inside a redaction marker, so it cannot carry the marker's delimiters.
-var labelRE = regexp.MustCompile(`^[a-z0-9_]+$`)
-
-// validStages refuses a stage kind keeper does not have, a kind named twice and
-// an entity name that could not be a marker label.
-func validStages(stages []types.Stage) error {
-	kinds := make([]string, len(types.StageKinds))
-	for i, k := range types.StageKinds {
-		kinds[i] = string(k)
-	}
-	for i, st := range stages {
-		if !slices.Contains(types.StageKinds, st.Kind) {
-			return errValidation("detection", "stage kinds must be from: "+strings.Join(kinds, ", "))
-		}
-		if slices.ContainsFunc(stages[:i], func(o types.Stage) bool { return o.Kind == st.Kind }) {
-			return errValidation("detection", "names the "+string(st.Kind)+" stage twice")
-		}
-		for _, e := range st.Entities {
-			if !labelRE.MatchString(e) {
-				return errValidation("detection", "entity "+strconv.Quote(e)+" must be lowercase letters, digits and underscores")
-			}
-		}
-	}
-	return nil
-}
-
-// Limits on the operator's own expressions.
-const (
-	maxPatterns   = 200
-	maxPatternLen = 1000
-)
-
-// validPatterns refuses an expression that does not compile, that matches the
-// empty string — it would match between every character — or whose label could
-// not be a marker label, naming the one at fault.
-func validPatterns(ps []ports.Pattern) error {
-	if len(ps) > maxPatterns {
-		return errValidation("patterns", "hold at most "+strconv.Itoa(maxPatterns)+" expressions")
-	}
-	for _, p := range ps {
-		name := strconv.Quote(cmp.Or(p.Label, p.Expr))
-		if p.Label != "" && !labelRE.MatchString(p.Label) {
-			return errValidation("pattern "+name, "label must be lowercase letters, digits and underscores")
-		}
-		if len(p.Expr) > maxPatternLen {
-			return errValidation("pattern "+name, "is longer than "+strconv.Itoa(maxPatternLen)+" bytes")
-		}
-		re, err := regexp.Compile(p.Expr)
-		if err != nil {
-			return errValidation("pattern "+name, "does not compile")
-		}
-		if re.MatchString("") {
-			return errValidation("pattern "+name, "matches the empty string")
-		}
-	}
-	return nil
-}
-
-// TermCounts is PUT /v1/connections/{id}/terms. It reports how many terms and
-// expressions are stored and never the terms themselves.
-type TermCounts struct {
-	Deny     int `json:"deny"`
-	Allow    int `json:"allow"`
-	Patterns int `json:"patterns"`
-}
-
-// SetTerms replaces a connection's list-pass terms. Blank terms are dropped:
-// an empty deny term would match everywhere.
-func (d *Daemon) SetTerms(ctx context.Context, id string, t ports.Terms) (*TermCounts, error) {
-	if c, err := d.deps.Vault.Connection(ctx, id); err != nil || c == nil {
-		return nil, errUnknownConnection
-	}
-	clean := func(in []string) []string {
-		out := []string{}
-		for _, s := range in {
-			if s = strings.TrimSpace(s); s != "" && !slices.Contains(out, s) {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	if err := validPatterns(t.Patterns); err != nil {
-		return nil, err
-	}
-	t = ports.Terms{Deny: clean(t.Deny), Allow: clean(t.Allow), Patterns: t.Patterns}
-	if err := d.deps.Vault.SetTerms(ctx, id, t); err != nil {
-		return nil, err
-	}
-	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "terms", "connection_id": id}})
-	return &TermCounts{Deny: len(t.Deny), Allow: len(t.Allow), Patterns: len(t.Patterns)}, nil
 }

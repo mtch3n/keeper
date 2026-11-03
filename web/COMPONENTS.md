@@ -41,14 +41,14 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Field | `@/components/ui/field` | Form layout (FieldGroup, Field, FieldLabel) |
 | Input | `@/components/ui/input` | Single-line form control |
 | Label | `@/components/ui/label` | Control label primitive used by `Field` |
-| RadioGroup | `@/components/ui/radio-group` | A choice among a fixed, small set where each option needs a sentence of explanation beside it: the connection mode. A `Select` would hide the consequences behind a click, and the consequences are the point. Square, like everything else: the registry's `rounded-full` indicator is replaced |
+| RadioGroup | `@/components/ui/radio-group` | A choice among a fixed, small set where each option needs a sentence of explanation beside it: reads, writes and detection. A `Select` would hide the consequences behind a click, and the consequences are the point. Square, like everything else: the registry's `rounded-full` indicator is replaced |
 | ScrollArea | `@/components/ui/scroll-area` | A fixed-height region that scrolls on its own, e.g. the Activity log. Thumb is square (registry's `rounded-full` replaced with `rounded-sm`, which resolves to 0 through the radius tokens) |
 | Select | `@/components/ui/select` | A pick from a fixed set |
 | Separator | `@/components/ui/separator` | Dividers, replacing `border-t` spacer divs |
 | Sheet | `@/components/ui/sheet` | The off-canvas panel `Sidebar` becomes below the mobile breakpoint. Not used directly by application code |
 | Skeleton | `@/components/ui/skeleton` | Loading placeholders |
 | Switch | `@/components/ui/switch` | A true-or-false setting. Square, like everything else: registry's `rounded-full` replaced with `rounded-sm` on both the root and the thumb |
-| Table | `@/components/ui/table` | Rows of like things with columns — `Catalog`, `Permissions`, `Activity`, query results |
+| Table | `@/components/ui/table` | Rows of like things with columns — `Catalog`, `Activity`, query results |
 | Textarea | `@/components/ui/textarea` | Multiline text control, e.g. a DSN or SQL preview |
 | Toast | `@/components/ui/toast` | Transient action failures. Base UI ships `toast`; `sonner` is the Radix/React-Aria equivalent and is not used here |
 | Tooltip | `@/components/ui/tooltip` | The label of every icon-only button, through `IconButton`. `TooltipProvider` is mounted once in `main.tsx` |
@@ -66,7 +66,7 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Brand | `KeeperMark`, `Link` | The mark and the name, linking home, at the start of the top bar |
 | KeeperMark | none (the brand path) | keeper's mark, drawn in `currentColor` so it stays achromatic like every other glyph in the chrome |
 | Lamp | none (registry search below) | The four-state vocabulary: idle, waiting, blocked, live |
-| Cell | `ScannedText` | The seven redacted-cell treatments of UI.md §2.2, plus the plain value case |
+| Cell | `ScannedText` | The five redacted-cell treatments, plus the plain value case |
 | ScannedText | none (registry search below) | Renders a `scan` result's inline solid runs inside otherwise-readable text |
 
 ## Custom component proof
@@ -84,9 +84,9 @@ connection light, not a work state, exactly as trellis's `Lamp` carries the same
 exception. `pnpm ui-audit` excludes this one occurrence by filename.
 
 **Cell.** `pnpm dlx shadcn@latest search @shadcn -q "redact mask"` and `-q "table
-cell"` both returned *No items found*. No primitive has a notion of seven
+cell"` both returned *No items found*. No primitive has a notion of five
 mutually-distinguishable masking states over one value — `null`, `tokenized`,
-`partial`, `redacted`, `scanned`, `dropped`, `unclassified` — each of which must read
+`redacted`, `scanned`, `unclassified` — each of which must read
 as neither a null nor an error and none of which may look like another (UI.md §2.2).
 Cell owns exactly that vocabulary, the way `Lamp` owns the four-state one for
 connection/approval status.
@@ -96,7 +96,7 @@ connection/approval status.
 inside otherwise-readable text (SPEC R8.5a) — this is cell-*internal*, not a
 cell-replacement treatment, and no primitive parses a string for embedded solid
 runs. ScannedText owns exactly that parse (`splitRedactedRuns`) and the run's visual
-treatment, shared with `Cell`'s `redacted` and `partial` cases so a redacted span
+treatment, shared with `Cell`'s `redacted` case so a redacted span
 looks pixel-identical everywhere it appears (UI.md §3.3).
 
 ## Application Shell
@@ -115,8 +115,8 @@ lights in `AppShell` are already wired.
 |-----------|-------|-------|
 | ConnectionsPage | `/connections`, Settings → Connections | Every connection in one table grouped by host rows, with a filter box (SPEC §4.1) |
 | InboxPage | `/inbox` | Everything waiting on a human: approvals, input and authorization requests (SPEC §9.1) |
-| ActivityPage | `/activity` | The query log — what ran, what was masked, what left the machine (SPEC §10) |
-| ConnectionPage | `/connections/:id[/detection|catalog|limits|privileges]` | Everything about one database as tabs: Overview, Detection, Catalog (SPEC §5), Limits (mode, row ceiling, statement timeout, scan sample, denylist, write scope — SPEC §4.5) and Privileges (SPEC R4.1) |
+| ActivityPage | `Table`, `Select`, `Button`, `Empty`, `Facts`, `Cell` | The query log. Filters by session, connection and decision, because a human arriving after a long agent run wants one session's trail. Pages by a `before` cursor, newest first, so no record is out of reach behind a fixed limit. A row expands in place: a detail drawn below the table was off-screen for any row past the first few, and read as a click that did nothing |
+| ConnectionPage | `/connections/:id[/settings|catalog]` | Everything about one database as tabs: Overview, Settings (reads, writes, detection, limits) and Catalog |
 | SettingsPage | `/settings` | `GET /v1/doctor`: daemon state, key source, connection health, catalog freshness. Not one of UI.md §2.3's six screens; added because `AppShell`'s settings control needs a destination and `/v1/doctor` needs a home — reconsider its placement with the product owner |
 | Preferences | `Field`, `Input`, `Button` | Log retention in days, saved explicitly and confirmed |
 | LocalRequestPage | `/r/:requestId` | The one-use local decision page for an input or authorization request (SPEC R8.7g, UI.md §6). Deliberately rendered outside `AppShell` |
@@ -133,7 +133,7 @@ One scale, defined in `index.css`, identical in mechanics to trellis's (CONTRACT
 | `text-sm` | 14px | 400 | The interface: rows, controls, table cells |
 | `text-xs` | 12px | 400 | Secondary words: captions, counts |
 | `text-label` | 12px | 500 | Names of structure: a column, a group head |
-| `text-meta` | 12px mono | 400 | Identifiers: refs, tokens, ids, paths — and every redacted/tokenized/partial `Cell` treatment |
+| `text-meta` | 12px mono | 400 | Identifiers: refs, tokens, ids, paths — and every redacted/tokenized `Cell` treatment |
 
 Sentence case throughout; nothing is tracked out; `pnpm ui-audit` rejects any other
 size, tracking or uppercase utility, and `font-mono` set by hand instead of `text-meta`.
@@ -167,7 +167,7 @@ it is the row you have selected.
 | InboxPage | `Lamp`, `Facts`, `Separator`, `Button`, `Empty` | Everything waiting on a human (SPEC R9.1): approval cards, then input and authorization requests. Each card says without a click who asks (agent, workspace, intent), on which profile (name, host, username, database), why it waited and what it would do, with the SQL last as evidence. Oldest first, never reordered, and deciding one item never advances to the next |
 | ApprovalCard | `Lamp`, `Badge`, `Facts`, `Separator`, `Button` | One statement waiting for approval: §9.2's facts above its SQL, decided in place. A risk badge — read, write or destructive, and destructive whenever keeper could not read the statement — beside the verb and target, the columns with `SELECT *` expanded, any sensitive or uncatalogued column it filters on, and a protection line naming the profile's writes setting and whether its role can write. A write adds its changed rows and the "revocation restores nothing" line |
 | ChangedRows | `Table` | The rows a waiting write changes, in cleartext, up to 50, each changed value shown struck through beside its new one, with a count of the rows not shown. For the approver only: nothing logs these values and no agent receives them |
-| RequestCard | `Lamp`, `Facts`, `Link` | One input or authorization request, opened on its own page where the value is typed or the access granted |
+| RequestCard | `Lamp`, `Facts`, `Link` | One input request, opened on its own page where the value is typed |
 | ProfileFact | `Fact` | The profile a statement runs as — connection name, host and address, username, database — so an approver knows which credential they are approving |
 | AgentsIndicator | `Sheet`, `Button`, `Lamp` | The agents connected now: a lamp and a count in the top bar, opening to each one's client, workspace and stated intent. It replaces the sidebar's agent list, which took a column of the screen to say one number |
 | ActivityPage | `Table`, `Select`, `Button`, `Empty`, `Facts`, `Cell` | The query log (SPEC §10). Filters by session, connection and tier, because a human arriving after a long agent run wants one session's trail. Pages by a `before` cursor, newest first, so no record is out of reach behind a fixed limit. A row expands in place: a detail drawn below the table was off-screen for any row past the first few, and read as a click that did nothing |
@@ -175,27 +175,22 @@ it is the row you have selected.
 | Filter | `Select` | One labelled filter on the activity log: a list of known values, never a field to type an id into |
 | SettingsPage | `Table`, `Lamp`, `Facts`, `Input`, `Button`, `Separator`, `Skeleton` | Per-daemon state from `GET /v1/doctor`: vault key source, detector identity and network posture, connections and sessions. Reports rather than configures — it is what you open when something is wrong |
 | ConnectionsPage | `Table`, `Lamp`, `Facts`, `Input`, `Button`, `Empty` | Hosts and the databases on them (SPEC R4.1). Grouped by host, because a host is entered once and each database and role on it is its own connection — what an agent queries and what owns a catalog, token keys and an audit. keeper never refuses a credential and no longer holds one shut either; what the role can do beyond reading is read on that connection's page, and each row links there rather than restating it |
-| HostRows | `TableRow`, `Button`, `RegisterDialog` | One host inside the single Connections table: a heading row with its address, sslmode and Add a database, then its connections as aligned rows with writes, mode and findings. No reachability: keeper connects only when a database is needed, and whether an account logs in is asked with Test connection. Remove host is offered only while no connection is on it |
-| FindingGroups | `Button`, `pre` | Privilege findings grouped by kind, rarest first, each group with its count, its meaning said once, the objects it covers and one block of statements with Copy; Copy all fixes joins every group into one BEGIN … COMMIT. Findings no single statement removes form their own group and stay out of the script. keeper never runs any of it |
+| HostRows | `TableRow`, `Button`, `RegisterDialog` | One host inside the single Connections table: a heading row with its address, sslmode and Add a database, then its connections as aligned rows with writes and reads. No reachability: keeper connects only when a database is needed, and whether an account logs in is asked with Test connection. Remove host is offered only while no connection is on it |
 | HostDialog | `Dialog`, `Field`, `Input`, `Select`, `Button` | Adding a database server, as a modal: name, address, port, sslmode. It holds no credential and connects to nothing, so an address is typed once however many roles share it. sslmode is a `Select` of libpq's six values rather than a TLS switch, because a switch can say two of six things |
-| RegisterDialog | `Dialog`, `Field`, `Input`, `Switch`, `Separator`, `Button` | Registering a database on a host already chosen, as a modal. Database, user and password are separate fields rather than one connection string, because a pasted DSN is where a typo is invisible until it returns as an unattributable permission error; the daemon's vault assembles the string and nothing here builds or renders one. One profile is one credential, with an "Allow writes" switch: off makes its sessions read-only at the server, on lets an agent send writes that each wait in the Inbox. No engine control (registration records `postgres` and nothing else) and no SSH tunnel (keeper has none). No "Test connection": storing the connection is the test, and what the audit found is read on the connection's Privileges tab |
-| PermissionsSection | `Table`, `Button`, `Skeleton` | The standing allow rules (SPEC §9.3), a section of Settings. One row per path, session grants first, and last used / uses as the columns that decide whether an entry should still exist. No tree, no wildcard, no select-all: R9.3c grants exactly the path named |
-| Privileges | `Button` | What this connection's role can do beyond reading (SPEC R4.1), read where its other controls are set rather than on a page of its own. It says when the audit ran, says "no report yet" when it never has — which is not the same as clean — and offers Re-audit. Nothing here gates the connection |
-| ModeSelector | radio inputs | Strict or assisted, as text with a sentence of consequence under each. Never a pill or a slider: the two differ in who decides an uncertain read — keeper's masking or a human — and a scale would be lying about that |
-| DetectionEditor | `Field`, `Switch`, `Input`, `Select`, `IconButton`, `Button` | The pipeline a connection's free text runs through, as a numbered list edited in a draft and saved whole: add a stage from the kinds not yet in it, reorder or remove one, and set its entity filter and whether it gets unmasked input. Save and Reset act only on a change. Followed by `TermsEditor`. It never sets a column's policy; the catalog does |
+| RegisterDialog | `Dialog`, `Field`, `Input`, `Switch`, `Separator`, `Button` | Registering a database on a host already chosen, as a modal. Database, user and password are separate fields rather than one connection string, because a pasted DSN is where a typo is invisible until it returns as an unattributable permission error; the daemon's vault assembles the string and nothing here builds or renders one. One profile is one credential, with an "Allow writes" switch: off makes its sessions read-only at the server, on lets an agent send writes that each wait in the Inbox (writes ask). No engine control (registration records `postgres` and nothing else) and no SSH tunnel (keeper has none). No "Test connection": storing the connection is the test |
+| ReadsSetting | `Choices`, `ConfirmWiden` | When a read asks you: always, uncertain or never, as text with a sentence of consequence under each. Saves at once; Never asks first because it removes the question. Never a pill or a slider |
+| DetectionSetting | `Choices` | Whether text is scanned for personal data: off, scan columns or all columns, saved at once. It never sets a column's policy; the catalog does |
 | LimitsForm | `Input`, `Button` | Row ceiling, statement timeout and scan sample. The ceiling is a privacy control, not a performance one |
-| DenylistEditor | `Table`, `Input`, `Button` | Relations this connection may never read. Evaluated against the plan, so a denied base table is caught through a view; no approval overrides it |
-| TokensSetting | `Field`, `Switch` | Whether an agent that declares persistent token scope gets tokens that outlive its session, off by default, with the consequence of each state written under the switch |
 | SettingSection | `Collapsible` | One setting on a settings page: its heading, its controls, a polite "Saving…"/"Saved" line, the refusal beside it as an alert, and the reasoning behind a "Why" disclosure that remembers whether it was opened. The sentence of consequence under each option stays with the controls, because it is what a choice is decided on. Registry search: `pnpm dlx shadcn@latest search @shadcn -q "setting section"` returns no composed item |
 | ConfirmWiden | `AlertDialog` | The one confirmation a setting asks for: before it widens what an agent may do (writes, persistent tokens) or erases something stored (all terms). Narrowing never asks |
-| Choices | `RadioGroup` | A choice as text with its consequence under each option, shared by Mode and Writes |
+| Choices | `RadioGroup` | A choice as text with its consequence under each option, shared by Reads, Writes and Detection |
 | LimitField | `Field`, `Input` | One limit as a positive whole number, validated as it is typed, with the reason beside the field |
 | TermsEditor | `Field`, `Textarea`, `Button`, `ConfirmWiden` | The list stage's write-only terms: Save terms only when something is typed, and Clear all terms as its own confirmed action, so an empty save can no longer erase the set |
 | TestConnection | `Button` | On a connection's Overview: logs in once with the profile's credential and says who the server says it is, the server version and the round trip, or keeper's own error as an alert. keeper never checks a connection on its own |
 | NumberSetting | `Field`, `Input`, `Button` | One whole-number daemon setting on Settings → General, validated as it is typed and saved alone, so saving one setting can never reset another |
-| WritesSelector | radio inputs | Whether a profile's sessions may write — read-only, or writes with approval — as text with a sentence of consequence under each, like ModeSelector. Allowing writes never approves one |
+| WritesSetting | `Choices`, `ConfirmWiden` | Whether a profile's sessions may write: off, ask or allow, as text with a sentence of consequence under each. Allow commits with no question, so it asks first |
 | CatalogTab | `Table`, `Input`, `Button` | One connection's column classification (SPEC §5), a tab of its page. A table rather than cards, because it shows hundreds of columns and is for bulk work. The unclassified count is the daemon's, not the length of the sample list beside it |
-| CatalogRow | `Input`, native select | One column's policy and its arguments. A token's namespace and a partial's form appear only where they apply, because their absence is a validation error rather than a default |
+| CatalogRow | `Input`, `Select` | One column's policy (allow, token, redact or scan) and a token's namespace, which appears only where it applies because its absence is a validation error rather than a default |
 | Proposal | `Table`, `Button` | `catalog init`'s output in its two groups: what may be accepted without reading, and the review task where unnamed name and address columns live |
 | LocalRequestPage | `Facts`, `Input`, `Button`, `Separator`, `KeeperMark` | The local page (R8.7g), outside the app shell. Somebody arrives from a link a blocked agent printed to make one decision; navigation would invite them to do something else first |
 | RequestPage | `Facts`, `Input`, `Button`, `Separator`, `KeeperMark` | What `LocalRequestPage` falls to when the id is not a waiting ticket: an input request's page, or the statement that it was settled or does not exist, with no decision offered |
@@ -204,8 +199,8 @@ it is the row you have selected.
 | AuthorizationRequest | `Facts`, `Button` | Granting one path. "Allow for this session" first and as the default, because that and "allow until revoked" are different requests. Says plainly that nothing returns to the agent |
 | Page | none (layout) | The local page's frame: one column, no navigation |
 | ConnectionPage | `Skeleton`, `Empty`, `Separator`, `Button` | One database's page. Its tabs are routes, so each can be linked to, and the sidebar picks the database — the per-page rows of connection buttons it replaces were a second picker that disagreed with the first. An id that names nothing says so and links back to Connections |
-| OverviewTab | `Facts`, `Separator` | The connection in one screen: host, database, role, mode, detection stages, unclassified columns and privilege findings, each count a link to the tab that acts on it, and Remove at the foot |
-| RemoveConnection | `Input`, `Button` | Deleting a connection, with its name retyped rather than a click confirmed. Its credential and every allow rule naming it go with it; a grant naming a connection that no longer exists is a rule nobody can read or revoke. The catalog file stays — it lives in the project repo and is reviewed like code |
+| OverviewTab | `Facts`, `Separator` | The connection in one screen: host, database, role, reads, writes, detection and unclassified columns, each a link to the tab that acts on it, and Remove at the foot |
+| RemoveConnection | `Input`, `Button` | Deleting a connection, with its name retyped rather than a click confirmed. Its credential goes with it. The catalog file stays: it lives in the project repo and is reviewed like code |
 
 `unclassified`'s hatched amber edge (UI.md §2.2) is the one further exception: the
 visible exit from fail-closed, carrying the same "needs you" meaning as `waiting`.

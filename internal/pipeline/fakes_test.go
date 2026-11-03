@@ -259,7 +259,7 @@ func (a *fakeAudit) Get(context.Context, string) (*types.AuditRecord, error) { r
 
 func (a *fakeAudit) Normalize(sql string, _ func(string) bool) string { return "NORMALIZED:" + sql }
 
-func (a *fakeAudit) ScreenIntent(context.Context, string) error { return nil }
+func (a *fakeAudit) ScreenText(context.Context, string) error { return nil }
 
 func (a *fakeAudit) last(t *testing.T) *types.AuditRecord {
 	t.Helper()
@@ -304,10 +304,10 @@ func testSchema() *fakeCatalog {
 		testRelation{ref: usersRef, oid: usersOID, cols: []testColumn{
 			{name: "id", attnum: 1, family: ports.FamilyNumeric, policy: types.ColumnPolicy{Policy: types.PolicyAllow}},
 			{name: "email", attnum: 2, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "email"}},
-			{name: "ssn", attnum: 3, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyDrop}},
+			{name: "ssn", attnum: 3, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyRedact}},
 			{name: "salary", attnum: 4, family: ports.FamilyNumeric, policy: types.ColumnPolicy{Policy: types.PolicyRedact}},
 			{name: "status", attnum: 5, family: ports.FamilyText, policy: types.ColumnPolicy{Policy: types.PolicyScan}},
-			{name: "internal_flag", attnum: 6, family: ports.FamilyBoolean, policy: types.ColumnPolicy{Policy: types.PolicyRedact, HideName: true}},
+			{name: "internal_flag", attnum: 6, family: ports.FamilyBoolean, policy: types.ColumnPolicy{Policy: types.PolicyRedact}},
 		}},
 		testRelation{ref: ordersRef, oid: ordersOID, cols: []testColumn{
 			{name: "id", attnum: 1, family: ports.FamilyNumeric, policy: types.ColumnPolicy{Policy: types.PolicyAllow}},
@@ -337,7 +337,6 @@ func testSession() types.Session {
 	return types.Session{
 		ID:     "sess-1",
 		Client: types.ClientInfo{Name: "keeper-mcp", Version: "0.1.0"},
-		Intent: "reconcile last week's orders",
 	}
 }
 

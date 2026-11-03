@@ -73,12 +73,6 @@ func (d *Daemon) InitCatalog(ctx context.Context, connID string, sample int) (*p
 	return p, nil
 }
 
-// SuggestGrants is §5.5's GRANT SELECT (...) per table. §2.4: use column grants
-// first, where you can.
-func (d *Daemon) SuggestGrants(ctx context.Context, connID string) ([]string, error) {
-	return d.deps.CatalogStore.SuggestGrants(ctx, connID)
-}
-
 // Activity is the query log (§10) behind the Activity screen.
 func (d *Daemon) Activity(ctx context.Context, f ports.AuditFilter) ([]types.AuditRecord, error) {
 	if f.Limit <= 0 || f.Limit > 500 {
