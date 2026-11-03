@@ -170,9 +170,6 @@ func (db *DB) limitsFor(connID string) types.Limits {
 		if got.MaxRowsCeiling > 0 {
 			lim.MaxRowsCeiling = got.MaxRowsCeiling
 		}
-		if got.ScanSample > 0 {
-			lim.ScanSample = got.ScanSample
-		}
 	}
 	return lim
 }

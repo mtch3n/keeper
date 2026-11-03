@@ -15,7 +15,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { registerHost } from '@/lib/api'
 import { SSL_MODES, type SSLMode } from '@/lib/types'
 
-const EMPTY = { name: '', address: 'localhost', port: '5432', sslmode: 'prefer' as SSLMode }
+const EMPTY = { name: '', address: 'localhost', port: '5432', sslmode: null as SSLMode | null }
+
+/** require, unless the address is this machine: a local server rarely has TLS. */
+function defaultSSLMode(address: string): SSLMode {
+  const host = address.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  return host === 'localhost' || host === '::1' || host.startsWith('127.') ? 'prefer' : 'require'
+}
 
 /**
  * Registering a database server, as a modal. A host is where to connect and
@@ -45,13 +51,14 @@ export function HostDialog({
   const set = <K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) =>
     setF((prev) => ({ ...prev, [key]: value }))
 
+  const sslmode = f.sslmode ?? defaultSSLMode(f.address)
   const port = Number(f.port.trim() || '5432')
   const ready = f.name.trim() !== '' && f.address.trim() !== '' && Number.isInteger(port)
 
   const submit = async () => {
     setBusy(true)
     try {
-      await registerHost({ name: f.name.trim(), address: f.address.trim(), port, sslmode: f.sslmode })
+      await registerHost({ name: f.name.trim(), address: f.address.trim(), port, sslmode })
       setF(EMPTY)
       setOpen(false)
       await onRegistered()
@@ -93,7 +100,7 @@ export function HostDialog({
 
           <Field>
             <FieldLabel htmlFor="host-sslmode">TLS (sslmode)</FieldLabel>
-            <Select value={f.sslmode} onValueChange={(v) => set('sslmode', v as SSLMode)}>
+            <Select value={sslmode} onValueChange={(v) => set('sslmode', v as SSLMode)}>
               <SelectTrigger id="host-sslmode" className="w-48">
                 <SelectValue />
               </SelectTrigger>
@@ -105,7 +112,7 @@ export function HostDialog({
                 ))}
               </SelectContent>
             </Select>
-            <FieldDescription>Managed servers usually need require or stricter.</FieldDescription>
+            <FieldDescription>Follows the address until you choose: prefer on this machine, require elsewhere.</FieldDescription>
           </Field>
         </FieldGroup>
 

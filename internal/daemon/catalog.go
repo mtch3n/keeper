@@ -74,7 +74,7 @@ func (d *Daemon) InitCatalog(ctx context.Context, connID string, sample int) (*p
 }
 
 // Activity is the query log (§10) behind the Activity screen.
-func (d *Daemon) Activity(ctx context.Context, f ports.AuditFilter) ([]types.AuditRecord, error) {
+func (d *Daemon) Activity(ctx context.Context, f ports.AuditFilter) (ports.AuditPage, error) {
 	if f.Limit <= 0 || f.Limit > 500 {
 		f.Limit = 200
 	}

@@ -280,5 +280,6 @@ func activityHasWrite(recs []types.AuditRecord, stmtType string) bool {
 
 func (e *leanEnv) activity(t *testing.T) ([]types.AuditRecord, error) {
 	t.Helper()
-	return e.op.ListActivity(t.Context(), activityAll())
+	page, err := e.op.ListActivity(t.Context(), activityAll())
+	return page.Records, err
 }

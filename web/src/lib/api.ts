@@ -1,17 +1,14 @@
 /**
- * The one hand-written client. It mirrors every route in CONTRACT.md §3, and
- * it is the only place in this app that calls `fetch` — CONTRACT.md §5: "no
- * fetch calls in components." Components import functions from here.
+ * The one hand-written client: the only place in this app that calls `fetch`.
+ * Components import functions from here.
  *
  * The browser talks to keeperd's loopback listener at the same origin it was
- * served from (CONTRACT.md §5), so every path below is relative. Mutating
- * requests (POST, PUT, PATCH, DELETE) carry `X-Keeper-CSRF`; the daemon has no
- * session for a browser request (CONTRACT.md §3), so there is no
- * `X-Keeper-Session` header to send from here.
+ * served from, so every path below is relative. Mutating requests (POST, PUT,
+ * PATCH, DELETE) carry `X-Keeper-CSRF`.
  *
- * The local page answers a request through `POST /v1/requests/{id}/submit` for
- * an input request and `/decide` for an authorization request, with `/cancel`
- * for either. They are loopback-only and one-use; a second attempt is a 409.
+ * The local page answers an input request through `POST /v1/requests/{id}/submit`
+ * and a ticket through `/v1/approvals/{ticket}/decide`. Both are one-use; a
+ * second attempt is a 409.
  */
 
 import type {
@@ -38,10 +35,10 @@ import type {
 
 // ── transport ────────────────────────────────────────────────────────────
 
-class KeeperApiError extends Error {
+export class KeeperApiError extends Error {
   readonly error: KeeperError
   constructor(error: KeeperError) {
-    super(error.summary)
+    super(error.action ? `${error.summary} ${error.action}` : error.summary)
     this.name = 'KeeperApiError'
     this.error = error
   }
@@ -49,15 +46,10 @@ class KeeperApiError extends Error {
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-/** The daemon's CSRF token for this browser, per CONTRACT.md §3. How
- * keeperd hands it out is not yet specified in CONTRACT.md; this reads a
- * `keeper_csrf` cookie (double-submit), falling back to a `<meta
- * name="keeper-csrf">` tag the served page can set. Adjust the one function
- * below if keeperd does it differently. */
+/** The daemon's CSRF token for this browser, read from the `keeper_csrf` cookie. */
 function csrfToken(): string | undefined {
   const cookieMatch = document.cookie.match(/(?:^|;\s*)keeper_csrf=([^;]+)/)
-  if (cookieMatch) return decodeURIComponent(cookieMatch[1])
-  return document.querySelector<HTMLMetaElement>('meta[name="keeper-csrf"]')?.content
+  return cookieMatch ? decodeURIComponent(cookieMatch[1]) : undefined
 }
 
 function query(params?: Record<string, string | number | boolean | undefined>): string {
@@ -79,8 +71,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-    // The local page's responses are no-store (CONTRACT.md §3); never let the
-    // browser cache an approval, a grant list or a query result.
+    // Never let the browser cache an approval or a query result.
     cache: 'no-store',
   })
 
@@ -90,8 +81,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const data = text ? JSON.parse(text) : undefined
 
   if (!response.ok) {
-    // SPEC R6.4a: the only error shape that reaches the UI. If the daemon
-    // ever fails to compose one, refuse to fabricate a friendlier message.
+    // The only error shape that reaches the UI. If the daemon ever fails to
+    // compose one, refuse to fabricate a friendlier message.
     throw new KeeperApiError(
       (data as KeeperError | undefined) ?? {
         code: 'internal',
@@ -122,6 +113,7 @@ export interface ConnectionDetail extends Profile {
   id: string
   name: string
   engine: string
+  detection: Detection
   version?: string
   schemas?: string[]
   catalog_status: CatalogStatus
@@ -142,8 +134,7 @@ export function getConnection(id: string) {
   return get<ConnectionDetail>(`/v1/connections/${id}`)
 }
 
-/** Inferred shape: CONTRACT.md §3 says "tables with columns and policies"
- * without a linked Go type. */
+/** One input request, as its local page reads it. */
 export interface LocalRequestView {
   request_id: string
   kind: 'input'
@@ -155,8 +146,8 @@ export interface LocalRequestView {
   expires_at: string
 }
 
-export function getLocalRequest(id: string, waitMs?: number) {
-  return get<LocalRequestView>(`/v1/requests/${id}${query({ wait_ms: waitMs })}`)
+export function getLocalRequest(id: string) {
+  return get<LocalRequestView>(`/v1/requests/${id}`)
 }
 
 /**
@@ -179,7 +170,7 @@ export function listHosts() {
   return get<HostView[]>('/v1/hosts')
 }
 
-/** A zero port and an absent sslmode take the daemon's defaults, 5432 and prefer. */
+/** A zero port and an absent sslmode take the daemon's defaults. */
 export function registerHost(body: { name: string; address: string; port?: number; sslmode?: SSLMode }) {
   return post<Host>('/v1/hosts', body)
 }
@@ -298,6 +289,7 @@ export interface InitProposal {
   safe_to_bulk_accept: Record<string, ColumnPolicy>
   needs_review: Record<string, ColumnPolicy>
   sample_rates?: Record<string, number>
+  degradations?: Degradation[]
 }
 
 export function initCatalog(connection: string, sample?: number) {
@@ -307,11 +299,12 @@ export function initCatalog(connection: string, sample?: number) {
 export function listActivity(params?: {
   session?: string
   connection?: string
+  decision?: string
   since?: string
-  before?: string
   limit?: number
+  offset?: number
 }) {
-  return get<AuditRecord[]>(`/v1/activity${query(params)}`)
+  return get<{ records: AuditRecord[]; total: number }>(`/v1/activity${query(params)}`)
 }
 
 export function getActivityRecord(auditId: string) {
@@ -348,8 +341,7 @@ export type EventStreamStatus = 'idle' | 'waiting' | 'live' | 'blocked'
 /**
  * Subscribes to the daemon's SSE stream and reconnects with backoff when it
  * drops. Returns an unsubscribe function. `onStatus` is how `AppShell` drives
- * its daemon `Lamp` (CONTRACT.md §3: `GET /v1/events` — approval, request,
- * connection, catalog, session).
+ * its daemon `Lamp`.
  */
 export function subscribeToEvents(
   onEvent: (event: KeeperEvent) => void,

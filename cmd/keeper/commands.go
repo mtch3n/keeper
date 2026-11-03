@@ -347,10 +347,11 @@ func runActivity(args []string) error {
 	if *since > 0 {
 		f.Since = time.Now().Add(-*since)
 	}
-	recs, err := cli.ListActivity(ctx, f)
+	page, err := cli.ListActivity(ctx, f)
 	if err != nil {
 		return err
 	}
+	recs := page.Records
 	if *asJSON {
 		return printJSON(recs)
 	}
@@ -366,6 +367,9 @@ func runActivity(args []string) error {
 			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
 	}
 	w.Flush()
+	if page.Total > len(recs) {
+		fmt.Printf("\nShowing the newest %d of %d records. Raise --limit to see more.\n", len(recs), page.Total)
+	}
 	// R10d: the log records what keeper intended to emit. Saying "values masked"
 	// here would claim something the log cannot establish.
 	fmt.Println("\nPolicies applied, not bytes verified: the log records the decision,")

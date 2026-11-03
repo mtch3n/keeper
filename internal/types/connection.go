@@ -74,8 +74,6 @@ type Limits struct {
 	MaxBytes int `json:"max_bytes"`
 	// StatementTimeout is the SET LOCAL value for every statement.
 	StatementTimeout time.Duration `json:"statement_timeout"`
-	// ScanSample is how many rows the model layer of a scan column sees.
-	ScanSample int `json:"scan_sample"`
 }
 
 // DefaultLimits are keeper's starting values. SPEC §15 lists them as tuning
@@ -85,7 +83,6 @@ func DefaultLimits() Limits {
 		MaxRowsCeiling:   1000,
 		MaxBytes:         1 << 20,
 		StatementTimeout: 30 * time.Second,
-		ScanSample:       300, // ~299 rows finds a 1% rate at 95% confidence, SPEC R8.5b
 	}
 }
 

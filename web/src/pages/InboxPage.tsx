@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ChevronRightIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
@@ -7,11 +8,14 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/u
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { PagedTable } from '@/components/wrappers/PagedTable'
 import { Fact, Facts } from '@/components/wrappers/Facts'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { decideApproval, listConnections, listHosts, type PendingRequest } from '@/lib/api'
 import { useInbox } from '@/lib/inbox'
-import { age, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
+import { usePaging } from '@/lib/paging'
+import { cn } from '@/lib/utils'
+import { age, reasonText, until, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
 import type { ApprovalItem, ConnectionSummary, HostView, Risk, WriteChanges } from '@/lib/types'
 
 /**
@@ -29,6 +33,8 @@ export function InboxPage() {
   const [hosts, setHosts] = useState<HostView[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const paging = usePaging('inbox')
 
   useEffect(() => {
     listConnections().then(setConnections).catch(() => {})
@@ -37,6 +43,7 @@ export function InboxPage() {
 
   const decide = async (ticket: string, decision: 'approve' | 'refuse') => {
     setBusy(ticket)
+    setFailure(null)
     try {
       await decideApproval(ticket, { decision })
       await refresh()
@@ -47,12 +54,23 @@ export function InboxPage() {
     }
   }
 
-  if (approvals === null) return <Skeleton className="h-40 w-full" />
+  if (approvals === null) {
+    return error ? (
+      <div className="flex flex-col gap-6">
+        <h1 className="text-title">Inbox</h1>
+        <p className="text-sm text-blocked">{error}</p>
+      </div>
+    ) : (
+      <Skeleton className="h-40 w-full" />
+    )
+  }
 
   if (approvals.length === 0 && requests.length === 0) {
     return (
       <div className="flex flex-col gap-6">
         <h1 className="text-title">Inbox</h1>
+        {error ? <p className="text-sm text-blocked">{error}</p> : null}
+        {failure ? <p className="text-sm text-blocked">{failure}</p> : null}
         <Empty>
           <EmptyHeader>
             <EmptyTitle>Nothing is waiting</EmptyTitle>
@@ -72,23 +90,164 @@ export function InboxPage() {
     return { name: c?.name ?? id, username: c?.username, database: c?.database, host: h }
   }
 
+  const items: Row[] = [
+    ...[...approvals]
+      .sort((x, y) => x.created_at.localeCompare(y.created_at) || x.ticket_id.localeCompare(y.ticket_id))
+      .map((item): Row => ({ kind: 'approval', id: item.ticket_id, item })),
+    ...[...requests]
+      .sort((x, y) => x.request_id.localeCompare(y.request_id))
+      .map((request): Row => ({ kind: 'request', id: request.request_id, request })),
+  ]
+  // A lone item opens by itself: there is nothing to choose between, and a
+  // write is read before it is decided.
+  const isOpen = (id: string) => open[id] ?? items.length === 1
+  const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !isOpen(id) }))
+
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-title">Inbox</h1>
-      {error || failure ? <p className="text-sm text-blocked">{error ?? failure}</p> : null}
-      {approvals.map((item) => (
-        <ApprovalCard
-          key={item.ticket_id}
-          item={item}
-          profile={profile(item.connection)}
-          busy={busy === item.ticket_id}
-          onDecide={(d) => void decide(item.ticket_id, d)}
-        />
-      ))}
-      {requests.map((r) => (
-        <RequestCard key={r.request_id} request={r} profile={profile(r.connection_id)} />
-      ))}
+      {error ? <p className="text-sm text-blocked">{error}</p> : null}
+      {failure ? <p className="text-sm text-blocked">{failure}</p> : null}
+      <PagedTable
+        paging={paging}
+        items={items}
+        unit="waiting"
+        label="Inbox"
+        head={
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-8" />
+              <TableHead>Risk</TableHead>
+              <TableHead>Agent</TableHead>
+              <TableHead>Profile</TableHead>
+              <TableHead>Why it waits</TableHead>
+              <TableHead>Statement</TableHead>
+              <TableHead>Waited</TableHead>
+              <TableHead>
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+        }
+        row={(r) =>
+          r.kind === 'approval' ? (
+            <ApprovalRow
+              key={r.id}
+              item={r.item}
+              profile={profile(r.item.connection)}
+              open={isOpen(r.id)}
+              busy={busy === r.id}
+              onToggle={() => toggle(r.id)}
+              onDecide={(d) => void decide(r.id, d)}
+            />
+          ) : (
+            <RequestRow key={r.id} request={r.request} profile={profile(r.request.connection_id)} />
+          )
+        }
+      />
     </div>
+  )
+}
+
+type Row =
+  | { kind: 'approval'; id: string; item: ApprovalItem }
+  | { kind: 'request'; id: string; request: PendingRequest }
+
+/** The reasons an item waits, as sentences; the row keeps the first and counts the rest. */
+function reasonSummary(reasons: string[] | undefined): string {
+  if (!reasons?.length) return '—'
+  const first = reasonText(reasons[0])
+  return reasons.length > 1 ? `${first} +${reasons.length - 1} more` : first
+}
+
+/**
+ * One waiting statement as a row: what is decided on, in the order it is
+ * decided on. A read can be approved or refused from the row; a write cannot,
+ * because its changed rows are in the expansion and they are what a person
+ * decides on. The expansion is the full card.
+ */
+function ApprovalRow({
+  item,
+  profile,
+  open,
+  busy,
+  onToggle,
+  onDecide,
+}: {
+  item: ApprovalItem
+  profile: Profile
+  open: boolean
+  busy: boolean
+  onToggle: () => void
+  onDecide: (decision: 'approve' | 'refuse') => void
+}) {
+  const risk: Risk = item.facts.risk ?? 'destructive'
+  const readOnly = risk === 'read' && !item.write
+  return (
+    <>
+      <TableRow className="cursor-pointer" aria-expanded={open} onClick={onToggle}>
+        <TableCell>
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-90')}
+          />
+        </TableCell>
+        <TableCell>
+          <Badge variant={RISK_BADGE[risk]}>{risk}</Badge>
+        </TableCell>
+        <TableCell className="text-sm">{item.session.client.name}</TableCell>
+        <TableCell className="text-meta">{profile.name}</TableCell>
+        <TableCell className="max-w-xs truncate text-sm">{reasonSummary(item.facts.reasons)}</TableCell>
+        <TableCell className="max-w-xs truncate text-meta">{renderSQL(item.sql)}</TableCell>
+        <TableCell className="text-meta">{age(item.created_at)}</TableCell>
+        <TableCell onClick={(e) => e.stopPropagation()}>
+          {open ? null : readOnly ? (
+            <div className="flex gap-2">
+              <Button size="sm" disabled={busy} onClick={() => onDecide('approve')}>
+                Approve
+              </Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => onDecide('refuse')}>
+                Refuse
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={onToggle}>
+              Review
+            </Button>
+          )}
+        </TableCell>
+      </TableRow>
+      {open ? (
+        <TableRow className="hover:bg-transparent">
+          <TableCell colSpan={8} className="p-4 whitespace-normal">
+            <ApprovalCard item={item} profile={profile} busy={busy} onDecide={onDecide} />
+          </TableCell>
+        </TableRow>
+      ) : null}
+    </>
+  )
+}
+
+/** A request for a value, answered on its own page. */
+function RequestRow({ request, profile }: { request: PendingRequest; profile: Profile }) {
+  const path = new URL(request.url, window.location.origin).pathname
+  return (
+    <TableRow>
+      <TableCell />
+      <TableCell>
+        <Badge variant="outline">input</Badge>
+      </TableCell>
+      <TableCell className="text-sm">—</TableCell>
+      <TableCell className="text-meta">{profile.name}</TableCell>
+      <TableCell className="max-w-xs truncate text-sm">{request.purpose || 'Asks you to type a value'}</TableCell>
+      <TableCell className="text-meta">—</TableCell>
+      <TableCell className="text-meta">expires in {until(request.expires_at)}</TableCell>
+      <TableCell>
+        <Link to={path} className="text-sm underline underline-offset-4">
+          Open
+        </Link>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -143,7 +302,7 @@ export function ApprovalCard({
       </div>
       <Facts>
         <ProfileFact profile={profile} />
-        {f.reasons?.length ? <Fact label="why it waits">{f.reasons.join(', ')}</Fact> : null}
+        {f.reasons?.length ? <Fact label="why it waits">{f.reasons.map(reasonText).join(' ')}</Fact> : null}
         {f.unreadable || !f.risk ? (
           <Fact label="warning">
             <span className="text-blocked">keeper could not read this statement, so it is treated as destructive.</span>
@@ -183,7 +342,7 @@ export function ApprovalCard({
       <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{renderSQL(item.sql)}</pre>
       {item.write ? (
         <p className="text-sm">
-          Approving changes stored data. Revoking afterwards stops future writes and restores nothing.
+          Approving changes stored data. It cannot be undone from here.
         </p>
       ) : null}
       <div className="flex gap-3">
@@ -239,27 +398,5 @@ function ChangedRows({ changes }: { changes: WriteChanges }) {
         Shown to you only. Not logged or sent to the agent.
       </p>
     </div>
-  )
-}
-
-/** A request for a value, answered on its own page. */
-function RequestCard({ request, profile }: { request: PendingRequest; profile: Profile }) {
-  const path = new URL(request.url, window.location.origin).pathname
-  return (
-    <article aria-label="input request" className="flex flex-col gap-4 border border-border p-6">
-      <div className="flex items-center gap-3">
-        <Lamp state="waiting" label="waiting for you" />
-        <span className="text-sm">Asks you to type a value</span>
-      </div>
-      <Facts>
-        <Fact label="purpose">{request.purpose || '—'}</Fact>
-        <ProfileFact profile={profile} />
-      </Facts>
-      <div>
-        <Link to={path} className="text-sm underline underline-offset-4">
-          Open
-        </Link>
-      </div>
-    </article>
   )
 }

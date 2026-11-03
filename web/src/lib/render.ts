@@ -35,11 +35,7 @@ export function suspectHomoglyph(identifier: string): boolean {
   return scripts.size > 1
 }
 
-/** A short relative age: 40s, 12m, 3h, 2d. */
-export function age(iso: string | undefined): string {
-  if (!iso) return '—'
-  const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms)) return '—'
+function short(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
   if (s < 60) return `${s}s`
   if (s < 3600) return `${Math.round(s / 60)}m`
@@ -47,18 +43,18 @@ export function age(iso: string | undefined): string {
   return `${Math.round(s / 86400)}d`
 }
 
-/**
- * When G0 last ran, or `never`.
- *
- * An audit that could not run leaves Go's zero time, which is a real state and
- * not a missing field: the credential is registered and usable, and nobody has
- * a report on what its role can do. Rendering that as an age dated it to the
- * year 1, which read as a bug rather than as the invitation to run `keeper
- * audit` that it is.
- */
-export function auditedAge(iso: string | undefined): string {
-  if (!iso || iso.startsWith('0001-01-01')) return 'never'
-  return `${age(iso)} ago`
+/** A short time since a past moment: 40s, 12m, 3h, 2d. */
+export function age(iso: string | undefined): string {
+  if (!iso) return '—'
+  const ms = Date.now() - new Date(iso).getTime()
+  return Number.isFinite(ms) ? short(ms) : '—'
+}
+
+/** A short time until a future moment, in the same units as `age`. */
+export function until(iso: string | undefined): string {
+  if (!iso) return '—'
+  const ms = new Date(iso).getTime() - Date.now()
+  return Number.isFinite(ms) ? short(ms) : '—'
 }
 
 /** A relation list as text, for one line of facts. */
@@ -71,4 +67,24 @@ export function relationList(rels: { schema: string; relation: string }[] | unde
 export function durationMs(ns: number | undefined): string {
   if (!ns) return '—'
   return `${(ns / 1e6).toFixed(0)}ms`
+}
+
+const REASONS: Record<string, string> = {
+  masked_output: 'The result would include masked columns.',
+  unresolved_column: 'A column could not be matched to the catalog.',
+  stale_catalog: 'The catalog is out of date with the database.',
+  write: 'It changes data.',
+  ddl: 'It changes the schema.',
+  writes_off: 'Writes are off on this profile.',
+  reads_ask: 'This profile asks before reads.',
+  volatile_call: 'It calls a function that may change data.',
+  multi_statement: 'It holds more than one statement.',
+  unparseable: 'keeper could not read the statement.',
+  plan_timeout: 'Planning the statement took too long.',
+  permission_denied: 'The database role lacks permission.',
+}
+
+/** A reason code the pipeline gave for waiting, as a sentence; an unknown code shows as itself. */
+export function reasonText(code: string): string {
+  return REASONS[code] ?? code
 }

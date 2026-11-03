@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   getCatalog,
   initCatalog,
   updateCatalogColumns,
   type InitProposal,
 } from '@/lib/api'
+import { PagedTable } from '@/components/wrappers/PagedTable'
+import { usePaging } from '@/lib/paging'
 import type { ColumnPolicy, Policy } from '@/lib/types'
 
 const POLICIES: Policy[] = ['allow', 'token', 'redact', 'scan']
@@ -31,10 +34,12 @@ export function CatalogTab({ connId }: { connId: string }) {
   const [entries, setEntries] = useState<Record<string, ColumnPolicy>>({})
   const [unclassified, setUnclassified] = useState<string[]>([])
   const [proposal, setProposal] = useState<InitProposal | null>(null)
-  const [filter, setFilter] = useState('')
+  const [params] = useSearchParams()
+  const [filter, setFilter] = useState(params.get('column') ?? '')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const paging = usePaging('catalog', filter)
 
   const reload = useCallback(async (id: string) => {
     try {
@@ -110,20 +115,22 @@ export function CatalogTab({ connId }: { connId: string }) {
 
       <Separator />
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Column</TableHead>
-            <TableHead>Policy</TableHead>
-            <TableHead>Namespace</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {shown.map(([key, p]) => (
-            <CatalogRow key={key} columnKey={key} policy={p} busy={busy} onChange={put} />
-          ))}
-        </TableBody>
-      </Table>
+      <PagedTable
+        paging={paging}
+        items={shown}
+        unit="columns"
+        label="Catalog columns"
+        head={
+          <TableHeader>
+            <TableRow>
+              <TableHead>Column</TableHead>
+              <TableHead>Policy</TableHead>
+              <TableHead>Namespace</TableHead>
+            </TableRow>
+          </TableHeader>
+        }
+        row={([key, p]) => <CatalogRow key={key} columnKey={key} policy={p} busy={busy} onChange={put} />}
+      />
     </div>
   )
 }
@@ -164,10 +171,10 @@ function CatalogRow({
 
   return (
     <TableRow>
-      <TableCell className="text-meta">{columnKey}</TableCell>
+      <TableCell className="text-meta whitespace-normal break-all">{columnKey}</TableCell>
       <TableCell>
         <Select value={policy?.policy ?? ''} onValueChange={(v) => choose(v as Policy)} disabled={busy}>
-          <SelectTrigger className="w-32" aria-label={`Policy for ${columnKey}`}>
+          <SelectTrigger className="w-28" aria-label={`Policy for ${columnKey}`}>
             <SelectValue placeholder="unclassified" />
           </SelectTrigger>
           <SelectContent>
@@ -188,7 +195,7 @@ function CatalogRow({
               disabled={busy}
               onChange={(e) => setNamespace(e.target.value)}
               onBlur={commitNamespace}
-              className="w-32"
+              className="w-28"
             />
             {problem ? <p className="text-meta text-blocked">{problem}</p> : null}
           </div>
@@ -217,57 +224,98 @@ function Proposal({
   onApply: (key: string, p: ColumnPolicy) => Promise<void>
   busy: boolean
 }) {
-  const safe = Object.entries(proposal.safe_to_bulk_accept ?? {})
-  const review = Object.entries(proposal.needs_review ?? {})
+  const byKey = (a: [string, unknown], b: [string, unknown]) => a[0].localeCompare(b[0])
+  const safe = Object.entries(proposal.safe_to_bulk_accept ?? {}).sort(byKey)
+  const review = Object.entries(proposal.needs_review ?? {}).sort(byKey)
+  const safePaging = usePaging('proposal-safe')
+  const reviewPaging = usePaging('proposal-review')
 
   return (
     <section className="flex flex-col gap-4">
-      <div>
+      {proposal.degradations?.length ? (
+        <div>
+          <h2 className="text-heading">Not consulted</h2>
+          <ul className="text-sm">
+            {proposal.degradations.map((d, i) => (
+              <li key={i}>
+                {d.layer}: {d.reason}
+              </li>
+            ))}
+          </ul>
+          <p className="text-meta text-muted-foreground">A column with no proposal below was not found clean.</p>
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-3">
         <h2 className="text-heading">Proposed: safe to accept in bulk ({safe.length})</h2>
         <p className="text-meta text-muted-foreground">
           Typed scalars proposed allow, and name-heuristic matches proposed token.
         </p>
-        <Button
-          disabled={busy || safe.length === 0}
-          onClick={async () => {
-            for (const [key, p] of safe) await onApply(key, p)
-          }}
-        >
-          Accept all {safe.length}
-        </Button>
+        <div>
+          <Button
+            disabled={busy || safe.length === 0}
+            onClick={async () => {
+              for (const [key, p] of safe) await onApply(key, p)
+            }}
+          >
+            Accept all {safe.length}
+          </Button>
+        </div>
+        <PagedTable
+          paging={safePaging}
+          items={safe}
+          unit="columns"
+          label="Safe to accept"
+          head={
+            <TableHeader>
+              <TableRow>
+                <TableHead>Column</TableHead>
+                <TableHead>Proposed</TableHead>
+              </TableRow>
+            </TableHeader>
+          }
+          row={([key, p]) => (
+            <TableRow key={key}>
+              <TableCell className="text-meta whitespace-normal break-all">{key}</TableCell>
+              <TableCell className="text-meta">{p.policy}</TableCell>
+            </TableRow>
+          )}
+        />
       </div>
 
-      <div>
+      <div className="flex flex-col gap-3">
         <h2 className="text-heading">Proposed: needs review ({review.length})</h2>
         <p className="text-meta text-muted-foreground">Free text no rule matched. Review each.</p>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Column</TableHead>
-              <TableHead>Proposed</TableHead>
-              <TableHead className="text-right">Sample hit rate</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {review.map(([key, p]) => (
-              <TableRow key={key}>
-                <TableCell className="text-meta">{key}</TableCell>
-                <TableCell className="text-meta">{p.policy}</TableCell>
-                <TableCell className="text-right text-meta">
-                  {proposal.sample_rates?.[key] !== undefined
-                    ? `${Math.round(proposal.sample_rates[key] * 100)}%`
-                    : '—'}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button variant="outline" disabled={busy} onClick={() => void onApply(key, p)}>
-                    Accept
-                  </Button>
-                </TableCell>
+        <PagedTable
+          paging={reviewPaging}
+          items={review}
+          unit="columns"
+          label="Needs review"
+          head={
+            <TableHeader>
+              <TableRow>
+                <TableHead>Column</TableHead>
+                <TableHead>Proposed</TableHead>
+                <TableHead className="text-right">Sample hit rate</TableHead>
+                <TableHead />
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+          }
+          row={([key, p]) => (
+            <TableRow key={key}>
+              <TableCell className="text-meta whitespace-normal break-all">{key}</TableCell>
+              <TableCell className="text-meta">{p.policy}</TableCell>
+              <TableCell className="text-right text-meta">
+                {proposal.sample_rates?.[key] !== undefined ? `${Math.round(proposal.sample_rates[key] * 100)}%` : '—'}
+              </TableCell>
+              <TableCell className="text-right">
+                <Button variant="outline" disabled={busy} onClick={() => void onApply(key, p)}>
+                  Accept
+                </Button>
+              </TableCell>
+            </TableRow>
+          )}
+        />
       </div>
     </section>
   )

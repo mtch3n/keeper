@@ -2,8 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Lamp } from '@/components/wrappers/Lamp'
-import { getDoctor, subscribeToEvents } from '@/lib/api'
+import { PagedTable } from '@/components/wrappers/PagedTable'
+import { getDoctor } from '@/lib/api'
+import { useEvents, useLiveStatus } from '@/lib/live-status'
+import { usePaging } from '@/lib/paging'
 import type { Session } from '@/lib/types'
 
 /**
@@ -13,21 +17,21 @@ import type { Session } from '@/lib/types'
  */
 export function AgentsIndicator() {
   const [sessions, setSessions] = useState<Session[]>([])
+  const paging = usePaging('agents', '', true)
 
   const refresh = useCallback(() => {
     getDoctor()
-      .then((r) => setSessions(r.sessions ?? []))
+      .then((r) => setSessions([...(r.sessions ?? [])].sort((a, b) => a.connected_at.localeCompare(b.connected_at) || a.id.localeCompare(b.id))))
       .catch(() => {
         // The shell's own lamp reports a daemon that is not answering.
       })
   }, [])
 
-  useEffect(() => {
-    refresh()
-    return subscribeToEvents((event) => {
-      if (event.kind === 'session') refresh()
-    })
-  }, [refresh])
+  const live = useLiveStatus().status === 'live'
+  useEffect(refresh, [refresh, live])
+  useEvents((event) => {
+    if (event.kind === 'session') refresh()
+  })
 
   const n = sessions.length
   const label = n === 0 ? 'No agents' : n === 1 ? '1 agent' : `${n} agents`
@@ -43,16 +47,32 @@ export function AgentsIndicator() {
           <SheetTitle>Agents</SheetTitle>
           <SheetDescription>Connected to keeper right now.</SheetDescription>
         </SheetHeader>
-        <div className="flex flex-col gap-4 px-4">
+        <div className="flex flex-col gap-4 overflow-auto px-4">
           {n === 0 ? (
             <p className="text-sm text-muted-foreground">No agent is connected.</p>
           ) : (
-            sessions.map((s) => (
-              <div key={s.id} className="flex flex-col gap-1">
-                <span className="text-sm">{s.client.name}</span>
-                <span className="text-meta text-muted-foreground">{s.client.workspace ?? 'unknown workspace'}</span>
-              </div>
-            ))
+            <PagedTable
+              paging={paging}
+              items={sessions}
+              unit="agents"
+              label="Agents"
+              head={
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Agent</TableHead>
+                    <TableHead>Workspace</TableHead>
+                  </TableRow>
+                </TableHeader>
+              }
+              row={(s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="text-sm">{s.client.name}</TableCell>
+                  <TableCell className="text-meta whitespace-normal break-all text-muted-foreground">
+                    {s.client.workspace ?? 'unknown workspace'}
+                  </TableCell>
+                </TableRow>
+              )}
+            />
           )}
         </div>
       </SheetContent>
