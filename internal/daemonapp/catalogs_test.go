@@ -3,7 +3,9 @@ package daemonapp
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,5 +92,65 @@ func TestCatalogStoreOpensOnFirstUse(t *testing.T) {
 	}
 	if c.cached("fresh") == nil {
 		t.Fatal("the store call did not leave the catalog open")
+	}
+}
+
+type pathlessConnections struct{}
+
+func (pathlessConnections) Connection(_ context.Context, id string) (*types.Connection, error) {
+	return &types.Connection{ID: id}, nil
+}
+
+func TestMask_MASK_C20_ProfilesWithNoPathKeepSeparateCatalogs(t *testing.T) {
+	rel := func(_ context.Context, _ string) ([]ports.Relation, error) {
+		return []ports.Relation{{
+			Ref: types.RelationRef{Schema: "public", Relation: "t"}, OID: 7, Kind: 'r',
+			Columns: []ports.Column{{Name: "notes", AttNum: 1, TypeOID: 25}},
+		}}, nil
+	}
+	c := newTestCatalogs(t, rel)
+	c.vault = pathlessConnections{}
+	store := openingStore{c}
+	allow := map[string]types.ColumnPolicy{"public.t.notes": {Policy: types.PolicyAllow}}
+	if err := store.Put(t.Context(), "a", allow); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.Entries(t.Context(), "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := entries["public.t.notes"].Policy; got != types.PolicyRedact {
+		t.Errorf("profile b sees %q for a column only profile a edited, want its own redact", got)
+	}
+	if _, err := os.Stat(filepath.Join(c.dir, "catalogs", "a", "catalog.yaml")); err != nil {
+		t.Errorf("profile a has no file of its own in the state directory: %v", err)
+	}
+}
+
+func TestMask_MASK_C21_AnUnreadableExplicitPathIsAKeeperErrorAndNoColumnIsAllowed(t *testing.T) {
+	rel := func(_ context.Context, _ string) ([]ports.Relation, error) { return nil, nil }
+	c := newTestCatalogs(t, rel)
+	dir := filepath.Join(c.dir, "explicit")
+	if err := os.MkdirAll(filepath.Join(dir, "catalog.yaml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c.vault = fakeConnections{dir: c.dir}
+	_, err := c.For("explicit")
+	ke, ok := errors.AsType[*types.Error](err)
+	if !ok || ke.Code != types.CodeInternal || !strings.Contains(ke.Summary, "catalog file") {
+		t.Fatalf("got %v, want a keeper error naming the unreadable catalog file", err)
+	}
+	if _, ok := c.Lookup("explicit", 7, 1); ok {
+		t.Error("a column was classified although the catalog could not be read")
+	}
+}
+
+func TestMask_AnUnreachableDatabaseKeepsItsCode(t *testing.T) {
+	c := newTestCatalogs(t, func(_ context.Context, _ string) ([]ports.Relation, error) {
+		return nil, &types.Error{Code: types.CodeUnreachable}
+	})
+	_, err := c.For("db")
+	if ke, ok := errors.AsType[*types.Error](err); !ok || ke.Code != types.CodeUnreachable {
+		t.Fatalf("got %v, want the unreachable code", err)
 	}
 }

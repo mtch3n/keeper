@@ -57,9 +57,16 @@ func (s *Store) Open(ctx context.Context, connID string, paths Paths) (*Catalog,
 		return nil, err
 	}
 	if s.deps.Introspector != nil {
-		if err := s.recatalogIdentity(ctx, c); err != nil {
+		relations, err := s.deps.Introspector.Introspect(ctx, connID)
+		if err == nil {
+			err = c.resolve(ctx, relations)
+		}
+		if err == nil {
+			err = c.classify(relations)
+		}
+		if err != nil {
 			c.close()
-			return nil, err
+			return nil, fmt.Errorf("catalog: opening %s: %w", connID, err)
 		}
 	}
 

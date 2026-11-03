@@ -22,20 +22,16 @@ func TestEntriesReturnsDottedMergedKeys(t *testing.T) {
 }
 
 func TestUnclassifiedListsUncataloguedColumns(t *testing.T) {
-	introspector := &fakeIntrospector{relations: []ports.Relation{
-		{
-			Ref:  types.RelationRef{Schema: "public", Relation: "users"},
-			OID:  100,
-			Kind: 'r',
-			Columns: []ports.Column{
-				{Name: "id", AttNum: 1, TypeOID: 23},
-				{Name: "email", AttNum: 2, TypeOID: 25},
-			},
-		},
-	}}
-	s, _ := openTestStore(t, Dependencies{Introspector: introspector}, map[columnKey]types.ColumnPolicy{
-		{Schema: "public", Table: "users", Column: "id"}: {Policy: types.PolicyAllow},
-	})
+	users := ports.Relation{
+		Ref:     types.RelationRef{Schema: "public", Relation: "users"},
+		OID:     100,
+		Kind:    'r',
+		Columns: []ports.Column{{Name: "id", AttNum: 1, TypeOID: 23}},
+	}
+	introspector := &fakeIntrospector{relations: []ports.Relation{users}}
+	s, _ := openTestStore(t, Dependencies{Introspector: introspector}, nil)
+	users.Columns = append(users.Columns, ports.Column{Name: "email", AttNum: 2, TypeOID: 25})
+	introspector.relations = []ports.Relation{users}
 
 	got, err := s.Unclassified(t.Context(), "conn1")
 	if err != nil {

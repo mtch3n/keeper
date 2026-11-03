@@ -70,9 +70,12 @@ type QueryResult struct {
 	// TruncatedBy says which limit: the row ceiling or the size cap.
 	TruncatedBy Cut                  `json:"truncated_by,omitzero"`
 	Transforms  map[string]Transform `json:"transforms"`
-	Tier        Tier                 `json:"tier"`
-	AuditID     string               `json:"audit_id"`
-	Mode        Mode                 `json:"mode"`
+	// Hint names the command that changes what keeper classified by itself.
+	// It is set after the statement is audited and is not part of the audit record.
+	Hint    string `json:"hint,omitzero"`
+	Tier    Tier   `json:"tier"`
+	AuditID string `json:"audit_id"`
+	Mode    Mode   `json:"mode"`
 	// Authorization names what let this run: "tier0", "grant:<id>", "ticket:<id>",
 	// SPEC §9.4 requires the basis to be reported.
 	Authorization string        `json:"authorization,omitzero"`

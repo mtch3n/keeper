@@ -2,6 +2,7 @@ package daemonapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -109,7 +110,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger) (daemon.Deps, *lateAuth
 		Redactor:     red,
 		Audit:        alog,
 		Detector:     patterns,
-		Pipeline:     &pipelineAdapter{p: pipe},
+		Pipeline:     &pipelineAdapter{p: pipe, catalogs: cats},
 	}
 
 	cleanup := func() {
@@ -230,15 +231,48 @@ func (c *catalogs) openOne(connID string) (*catalog.Catalog, error) {
 		return nil, fmt.Errorf("catalog: no connection %q", connID)
 	}
 
-	committed := conn.CatalogPath
-	if committed == "" {
-		committed = filepath.Join(".keeper", "catalog.yaml")
-	}
-	return c.store.Open(ctx, connID, catalog.Paths{
-		Committed: committed,
-		Overlay:   filepath.Join(filepath.Dir(committed), "catalog.local.yaml"),
+	paths := catalog.Paths{
+		Committed: conn.CatalogPath,
 		Cache:     filepath.Join(c.dir, "catalog-"+safeFileName(connID)+".db"),
-	})
+	}
+	if paths.Committed == "" {
+		paths.Committed = filepath.Join(c.dir, "catalogs", safeFileName(connID), "catalog.yaml")
+	}
+	paths.Overlay = filepath.Join(filepath.Dir(paths.Committed), "catalog.local.yaml")
+	cat, err := c.store.Open(ctx, connID, paths)
+	if err != nil {
+		return nil, openError(err)
+	}
+	return cat, nil
+}
+
+// openError says what failed to open in the one error shape that reaches an
+// agent. An unreachable database keeps its own code; a catalog file that cannot
+// be read stops every statement, because no column may be treated as allowed.
+func openError(err error) error {
+	if ke, ok := errors.AsType[*types.Error](err); ok {
+		return ke
+	}
+	return &types.Error{
+		Code:    types.CodeInternal,
+		Summary: "keeper cannot read this connection's catalog file, so it treats no column as allowed",
+		Action:  "fix the file or its permissions, or register the connection without an explicit catalog path",
+	}
+}
+
+// hint tells an agent where to change what keeper classified by itself. It is
+// set on the result after the pipeline has audited the statement, so it never
+// reaches the audit log.
+func (c *catalogs) hint(ctx context.Context, connID string, cols []types.ColumnMeta) string {
+	cat := c.cached(connID)
+	if cat == nil || !cat.AutoMasked(cols) {
+		return ""
+	}
+	conn, err := c.vault.Connection(ctx, connID)
+	if err != nil || conn == nil {
+		return ""
+	}
+	return "keeper masked some columns by its own classification; to change it, run: keeper catalog edit " + conn.Name
 }
 
 // openingStore is the CatalogStore the daemon is given. catalog.Store answers
@@ -373,7 +407,8 @@ func (l *lateAuthority) Grant(ctx context.Context, sessionID string, path types.
 // needs to enqueue before it executes. Nothing is reinterpreted here — the
 // adapter only unpacks the Decision.
 type pipelineAdapter struct {
-	p *pipeline.Pipeline
+	p        *pipeline.Pipeline
+	catalogs *catalogs
 }
 
 func (a *pipelineAdapter) request(sess types.Session, connID, sql string, params []ports.Param) pipeline.Request {
@@ -401,7 +436,11 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 	if err != nil {
 		return nil, nil, err
 	}
-	return queryOutcome(dec)
+	res, tk, err := queryOutcome(dec)
+	if res != nil {
+		res.Hint = a.catalogs.hint(ctx, connID, res.Columns)
+	}
+	return res, tk, err
 }
 
 // queryOutcome unpacks a Decision into what the daemon acts on. An escalation

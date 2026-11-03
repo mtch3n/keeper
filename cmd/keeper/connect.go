@@ -22,6 +22,7 @@ import (
 func runConnect(args []string) error {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
 	name := fs.String("name", "", "profile name (default <database>_<user>)")
+	catalog := fs.String("catalog", "", "a shared project catalog file (default: this profile's own, in keeper's state directory)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -39,6 +40,7 @@ func runConnect(args []string) error {
 	if *name != "" {
 		target.profile = *name
 	}
+	target.catalogPath = *catalog
 
 	ctx := context.Background()
 	cli, err := connectDaemon(ctx)
@@ -50,8 +52,8 @@ func runConnect(args []string) error {
 }
 
 type connTarget struct {
-	address, sslmode, database, user, password, profile string
-	port                                                int
+	address, sslmode, database, user, password, profile, catalogPath string
+	port                                                             int
 }
 
 func parseConnString(raw string) (connTarget, error) {
@@ -138,7 +140,8 @@ func connectProfile(ctx context.Context, cli *client.Client, t connTarget) error
 
 	conn, err := cli.RegisterConnection(ctx, client.RegisterConnectionParams{
 		Name: t.profile, HostID: hostID, Database: t.database, Writes: types.WritesOff,
-		Credential: client.Credential{User: t.user, Password: t.password},
+		Credential:  client.Credential{User: t.user, Password: t.password},
+		CatalogPath: t.catalogPath,
 	})
 	if err != nil {
 		undoHost()
