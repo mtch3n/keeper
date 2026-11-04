@@ -13,7 +13,7 @@ import { Fact, Facts } from '@/components/wrappers/Facts'
 import { PagedTable } from '@/components/wrappers/PagedTable'
 import { getActivityRecord, listActivity, listConnections } from '@/lib/api'
 import { usePaging } from '@/lib/paging'
-import { age, durationMs, relationList, renderSQL } from '@/lib/render'
+import { age, durationMs, outcomeText, relationList, renderSQL, rowsText } from '@/lib/render'
 import { cn } from '@/lib/utils'
 import type { ActivityDetail, AuditRecord, ColumnMeta, ConnectionSummary, QueryResult, Transform } from '@/lib/types'
 
@@ -103,8 +103,9 @@ export function ActivityPage() {
       {/* A human arriving after a long agent run wants one session's trail.
           Scrolling a merged log to find it is the difference between a screen
           that gets used and one that does not. */}
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="grid grid-cols-2 items-end gap-3 sm:flex sm:flex-wrap">
         <Filter
+          className="col-span-2 sm:col-auto"
           label="Agent"
           value={filters.session}
           onChange={(v) => filter({ session: v })}
@@ -122,12 +123,14 @@ export function ActivityPage() {
           onChange={(v) => filter({ decision: v })}
           options={['approved', 'refused', 'expired', 'cancelled'].map((d) => ({ value: d, label: d }))}
         />
-        <Button variant="outline" onClick={() => filter(NO_FILTER)}>
-          Clear
-        </Button>
-        <Button variant="outline" onClick={() => void refresh()}>
-          Refresh
-        </Button>
+        <div className="col-span-2 flex gap-3 sm:col-auto">
+          <Button variant="outline" onClick={() => filter(NO_FILTER)}>
+            Clear
+          </Button>
+          <Button variant="outline" onClick={() => void refresh()}>
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {error ? <p className="text-sm text-blocked">{error}</p> : null}
@@ -153,11 +156,11 @@ export function ActivityPage() {
               <TableRow>
                 <TableHead className="w-8" />
                 <TableHead>When</TableHead>
-                <TableHead>Agent</TableHead>
+                <TableHead className="hidden lg:table-cell">Agent</TableHead>
                 <TableHead>Connection</TableHead>
                 <TableHead>Decision</TableHead>
-                <TableHead className="text-right">Rows</TableHead>
-                <TableHead>Policies applied</TableHead>
+                <TableHead className="hidden text-right lg:table-cell">Rows</TableHead>
+                <TableHead className="hidden lg:table-cell">Policies applied</TableHead>
                 <TableHead>Statement</TableHead>
               </TableRow>
             </TableHeader>
@@ -172,21 +175,23 @@ export function ActivityPage() {
                     />
                   </TableCell>
                   <TableCell className="text-meta">{age(r.at)} ago</TableCell>
-                  <TableCell className="text-meta">{r.client.name}</TableCell>
+                  <TableCell className="hidden text-meta lg:table-cell">{r.client.name}</TableCell>
                   <TableCell className="text-meta">
                     {connections.find((c) => c.id === r.connection)?.name ??
                       (connections.length > 0 ? 'removed connection' : r.connection)}
                   </TableCell>
-                  <TableCell className="text-meta">
-                    {r.decision ? `${r.decision}${r.approver ? ` by ${r.approver}` : ''}` : '—'}
-                  </TableCell>
-                  <TableCell className="text-right text-meta">{r.row_count}</TableCell>
-                  <TableCell className="text-meta">{summarize(r.transforms)}</TableCell>
-                  <TableCell className="max-w-md truncate text-meta">{renderSQL(r.statement)}</TableCell>
+                  <TableCell className="text-meta whitespace-normal">{outcomeText(r)}</TableCell>
+                  <TableCell className="hidden text-right text-meta lg:table-cell">{rowsText(r)}</TableCell>
+                  <TableCell className="hidden text-meta lg:table-cell">{summarize(r.transforms)}</TableCell>
+                  <TableCell className="max-w-20 truncate text-meta sm:max-w-xs lg:max-w-md">{renderSQL(r.statement)}</TableCell>
                 </TableRow>
                 {open === r.id ? (
-                  <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={8} className="p-0 whitespace-normal">
+                  <TableRow
+                    key={details[r.id] ? 'loaded' : 'loading'}
+                    ref={(el) => el?.scrollIntoView?.({ block: 'nearest' })}
+                    className="hover:bg-transparent"
+                  >
+                    <TableCell colSpan={8} className="max-w-0 p-0 whitespace-normal">
                       {details[r.id] ? (
                         <RecordDetail record={details[r.id]} />
                       ) : (
@@ -211,17 +216,19 @@ function Filter({
   value,
   onChange,
   options,
+  className,
 }: {
+  className?: string
   label: string
   value: string
   onChange: (v: string) => void
   options: { value: string; label: string }[]
 }) {
   return (
-    <label className="flex flex-col gap-1">
+    <label className={cn('flex min-w-0 flex-col gap-1', className)}>
       <span className="text-label text-muted-foreground">{label.toLowerCase()}</span>
       <Select value={value} onValueChange={(v) => onChange(v ?? ALL)}>
-        <SelectTrigger aria-label={label} className="w-48">
+        <SelectTrigger aria-label={label} className="w-full sm:w-48">
           <SelectValue>{(v: string) => (v === ALL ? 'all' : (options.find((o) => o.value === v)?.label ?? v))}</SelectValue>
         </SelectTrigger>
         <SelectContent>
@@ -239,7 +246,7 @@ function Filter({
 
 function RecordDetail({ record }: { record: ActivityDetail }) {
   return (
-    <div className="flex flex-col gap-4 bg-muted/30 p-6">
+    <div className="flex min-w-0 flex-col gap-4 bg-muted/30 p-4 sm:p-6">
       <Facts>
         <Fact label="audit id">
           <span className="text-meta">{record.id}</span>
@@ -248,6 +255,7 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
           {record.client.name} · {record.client.workspace ?? 'unknown workspace'}
         </Fact>
         <Fact label="relations">{relationList(record.relations)}</Fact>
+        <Fact label="rows">{rowsText(record)}</Fact>
         <Fact label="duration">{durationMs(record.duration)}</Fact>
         {record.approver ? <Fact label="approver">{record.approver}</Fact> : null}
         {record.error_code ? <Fact label="error">{record.error_code}</Fact> : null}

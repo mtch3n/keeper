@@ -72,7 +72,7 @@ export function HostDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button variant="outline" />}>Add a host</DialogTrigger>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="flex max-h-dialog flex-col overflow-hidden sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add a host</DialogTitle>
           <DialogDescription>
@@ -80,6 +80,7 @@ export function HostDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="host-name">Name</FieldLabel>
@@ -115,6 +116,7 @@ export function HostDialog({
             <FieldDescription>Follows the address until you choose: prefer on this machine, require elsewhere.</FieldDescription>
           </Field>
         </FieldGroup>
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>

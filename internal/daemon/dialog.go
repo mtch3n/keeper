@@ -49,7 +49,10 @@ func dialogMessage(item types.ApprovalItem, profile, link string) string {
 	default:
 		rows = fmt.Sprintf("about %d rows", f.EstimatedRows)
 	}
-	what, _ := capLine(strings.TrimSpace(kind + " " + strings.Join(names, ", ") + ": " + rows))
+	if len(names) > 0 {
+		kind += " " + strings.Join(names, ", ")
+	}
+	what, _ := capLine(kind + ": " + rows)
 
 	head := "profile: " + profile
 	if len(f.Reasons) > 0 {

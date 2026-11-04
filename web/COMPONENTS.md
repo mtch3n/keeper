@@ -67,12 +67,15 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Brand | `KeeperMark`, `Link` | The mark and the name, linking home, at the start of the top bar |
 | KeeperMark | none (the brand path) | keeper's mark, drawn in `currentColor` so it stays achromatic like every other glyph in the chrome |
 | Lamp | none (registry search below) | The four-state vocabulary: idle, waiting, blocked, live |
+| Breakable | none (registry search below) | A name that wraps only after `.` or `_`, through `<wbr>`, so a table cell holding `public.customers.street` never breaks mid-word |
 | Cell | `ScannedText` | The redacted-cell treatments, plus the plain value case. Each shows what the agent received: `⟨redacted⟩` in the muted text colour, a token as the token, scan text with its `⟨redacted:type⟩` spans marked. No block glyph is drawn. The Activity record shows each column's policy beside its header, and a `redact` column's header links to the Catalog filtered to that column |
 | ScannedText | none (registry search below) | Renders a `scan` result's inline `⟨redacted:type⟩` spans inside otherwise-readable text |
 
 ## Custom component proof
 
 Policy 3 requires the registry search and the reason, recorded before the component exists.
+
+**Breakable.** `pnpm dlx shadcn@latest search @shadcn -q "wrap break text"` returned no item that places line-break opportunities inside a string. Composition cannot produce it: CSS `break-all` and `overflow-wrap` break at any character, and `<wbr>` must sit between the segments of the name itself. It owns that split and nothing else.
 
 **Lamp.** `pnpm dlx shadcn@latest search @shadcn -q "indicator status dot"` returned
 *No items found*; `-q "badge"` returned only `@shadcn/badge`, a text chip with padding

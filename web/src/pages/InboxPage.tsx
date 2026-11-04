@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronRightIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -15,7 +15,7 @@ import { decideApproval, listConnections, listHosts, type PendingRequest } from 
 import { useInbox } from '@/lib/inbox'
 import { usePaging } from '@/lib/paging'
 import { cn } from '@/lib/utils'
-import { age, reasonText, until, relationList, renderSQL, suspectHomoglyph } from '@/lib/render'
+import { age, onRelations, plural, reasonText, until, renderSQL, suspectHomoglyph } from '@/lib/render'
 import type { ApprovalItem, ConnectionSummary, HostView, Risk, WriteChanges } from '@/lib/types'
 
 /**
@@ -117,12 +117,12 @@ export function InboxPage() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-8" />
-              <TableHead>Risk</TableHead>
+              <TableHead className="hidden lg:table-cell">Risk</TableHead>
               <TableHead>Agent</TableHead>
-              <TableHead>Profile</TableHead>
-              <TableHead>Why it waits</TableHead>
-              <TableHead>Statement</TableHead>
-              <TableHead>Waited</TableHead>
+              <TableHead className="hidden lg:table-cell">Profile</TableHead>
+              <TableHead className="hidden lg:table-cell">Why it waits</TableHead>
+              <TableHead className="hidden lg:table-cell">Statement</TableHead>
+              <TableHead className="hidden lg:table-cell">Waited</TableHead>
               <TableHead>
                 <span className="sr-only">Actions</span>
               </TableHead>
@@ -192,17 +192,25 @@ function ApprovalRow({
             className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-90')}
           />
         </TableCell>
-        <TableCell>
+        <TableCell className="hidden lg:table-cell">
           <Badge variant={RISK_BADGE[risk]}>{risk}</Badge>
         </TableCell>
-        <TableCell className="text-sm">{item.session.client.name}</TableCell>
-        <TableCell className="text-meta">{profile.name}</TableCell>
-        <TableCell className="max-w-xs truncate text-sm">{reasonSummary(item.facts.reasons)}</TableCell>
-        <TableCell className="max-w-xs truncate text-meta">{renderSQL(item.sql)}</TableCell>
-        <TableCell className="text-meta">{age(item.created_at)}</TableCell>
+        <TableCell className="text-sm">
+          <div className="flex items-center gap-2">
+            <Badge variant={RISK_BADGE[risk]} className="lg:hidden">
+              {risk}
+            </Badge>
+            {item.session.client.name}
+          </div>
+          <div className="max-w-44 truncate text-meta text-muted-foreground lg:hidden">{renderSQL(item.sql)}</div>
+        </TableCell>
+        <TableCell className="hidden text-meta lg:table-cell">{profile.name}</TableCell>
+        <TableCell className="hidden max-w-xs truncate text-sm lg:table-cell">{reasonSummary(item.facts.reasons)}</TableCell>
+        <TableCell className="hidden max-w-xs truncate text-meta lg:table-cell">{renderSQL(item.sql)}</TableCell>
+        <TableCell className="hidden text-meta lg:table-cell">{age(item.created_at)}</TableCell>
         <TableCell onClick={(e) => e.stopPropagation()}>
           {open ? null : readOnly ? (
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 lg:flex-row">
               <Button size="sm" disabled={busy} onClick={() => onDecide('approve')}>
                 Approve
               </Button>
@@ -219,7 +227,7 @@ function ApprovalRow({
       </TableRow>
       {open ? (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={8} className="p-4 whitespace-normal">
+          <TableCell colSpan={8} className="max-w-0 p-2 whitespace-normal sm:p-4">
             <ApprovalCard item={item} profile={profile} busy={busy} onDecide={onDecide} />
           </TableCell>
         </TableRow>
@@ -234,14 +242,24 @@ function RequestRow({ request, profile }: { request: PendingRequest; profile: Pr
   return (
     <TableRow>
       <TableCell />
-      <TableCell>
+      <TableCell className="hidden lg:table-cell">
         <Badge variant="outline">input</Badge>
       </TableCell>
-      <TableCell className="text-sm">—</TableCell>
-      <TableCell className="text-meta">{profile.name}</TableCell>
-      <TableCell className="max-w-xs truncate text-sm">{request.purpose || 'Asks you to type a value'}</TableCell>
-      <TableCell className="text-meta">—</TableCell>
-      <TableCell className="text-meta">expires in {until(request.expires_at)}</TableCell>
+      <TableCell className="text-sm">
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="lg:hidden">
+            input
+          </Badge>
+          —
+        </div>
+        <div className="max-w-40 truncate text-meta text-muted-foreground lg:hidden">
+          {request.purpose || 'Asks you to type a value'}
+        </div>
+      </TableCell>
+      <TableCell className="hidden text-meta lg:table-cell">{profile.name}</TableCell>
+      <TableCell className="hidden max-w-xs truncate text-sm lg:table-cell">{request.purpose || 'Asks you to type a value'}</TableCell>
+      <TableCell className="hidden text-meta lg:table-cell">—</TableCell>
+      <TableCell className="hidden text-meta lg:table-cell">expires in {until(request.expires_at)}</TableCell>
       <TableCell>
         <Link to={path} className="text-sm underline underline-offset-4">
           Open
@@ -290,7 +308,7 @@ export function ApprovalCard({
   const who = item.session.client.name
 
   return (
-    <article aria-label={`${who} — ${f.statement_type || 'unknown statement'}`} className="flex flex-col gap-4 border border-border p-6">
+    <article aria-label={`${who} — ${f.statement_type || 'unknown statement'}`} className="flex min-w-0 flex-col gap-4 border border-border p-4 sm:p-6">
       <div className="flex flex-wrap items-center gap-3">
         <Lamp state="waiting" label="waiting for you" />
         <Badge variant={RISK_BADGE[risk]}>{risk}</Badge>
@@ -310,11 +328,11 @@ export function ApprovalCard({
         ) : null}
         {item.write ? (
           <Fact label="impact">
-            {item.write.operation} on {relationList(targets)} · {item.write.row_count} rows affected, as of the preview
+            {onRelations(item.write.operation, targets)} · {plural(item.write.row_count, 'row')} affected, as of the preview
           </Fact>
         ) : (
           <Fact label="impact">
-            {f.statement_type || 'unknown'} on {relationList(targets)} · about {f.estimated_rows} rows
+            {onRelations(f.statement_type || 'unknown', targets)} · about {plural(f.estimated_rows, 'row')}
           </Fact>
         )}
         {f.columns?.length ? <Fact label="columns">{f.columns.join(', ')}</Fact> : null}
@@ -339,13 +357,13 @@ export function ApprovalCard({
       </Facts>
       {item.write?.changes ? <ChangedRows changes={item.write.changes} /> : null}
       <Separator />
-      <pre className="overflow-x-auto text-meta whitespace-pre-wrap">{renderSQL(item.sql)}</pre>
+      <pre className="overflow-x-auto text-meta whitespace-pre-wrap [overflow-wrap:anywhere]">{renderSQL(item.sql)}</pre>
       {item.write ? (
         <p className="text-sm">
           Approving changes stored data. It cannot be undone from here.
         </p>
       ) : null}
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
         <Button disabled={busy} onClick={() => onDecide('approve')}>
           Approve
         </Button>
@@ -363,36 +381,49 @@ export function ApprovalCard({
  * through, beside what it becomes; the agent never receives either.
  */
 function ChangedRows({ changes }: { changes: WriteChanges }) {
+  const region = useRef<HTMLDivElement>(null)
+  const [scrolls, setScrolls] = useState(false)
+  useEffect(() => {
+    const el = region.current?.firstElementChild
+    if (!el) return
+    const measure = () => setScrolls(el.scrollWidth > el.clientWidth)
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [changes])
   return (
-    <div className="flex flex-col gap-2">
-      <Table aria-label="Changed rows">
-        <TableHeader>
-          <TableRow>
-            {changes.columns.map((c, i) => (
-              <TableHead key={i}>{c}</TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {changes.rows.map((row, r) => (
-            <TableRow key={r}>
-              {changes.columns.map((_, i) => {
-                const before = row.old?.[i]
-                const after = row.new?.[i]
-                return (
-                  <TableCell key={i} className="text-meta">
-                    {before !== undefined && before !== after ? (
-                      <span className="text-muted-foreground line-through">{before}</span>
-                    ) : null}
-                    {before !== undefined && after !== undefined && before !== after ? ' ' : null}
-                    {after !== undefined ? <span>{after}</span> : null}
-                  </TableCell>
-                )
-              })}
+    <div className="flex min-w-0 flex-col gap-2">
+      <div ref={region} className="min-w-0 border border-border">
+        <Table aria-label="Changed rows">
+          <TableHeader>
+            <TableRow>
+              {changes.columns.map((c, i) => (
+                <TableHead key={i}>{c}</TableHead>
+              ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {changes.rows.map((row, r) => (
+              <TableRow key={r}>
+                {changes.columns.map((_, i) => {
+                  const before = row.old?.[i]
+                  const after = row.new?.[i]
+                  return (
+                    <TableCell key={i} className="text-meta">
+                      {before !== undefined && before !== after ? (
+                        <span className="text-muted-foreground line-through">{before}</span>
+                      ) : null}
+                      {before !== undefined && after !== undefined && before !== after ? ' ' : null}
+                      {after !== undefined ? <span>{after}</span> : null}
+                    </TableCell>
+                  )
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      {scrolls ? <p className="text-meta text-waiting">More columns lie to the right. Scroll this table sideways.</p> : null}
       <p className="text-meta text-muted-foreground">
         {changes.omitted ? `${changes.omitted} more rows are not shown. ` : ''}
         Shown to you only. Not logged or sent to the agent.

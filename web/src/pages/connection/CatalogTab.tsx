@@ -13,6 +13,7 @@ import {
   updateCatalogColumns,
   type InitProposal,
 } from '@/lib/api'
+import { Breakable } from '@/components/wrappers/Breakable'
 import { PagedTable } from '@/components/wrappers/PagedTable'
 import { usePaging } from '@/lib/paging'
 import type { ColumnPolicy, Policy } from '@/lib/types'
@@ -171,10 +172,12 @@ function CatalogRow({
 
   return (
     <TableRow>
-      <TableCell className="text-meta whitespace-normal break-all">{columnKey}</TableCell>
+      <TableCell className="min-w-28 text-meta whitespace-normal">
+        <Breakable text={columnKey} />
+      </TableCell>
       <TableCell>
         <Select value={policy?.policy ?? ''} onValueChange={(v) => choose(v as Policy)} disabled={busy}>
-          <SelectTrigger className="w-28" aria-label={`Policy for ${columnKey}`}>
+          <SelectTrigger className="w-24" aria-label={`Policy for ${columnKey}`}>
             <SelectValue placeholder="unclassified" />
           </SelectTrigger>
           <SelectContent>
@@ -195,7 +198,7 @@ function CatalogRow({
               disabled={busy}
               onChange={(e) => setNamespace(e.target.value)}
               onBlur={commitNamespace}
-              className="w-28"
+              className="w-20"
             />
             {problem ? <p className="text-meta text-blocked">{problem}</p> : null}
           </div>
@@ -276,7 +279,9 @@ function Proposal({
           }
           row={([key, p]) => (
             <TableRow key={key}>
-              <TableCell className="text-meta whitespace-normal break-all">{key}</TableCell>
+              <TableCell className="min-w-28 text-meta whitespace-normal">
+                <Breakable text={key} />
+              </TableCell>
               <TableCell className="text-meta">{p.policy}</TableCell>
             </TableRow>
           )}
@@ -303,7 +308,9 @@ function Proposal({
           }
           row={([key, p]) => (
             <TableRow key={key}>
-              <TableCell className="text-meta whitespace-normal break-all">{key}</TableCell>
+              <TableCell className="min-w-28 text-meta whitespace-normal">
+                <Breakable text={key} />
+              </TableCell>
               <TableCell className="text-meta">{p.policy}</TableCell>
               <TableCell className="text-right text-meta">
                 {proposal.sample_rates?.[key] !== undefined ? `${Math.round(proposal.sample_rates[key] * 100)}%` : '—'}

@@ -143,3 +143,12 @@ func TestDisplayCopyShowsTerminalControlBytesAsText(t *testing.T) {
 		t.Error("a newline or a tab was rewritten")
 	}
 }
+
+func TestDialogOmitsTheTargetsWhenTheStatementTouchesNoTable(t *testing.T) {
+	item := dialogItem(false)
+	item.Facts.Relations = nil
+	msg := dialogMessage(item, "shop_ro", "http://127.0.0.1:1/r/t1")
+	if line := strings.Split(msg, "\n")[1]; line != "SELECT: about 7 rows" {
+		t.Errorf("the statement line is %q", line)
+	}
+}

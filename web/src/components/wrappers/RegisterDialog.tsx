@@ -12,7 +12,6 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { registerConnection } from '@/lib/api'
 import type { Host, Writes } from '@/lib/types'
@@ -100,7 +99,7 @@ export function RegisterDialog({
       {/* Wider than the registry's `sm:max-w-sm`. This form pairs user with
           password on one row, and at the default width each of those columns
           is narrower than the value it holds. */}
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="flex max-h-dialog flex-col overflow-hidden sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add a database on {host.name}</DialogTitle>
           <DialogDescription>
@@ -112,7 +111,7 @@ export function RegisterDialog({
         {/* The field list is taller than a short laptop viewport, and a dialog
             whose title and decision scroll off the top and bottom is a dialog
             you cannot act on. */}
-        <ScrollArea className="max-h-dialog-body pr-4">
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="register-name">Name</FieldLabel>
@@ -171,7 +170,7 @@ export function RegisterDialog({
             <FieldDescription>Leave empty for keeper's own file for this profile. Set a path to share one catalog file with a project.</FieldDescription>
           </Field>
         </FieldGroup>
-        </ScrollArea>
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
