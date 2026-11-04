@@ -8,6 +8,182 @@ changelog at all.
 The 0.0.1 entry below is written by hand, because a first release has no previous
 tag to generate a range from. Every entry after it is produced from the commits.
 
+
+## 0.1.0 — 2026-11-04
+
+keeper gets smaller and stricter. Permissions are two settings per profile, reads
+and writes, and the database's read-only transaction enforces them. Tiers, modes,
+grants, the denylist, the privilege audit, detection stages, persistent tokens and
+session intent are gone. A statement that needs a person now opens a dialog in the
+agent's terminal and returns its rows on the same call, and one plugin serves
+Claude Code and Codex.
+
+A computed column now follows the data that actually flows through the plan, which
+closes leaks that returned masked values as another type, such as
+`replace(ssn,'-','')::bigint`, `pg_stats` and a STABLE function. The dashboard needs
+a session that only `keeper ui` can start.
+
+**Upgrading.** There is no migration:
+
+- Existing profiles have no `reads` value, so every read asks first until you run
+  `keeper connection set <name> --reads uncertain`.
+- `writes=approve` becomes `off`. Set `--writes ask` where you want writes.
+- Removed catalog policies (`drop`, `partial`) behave as `redact`.
+- Tokens are per session: tokens saved before this release no longer resolve.
+- View columns redact until you declare them.
+- `keeper host add` and `keeper connection add` are replaced by `keeper connect`.
+
+
+### Added
+
+- **activity:** A record shows the masked result the agent received, and the log pages
+- **vault:** A host is entered once and carries any number of database credentials
+- **detect:** Detection is a chain of passes each connection chooses
+- **detect:** Detection is a pipeline of stages, with the operator's own expressions
+- **web:** Privilege findings live on each connection's Policy page
+- Keeper decides without a model; the judge and permissive mode are gone
+- **web:** One page per connection, picked from the sidebar
+- **web:** Four places and no sidebar - Connections, Inbox, Activity, Settings
+- **audit:** The activity log is encrypted with the vault's key and kept N days
+- **writes:** One credential per profile, with writes off or approved
+- **writes:** An approval shows the rows a write changes, in cleartext
+- **inbox:** A card says how dangerous a statement is and what it filters on
+- **mcp:** An agent can cancel its own pending request
+- **limits:** A result is capped by size as well as rows
+- **tokens:** An agent declares session or persistent tokens
+- **vault:** An export is sealed under a passphrase and can be imported
+- **web:** Keeper opens on Inbox, and connections live in Settings
+- **web:** A softer canvas in both themes
+- **web:** Privilege findings are grouped by kind with one script to copy
+- **web:** One save model, reasoning behind Why, and an accessibility floor
+- **api:** A stated intent is optional
+- Keeper connects to a database only when it needs one
+- Edit the detection pipeline as an ordered list
+- Keeper connect is the one setup command
+- Classify a profile's columns on first open, one catalog file per profile
+- One plugin tree for Claude Code and Codex, a self-installing launcher, hooks and a band
+- One reads and one writes setting per profile replace tiers, modes, grants and the privilege audit
+- The approval dialog in the agent's terminal answers a ticket on the same query call
+- Four column policies and one detection setting
+- The UI shows reads, writes and detection and nothing removed
+- Agent tools take a connection id or the exact profile name
+- **api:** GET /v1/activity pages by offset and returns the total
+
+### Build and CI
+
+- Pin staticcheck where it can read the toolchain, and run web tests in CI
+
+### Changed
+
+- Remove dead code left by the detection and hosts changes
+- Drop dead code and comments that describe removed features
+- Terse dashboard copy
+- Tokens are session tokens only; drop session intent and rotate-master
+
+### Documentation
+
+- The README describes keeper as it is now
+- One path from install to first token, plugin docs match the code
+- README tokens are per session, classification is by name and type
+
+### Fixed
+
+- **web:** A catalog that cannot be read no longer takes Overview down
+- Keeper says when it cannot reach a database
+- **web:** The Connections list is one table and its lamps tell the truth
+- **daemon:** Nothing connects to a database on a timer
+- Computed columns, escalations and catalog proposals, from an end-to-end evaluation
+- **daemon:** A token parameter keeps its source policy through approval
+- **redact:** A declared JSON path holds through extraction and decoding
+- **daemon:** A write previews once, not twice
+- **web:** A token column can be declared from the catalog editor
+- Keeper connect names the real failure of the login test
+- Catalog init says it only proposed and names the command that applies
+- Put the SQL in the first three lines of the approval dialog
+- Sort catalog rows by column key, unclassified first
+- A failed volatile-function lookup counts as uncertain and leaves the transaction usable
+- **cli:** Keeper connect requires TLS by default on a remote host
+- **cli:** Keeper connect reads only what was typed and never weakens a reused host's TLS
+- Audit never keeps a literal, a cancel keeps the session, a write runs once
+- **plugin:** Codex gets its own MCP and hooks files; the launcher checks keeper's version
+- **hook:** Read the shell with a parser, so a mention is not a command
+- **update,build:** Refuse a downgrade, replace a mismatched daemon, stamp builds, keep a real placeholder
+- **vault:** An export carries each state-directory catalog, so a moved vault keeps its declared columns
+- **connect:** A reused host cannot send the login with less TLS than keeper promises
+- **docs:** The user unit leaves the runtime directory writable and starts without ~/.config/keeper
+- **plugin:** The launcher runs a keeper whose version it cannot compare
+- **api:** Filter activity by decision on the server
+- **types:** Remove the scan_sample limit
+- **web:** One shared event stream, paged tables, and the review fixes
+- **mask:** Computed columns inherit from the columns that flow; close redact and fetch leaks
+- **api:** The not-built page uses no raw colour
+- **api:** The loopback listener authenticates its peer with a per-start secret
+- **web:** Rows fit a phone, Activity says what happened, copy reads correctly
+
+### Measured
+
+- The plugin releases no seeded personal data, end to end
+
+### Other
+
+- One page per connection, picked from the sidebar
+- Keeper says when it cannot reach a database
+- Four places and no sidebar
+- The activity log is encrypted and kept N days
+- One credential per profile, approved writes that show what changes
+- Session or persistent tokens, canonical and portable
+- Inbox first, connections in Settings, a softer canvas
+- A UI that tells the truth, groups what repeats and asks before it widens
+- A stated intent is optional
+- Keeper connects to a database only when it needs one
+- Nothing connects to a database on a timer
+- Fixes from the end-to-end evaluation
+- The plugin releases no seeded personal data, end to end
+- Edit the detection pipeline as an ordered list
+- Keeper connect is the one setup command
+- A new profile classifies itself and has its own catalog
+- One plugin for Claude Code and Codex, with hooks and a mod
+- One reads and one writes setting per profile
+- Session tokens only
+- The web UI shows the lean model
+- Feat/lean-core into mask-policy
+- Four column policies and one detection setting
+- Feat/lean-core into the ask dialog branch
+- Approval in the agent's terminal, with no UI open
+- One path from install to first token, and docs that match the code
+- The README says what tokens and classification actually do
+- PLG case tests carry their IDs
+- Catalog init says it only proposed
+- The approval dialog leads with the SQL
+- Profile names work as connection ids, and a failed lookup cannot abort a read
+- Keeper is lean: two permission settings, declared tokens, approval in the terminal
+- Keeper connect requires TLS by default on a remote host
+- Keeper connect uses only what was typed, and never weakens a requested sslmode
+- The plugin works in Codex, hooks read real shell, and updates cannot downgrade
+- Every list is a paged table, one event stream, and copy that matches the daemon
+- Main into fix-lifecycle
+- Audit holds no literal, a cancel keeps the session, a risky write is not previewed
+- Merge branch 'main' into fix/fix-masking
+- A computed column follows the data that actually flows
+- Main into fix/fix-loopback
+- The dashboard needs a session only keeper ui can start, and the UI server can be turned off
+- The dashboard works at phone width and Activity says what happened
+
+### Tests
+
+- PERM cases against the profile model
+- MASK-C1..C6 cases for four policies and one detection setting, and a typed catalog open failure
+- MASK-C12..C14 guard session tokens and the sealed export
+- Name PLG tests so the red recorder finds their case IDs
+- Select only policy comboboxes in catalog order test
+- Drop case IDs from tests whose cases were retired
+- ASK counters count with a trigger, since a volatile call is no longer previewed
+- **api:** A host registered with no sslmode defaults to require for a non-loopback address
+- **mask:** Every hidden-relation query must run and return masked rows
+- A seeded number must stand alone to count as a leak
+- **web:** Allow slow runs under load
+- EVAL-C1 holds under the data flow rule
+
 ## 0.0.7 — 2026-09-23
 
 Two things stop standing between an operator and a database they are trying to
