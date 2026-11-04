@@ -14,9 +14,9 @@ fail() {
 bindir="${HOME:?}/.local/bin"
 dest="$bindir/keeper"
 
-# keeper_min_version in the plugin manifest is the oldest keeper this plugin
-# works with. An older one would fail on `keeper mcp` with "unknown command".
-manifest="$(dirname "$0")/../.claude-plugin/plugin.json"
+# The oldest keeper this plugin works with. An older one would fail on
+# `keeper mcp` with "unknown command".
+min="0.1.0"
 
 # older_than A B succeeds when version A is lower than version B. Only the
 # leading digits and dots count, so a build like 0.1.0-3-gabc1234 is 0.1.0.
@@ -35,7 +35,6 @@ older_than() {
 }
 
 check_version() {
-    min="$(sed -n 's/.*"keeper_min_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" 2>/dev/null | head -n 1)"
     have="$("$1" version 2>/dev/null | awk '$1 == "client" { print $2; exit }')" || have=""
     have="${have#v}"
     case "$min" in [0-9]*) ;; *) return 0 ;; esac

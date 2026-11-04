@@ -72,16 +72,36 @@ func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
 	return out, nil
 }
 
+// effectiveReads is what the pipeline does with a stored value: an empty or
+// unknown one asks on every read, so it shows as always.
+func effectiveReads(r types.Reads) types.Reads {
+	if r.Valid() {
+		return r
+	}
+	return types.ReadsAlways
+}
+
+// effectiveWrites is what the pipeline does with a stored value: anything but
+// ask or allow, such as an old approve, refuses writes, so it shows as off.
+func effectiveWrites(w types.Writes) types.Writes {
+	if w.Valid() {
+		return w
+	}
+	return types.WritesOff
+}
+
+// updated is c as an operator sees it: a copy with the effective settings.
+func updated(c *types.Connection) *types.Connection {
+	v := *c
+	v.Reads = effectiveReads(v.Reads)
+	v.Writes = effectiveWrites(v.Writes)
+	return &v
+}
+
 // profile is c's login without its password. A host the vault cannot find
 // leaves the host fields empty rather than failing the listing.
 func (d *Daemon) profile(ctx context.Context, c *types.Connection) Profile {
-	p := Profile{Database: c.Database, Username: c.Role, Reads: c.Reads, Writes: c.Writes}
-	if !p.Reads.Valid() {
-		p.Reads = types.ReadsAlways
-	}
-	if !p.Writes.Valid() {
-		p.Writes = types.WritesOff
-	}
+	p := Profile{Database: c.Database, Username: c.Role, Reads: effectiveReads(c.Reads), Writes: effectiveWrites(c.Writes)}
 	if h, err := d.deps.Vault.Host(ctx, c.HostID); err == nil && h != nil {
 		p.Host, p.Address, p.Port = h.Name, h.Address, h.Port
 	}
@@ -351,7 +371,7 @@ func (d *Daemon) Update(ctx context.Context, id string, p Patch) (*types.Connect
 		return nil, err
 	}
 	d.hub.Publish(Event{Type: EventConnection, Data: map[string]any{"action": "updated", "connection_id": id}})
-	return c, nil
+	return updated(c), nil
 }
 
 // OpenVault resolves the master key and decrypts the vault, returning the key
