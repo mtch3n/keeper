@@ -175,3 +175,24 @@ func TestPlg_PLG_C2_PluginChangeWithoutVersionBumpFails(t *testing.T) {
 		t.Errorf("a change outside plugin: want pass, got %v", err)
 	}
 }
+
+func TestPlg_ManifestHasNoFieldsClaudeRejects(t *testing.T) {
+	m := readJSON(t, "../../plugin/.claude-plugin/plugin.json")
+	if _, ok := m["keeper_min_version"]; ok {
+		t.Error("keeper_min_version is not a manifest field: claude plugin validate warns; the launcher holds the minimum")
+	}
+}
+
+func TestPlg_LauncherRefusesAnOldKeeper(t *testing.T) {
+	bin := t.TempDir()
+	fake := "#!/bin/sh\necho 'client 0.0.1'\n"
+	if err := os.WriteFile(filepath.Join(bin, "keeper"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "../../plugin/bin/keeper-mcp-launch")
+	cmd.Env = []string{"HOME=" + t.TempDir(), "PATH=" + bin + ":/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "older than") {
+		t.Errorf("launcher ran an old keeper: err %v, output %s", err, out)
+	}
+}

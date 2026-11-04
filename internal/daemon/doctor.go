@@ -85,7 +85,11 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 	}
 	rep.Connections = make([]ConnectionHealth, len(cs))
 	for i, c := range cs {
-		rep.Connections[i] = ConnectionHealth{ID: c.ID, Name: c.Name, Reads: c.Reads, Writes: c.Writes, Limits: c.Limits}
+		rep.Connections[i] = connectionHealth(c)
 	}
 	return rep
+}
+
+func connectionHealth(c *types.Connection) ConnectionHealth {
+	return ConnectionHealth{ID: c.ID, Name: c.Name, Reads: effectiveReads(c.Reads), Writes: effectiveWrites(c.Writes), Limits: c.Limits}
 }
