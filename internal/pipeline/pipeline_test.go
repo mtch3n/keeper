@@ -716,3 +716,20 @@ func Test_WRITE_C14_ARowLargerThanTheCapLeavesNoRows(t *testing.T) {
 		t.Errorf("rows = %d, truncated %v by %q; want none, cut by size", len(dec.Result.Rows), dec.Result.Truncated, dec.Result.TruncatedBy)
 	}
 }
+
+func Test_EVAL_C1_AColumnWithNoEntryRedactsAComputedColumnThatReadsIt(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{computed("v", "text")}
+		h.exec.rows = [][]any{{"ada@example.com"}}
+		h.authority.conn.Reads = types.ReadsNever
+		h.exec.plan = readPlan(1, usersRef)
+		h.exec.plan.Flows = flowing(usersOID, 77)
+	})
+	dec := h.query(t, Request{SQL: "SELECT upper(email) FROM users"})
+	if dec.Error != nil {
+		t.Fatalf("unexpected refusal: %v", dec.Error)
+	}
+	if got := transformFor(t, dec, "v").Policy; got != types.PolicyRedact {
+		t.Errorf("policy = %q, want redact", got)
+	}
+}
