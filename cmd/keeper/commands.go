@@ -368,8 +368,8 @@ func runActivity(args []string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "WHEN\tCONNECTION\tOUTCOME\tROWS\tPOLICIES APPLIED\tSTATEMENT")
 	for _, r := range recs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
-			r.At.Format(time.RFC3339), r.Connection, outcomeOf(r), r.RowCount,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.At.Format(time.RFC3339), r.Connection, outcomeOf(r), rowsOf(r),
 			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
 	}
 	w.Flush()
@@ -384,16 +384,30 @@ func runActivity(args []string) error {
 	return nil
 }
 
-// outcomeOf is the decision or the error a record ended in. A record with
-// neither ran and returned.
+// outcomeOf says what happened to a record's statement, in the words the
+// dashboard uses: ran, asked (it escalated and has no answer yet), the decision
+// with who made it, or the error code of a failure.
 func outcomeOf(r types.AuditRecord) string {
 	switch {
 	case r.Decision != "":
+		if r.Approver != "" && r.Decision != types.DecisionExpired {
+			return string(r.Decision) + " by " + r.Approver
+		}
 		return string(r.Decision)
+	case r.ErrorCode == types.CodeApprovalRequired:
+		return "asked"
 	case r.ErrorCode != "":
 		return string(r.ErrorCode)
 	}
-	return "ok"
+	return "ran"
+}
+
+// rowsOf is the row count, or a dash for a statement that did not run.
+func rowsOf(r types.AuditRecord) string {
+	if r.ErrorCode != "" && r.Decision != types.DecisionApproved {
+		return "-"
+	}
+	return strconv.Itoa(r.RowCount)
 }
 
 // --------------------------------------------------------------- version ---

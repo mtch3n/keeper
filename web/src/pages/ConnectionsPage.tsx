@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PagedTable } from '@/components/wrappers/PagedTable'
 import { HostDialog } from '@/components/wrappers/HostDialog'
+import { Breakable } from '@/components/wrappers/Breakable'
 import { RegisterDialog } from '@/components/wrappers/RegisterDialog'
 import { listConnections, listHosts, removeHost } from '@/lib/api'
 import { usePaging } from '@/lib/paging'
@@ -105,9 +106,9 @@ export function ConnectionsPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Database</TableHead>
-                  <TableHead>User</TableHead>
+                  <TableHead className="hidden sm:table-cell">User</TableHead>
                   <TableHead>Writes</TableHead>
-                  <TableHead>Reads</TableHead>
+                  <TableHead className="hidden sm:table-cell">Reads</TableHead>
                 </TableRow>
               </TableHeader>
             }
@@ -190,15 +191,19 @@ function HostRows({
       {rows.map((c) => {
         return (
           <TableRow key={c.id} className="cursor-pointer" onClick={() => onOpen(c.id)}>
-            <TableCell className="text-meta whitespace-normal break-all">
+            <TableCell className="min-w-24 text-meta whitespace-normal">
               <Link to={`/connections/${c.id}`} onClick={(e) => e.stopPropagation()} className="hover:underline">
-                {c.name}
+                <Breakable text={c.name} />
               </Link>
             </TableCell>
-            <TableCell className="text-meta whitespace-normal break-all">{c.database}</TableCell>
-            <TableCell className="text-meta whitespace-normal break-all">{c.username}</TableCell>
+            <TableCell className="min-w-24 text-meta whitespace-normal">
+              <Breakable text={c.database} />
+            </TableCell>
+            <TableCell className="hidden min-w-24 text-meta whitespace-normal sm:table-cell">
+              <Breakable text={c.username} />
+            </TableCell>
             <TableCell className="text-meta">{c.writes}</TableCell>
-            <TableCell className="text-meta">{c.reads}</TableCell>
+            <TableCell className="hidden text-meta sm:table-cell">{c.reads}</TableCell>
           </TableRow>
         )
       })}

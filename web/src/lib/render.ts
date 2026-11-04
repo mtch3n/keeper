@@ -88,3 +88,41 @@ const REASONS: Record<string, string> = {
 export function reasonText(code: string): string {
   return REASONS[code] ?? code
 }
+
+/** A count with its noun, singular at one: `1 row`, `3 rows`. */
+export function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
+}
+
+/**
+ * The first half of an impact line: the statement kind, and the tables it
+ * touches only when it touches any. A statement with no table reads `SELECT`,
+ * not `SELECT on —`.
+ */
+export function onRelations(
+  kind: string,
+  rels: { schema: string; relation: string }[] | undefined,
+): string {
+  return rels?.length ? `${kind} on ${relationList(rels)}` : kind
+}
+
+/**
+ * What happened to an audit record's statement, in plain words: it ran, it
+ * escalated and was only asked about, a person or the clock settled it, or it
+ * failed with a code.
+ */
+export function outcomeText(r: {
+  decision?: string
+  approver?: string
+  error_code?: string
+}): string {
+  if (r.decision) return r.approver && r.decision !== 'expired' ? `${r.decision} by ${r.approver}` : r.decision
+  if (r.error_code === 'approval_required') return 'asked'
+  return r.error_code || 'ran'
+}
+
+/** A record's row count, or a dash when the statement did not run. */
+export function rowsText(r: { decision?: string; error_code?: string; row_count: number }): string {
+  if (r.error_code && r.decision !== 'approved') return '—'
+  return String(r.row_count)
+}
