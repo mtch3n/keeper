@@ -234,6 +234,7 @@ func newRigSettings(t *testing.T, cfg daemon.Config, settings *types.Settings) *
 		open:  map[string]func() error{},
 	}
 
+	r.vault.settings = settings
 	d, err := daemon.New(cfg, daemon.Deps{
 		Vault: r.vault,
 		Catalogs: func(id string) (ports.Catalog, error) {
@@ -258,7 +259,6 @@ func newRigSettings(t *testing.T, cfg daemon.Config, settings *types.Settings) *
 		t.Fatalf("daemon.New: %v", err)
 	}
 	r.d = d
-	r.vault.settings = settings
 	if err := d.StartUI(t.Context()); err != nil {
 		t.Fatalf("StartUI: %v", err)
 	}
