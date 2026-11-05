@@ -42,11 +42,9 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Input | `@/components/ui/input` | Single-line form control |
 | Label | `@/components/ui/label` | Control label primitive used by `Field` |
 | RadioGroup | `@/components/ui/radio-group` | A choice among a fixed, small set where each option needs a sentence of explanation beside it: reads, writes and detection. A `Select` would hide the consequences behind a click, and the consequences are the point. Square, like everything else: the registry's `rounded-full` indicator is replaced |
-| ScrollArea | `@/components/ui/scroll-area` | A fixed-height region that scrolls on its own, e.g. the Activity log. Thumb is square (registry's `rounded-full` replaced with `rounded-sm`, which resolves to 0 through the radius tokens) |
 | Pagination | `@/components/ui/pagination` | The frame of `PagedTable`'s previous and next controls. Installed with the registry's `cn` import corrected to `@/lib/utils` |
 | Select | `@/components/ui/select` | A pick from a fixed set |
 | Separator | `@/components/ui/separator` | Dividers, replacing `border-t` spacer divs |
-| Sheet | `@/components/ui/sheet` | The off-canvas panel the agents indicator opens |
 | Skeleton | `@/components/ui/skeleton` | Loading placeholders |
 | Switch | `@/components/ui/switch` | One on/off setting that takes effect when flipped: the local dashboard. A `Checkbox` reads as a form field waiting for Save |
 | Table | `@/components/ui/table` | Rows of like things with columns — `Catalog`, `Activity`, query results |
@@ -59,7 +57,7 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 
 | Component | Composes | Purpose |
 |-----------|----------|---------|
-| AppShell | `Brand`, `Lamp`, `Badge`, `AgentsIndicator`, `ThemeToggle` | The persistent chrome: one borderless bar with three places — Inbox first, then Activity and Settings — the agents indicator and the theme toggle. Settings carries its own General and Connections tabs, because connections are configuration; a connection's pages keep their `/connections` addresses and show under Settings. There is no sidebar: its agent list became the indicator, and its database list was a second route to a connection page that disagreed with the first. Inbox carries a `Badge` with the count of what waits. The daemon's `Lamp` appears only while the stream is degraded. The shell loads the Inbox once and shares it with the screen inside, so the badge and the cards come from one load. The page content is the one `main` landmark |
+| AppShell | `Brand`, `Lamp`, `Badge`, `ThemeToggle` | The persistent chrome: one borderless bar with three places — Inbox first, then Activity and Settings — and the theme toggle. Settings carries its own General and Connections tabs, because connections are configuration; a connection's pages keep their `/connections` addresses and show under Settings. There is no sidebar: its database list was a second route to a connection page that disagreed with the first. Inbox carries a `Badge` with the count of what waits. The daemon's `Lamp` appears only while the stream is degraded. The shell loads the Inbox once and shares it with the screen inside, so the badge and the cards come from one load. The page content is the one `main` landmark |
 | LiveStatusProvider | React context (`@/lib/live-status`), `shareEvents` | Opens the one `GET /v1/events` stream for the whole app and, through a Web Lock and a `BroadcastChannel`, for every tab of the browser. It carries the stream's state and a `subscribe` for events down through context; screens use `useEvents` and never open an `EventSource`, because a browser allows six connections per host and each stream held one |
 | PagedTable | `Table`, `Pagination`, `Select`, `Button` (and `usePaging` in `@/lib/paging`) | The one table every list uses, so every list pages the same way. Under the rows: the count and range (`51–100 of 312 records`), a page size of 25, 50 or 100 remembered per list, and Previous and Next, disabled at the ends. The page is in the URL as `<list>_page`, so a reload and the back button keep it; a filter change goes back to page 1; a page past the end falls back to the last. A list that fits one page keeps its count and loses the controls. Rows are paged on the client from a whole list, except Activity, which the server pages and counts. The table scrolls inside its own region at phone width. Registry search: `pnpm dlx shadcn@latest search @shadcn -q "pagination"` returned `@shadcn/pagination`, which has no page size, range or clamped page |
 | ThemeToggle | `IconButton` | Flips the `dark` class on `<html>` and persists the choice. `index.html` sets the class before first paint, so there is no flash. Light and dark are one theme, not a second design (UI.md §5) |
@@ -178,7 +176,6 @@ it is the row you have selected.
 | ApprovalRow | `PagedTable`, `Badge`, `Button`, `ApprovalCard` | One waiting statement as a row of the Inbox table, and its expansion |
 | RequestRow | `Badge`, `Link` | One input request as a row of the Inbox table, opened on its own page where the value is typed |
 | ProfileFact | `Fact` | The profile a statement runs as — connection name, host and address, username, database — so an approver knows which credential they are approving |
-| AgentsIndicator | `Sheet`, `Button`, `Lamp` | The agents connected now: a lamp and a count in the top bar, opening to each one's client and workspace |
 | ActivityPage | `Table`, `Select`, `Button`, `Empty`, `Facts`, `Cell` | The query log. Filters by agent, connection and decision (on the server, so it reaches records older than the page), because a human arriving after a long agent run wants one session's trail. Pages by a `before` cursor, newest first, so no record is out of reach behind a fixed limit. A row expands in place: a detail drawn below the table was off-screen for any row past the first few, and read as a click that did nothing |
 | RecordDetail | `Facts`, `Table`, `Cell`, `Separator` | One activity record in full: what was returned to the agent, drawn through `Cell` exactly as masked, then policies applied with their basis, degradations, and the statement as kept. The rows come from the daemon's memory, never the log, and when they are gone it says why. Never a "reveal literals" affordance — there are none stored |
 | Filter | `Select` | One labelled filter on the activity log: a list of known values, never a field to type an id into |
@@ -229,5 +226,5 @@ rather than a work state — identical to trellis's own single exception.
 - `cn` is always imported from `@/lib/utils`, never the bare `cn` package — the
   bare package does not know this project's type-scale font-size roles and drops
   them when merging classes.
-- No component sets `z-index` by hand; overlay components (`Dialog`, `Sheet`,
+- No component sets `z-index` by hand; overlay components (`Dialog`,
   `Select`) manage their own stacking.

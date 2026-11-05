@@ -389,9 +389,6 @@ type AuditLog interface {
 	ScreenText(ctx context.Context, text string) error
 	// Prune deletes every record older than the retention, in whole days.
 	Prune(ctx context.Context, retentionDays int) error
-	// LegacyPlaintext is the path of a plaintext log an earlier keeper left, or
-	// empty. It is reported so the operator can remove it, and never read.
-	LegacyPlaintext() string
 }
 
 // AuditPage is one page of the log and how many records match the filter in all.

@@ -410,8 +410,7 @@ func dsn(h *types.Host, database string, c credential) string {
 }
 
 // TokenKey returns the per-connection HMAC key for a version, and the current
-// version number. Version 0 or negative means "current". Old keys are kept so
-// historical tokens stay interpretable. SPEC R8.3a.
+// version number. Version 0 or negative means "current". SPEC R8.3a.
 func (v *Vault) TokenKey(ctx context.Context, id string, version int) ([]byte, int, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -437,36 +436,6 @@ func (v *Vault) TokenKey(ctx context.Context, id string, version int) ([]byte, i
 	key := make([]byte, len(entry.Key))
 	copy(key, entry.Key)
 	return key, current.Version, nil
-}
-
-// RotateTokenKey mints a new, current HMAC token key for a connection,
-// retaining every previous version read-only. It is not part of ports.Vault
-// (that interface has no rotation trigger yet) but is exposed for whichever
-// caller ends up owning that trigger, and to exercise the retention behaviour
-// TokenKey depends on.
-func (v *Vault) RotateTokenKey(ctx context.Context, id string) (int, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.open {
-		return 0, errNotOpen()
-	}
-	rec, ok := v.doc.find(id)
-	if !ok {
-		return 0, &NotFoundError{ID: id}
-	}
-	next := 1
-	if cur, ok := rec.currentTokenKey(); ok {
-		next = cur.Version + 1
-	}
-	key := make([]byte, tokenKeySize)
-	if _, err := rand.Read(key); err != nil {
-		return 0, fmt.Errorf("vault: generate token key: %w", err)
-	}
-	rec.TokenKeys = append(rec.TokenKeys, tokenKeyEntry{Version: next, Key: key})
-	if err := v.persist(); err != nil {
-		return 0, err
-	}
-	return next, nil
 }
 
 // Export returns the whole vault document, decrypted, as portable JSON, with

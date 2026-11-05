@@ -89,6 +89,9 @@ type Approval struct {
 	// PreviewedRows is the count R4.2d's preview reported. It is returned beside
 	// the executed count so a divergence is visible rather than silent.
 	PreviewedRows int64
+	// AuditID is the record the statement escalated under. The run reuses it,
+	// so the log holds one statement under one id.
+	AuditID string
 }
 
 // Request is one statement, with everything the pipeline cannot discover.
@@ -166,6 +169,9 @@ func (s *state) degrade(layer, why string) {
 // written, nothing is returned to the caller.
 func (p *Pipeline) Query(ctx context.Context, req Request) (*Decision, error) {
 	st := &state{auditID: newAuditID(), started: p.now(), transforms: map[string]types.Transform{}}
+	if req.Approval != nil && req.Approval.AuditID != "" {
+		st.auditID = req.Approval.AuditID
+	}
 
 	dec := p.query(ctx, req, st)
 	dec.AuditID = st.auditID

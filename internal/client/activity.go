@@ -80,8 +80,7 @@ type DoctorReport struct {
 	LogRetentionDays int                     `json:"log_retention_days"`
 	// ConnectionIdleMinutes is how long a database's connections stay open
 	// with nobody using them.
-	ConnectionIdleMinutes int    `json:"connection_idle_minutes"`
-	LegacyAuditLog        string `json:"legacy_audit_log,omitzero"`
+	ConnectionIdleMinutes int `json:"connection_idle_minutes"`
 }
 
 // ConnectionHealth is one connection's line in a doctor report: what the vault

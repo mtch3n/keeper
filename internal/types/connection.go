@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/json"
 	"net/netip"
 	"strings"
 	"time"
@@ -41,18 +40,6 @@ func (d Detection) Effective() Detection {
 		return d
 	}
 	return DetectionScan
-}
-
-// UnmarshalJSON reads a string and treats any other value, such as the stage
-// list an earlier version stored, as unset.
-func (d *Detection) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		*d = ""
-		return nil
-	}
-	*d = Detection(s)
-	return nil
 }
 
 // RelationRef names a relation. keeper stores names and resolves them to OIDs at

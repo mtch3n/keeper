@@ -41,12 +41,14 @@ type fakePipeline struct {
 	ran       chan struct{}
 	ctxErr    chan error
 	previewed []int64
+	asked     []string
 }
 
 func (p *fakePipeline) authorized(ctx context.Context) error {
 	p.mu.Lock()
 	hold, ran, ctxErr := p.hold, p.ran, p.ctxErr
 	p.previewed = append(p.previewed, daemon.PreviewedRowsFrom(ctx))
+	p.asked = append(p.asked, daemon.AskedAuditFrom(ctx))
 	p.mu.Unlock()
 	if ran != nil {
 		ran <- struct{}{}

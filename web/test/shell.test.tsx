@@ -5,7 +5,6 @@ import { describe, expect, test } from 'vitest'
 import { detail, doctorReport, fakeDaemon, renderApp, session, summary } from './daemon'
 
 const s1 = session('s1', 'claude-code', '/home/u/shop')
-const s2 = session('s2', 'codex', '/home/u/billing')
 
 function pending() {
   return {
@@ -56,23 +55,6 @@ describe('the shell', () => {
     expect((await bar()).getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe('page')
     const tabs = within(screen.getByRole('navigation', { name: 'Settings sections' }))
     expect(tabs.getByRole('link', { name: 'Connections' }).getAttribute('aria-current')).toBe('page')
-  })
-
-  test('SHELL-C2 the agents indicator counts and lists connected agents', async () => {
-    daemon({ sessions: [s1, s2] })
-    renderApp('/connections')
-    const indicator = await screen.findByRole('button', { name: /2 agents/i })
-    await userEvent.click(indicator)
-    const list = within(await screen.findByRole('dialog'))
-    expect(list.getByText('/home/u/shop')).toBeTruthy()
-    expect(list.getByText('/home/u/billing')).toBeTruthy()
-  })
-
-  test('SHELL-C3 with no agent connected the indicator says so', async () => {
-    daemon()
-    renderApp('/connections')
-    await userEvent.click(await screen.findByRole('button', { name: /no agents/i }))
-    expect(within(await screen.findByRole('dialog')).getByText(/no agent is connected/i)).toBeTruthy()
   })
 
   test('SHELL-C4 the header picker switches connection and keeps the tab', async () => {

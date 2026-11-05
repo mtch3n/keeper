@@ -191,3 +191,33 @@ func TestAVaultImportClosesEveryPoolAndCatalog(t *testing.T) {
 		t.Errorf("the import closed pools and catalogs %d times, want once", r.replaced.Load())
 	}
 }
+
+// An escalated statement is one statement in Activity. Its settlement, run or
+// refused, is recorded under the audit id it escalated under, and the log keeps
+// the later record for that id.
+func TestASettledStatementReusesTheAuditIDItEscalatedUnder(t *testing.T) {
+	t.Run("refused", func(t *testing.T) {
+		r := escalatingRig(t)
+		var tk types.Ticket
+		r.agent().mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
+		r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "refuse", "actor": "ming"}, nil)
+		recs := r.alog.decided(types.DecisionRefused)
+		if tk.AuditID == "" || len(recs) != 1 || recs[0].ID != tk.AuditID {
+			t.Errorf("refused records = %+v, want one under %q", recs, tk.AuditID)
+		}
+	})
+	t.Run("approved", func(t *testing.T) {
+		r := escalatingRig(t)
+		a := r.agent()
+		var tk types.Ticket
+		a.mustJSON("POST", "/v1/connections/c1/query", map[string]any{"sql": "SELECT id FROM users"}, &tk)
+		r.socket().mustJSON("POST", "/v1/approvals/"+tk.ID+"/decide", map[string]any{"decision": "approve", "actor": "ming"}, nil)
+		a.mustJSON("GET", "/v1/tickets/"+tk.ID+"?wait_ms=2000", nil, nil)
+		r.pipe.mu.Lock()
+		asked := append([]string(nil), r.pipe.asked...)
+		r.pipe.mu.Unlock()
+		if tk.AuditID == "" || len(asked) != 1 || asked[0] != tk.AuditID {
+			t.Errorf("the approved run was given %q, want %q", asked, tk.AuditID)
+		}
+	})
+}

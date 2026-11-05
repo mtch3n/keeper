@@ -398,7 +398,7 @@ func (a *pipelineAdapter) Query(ctx context.Context, sess types.Session, connID,
 	req := a.request(sess, connID, sql, params)
 	req.MaxRows = maxRows
 	if id, ok := strings.CutPrefix(authorization, "ticket:"); ok {
-		req.Approval = &pipeline.Approval{TicketID: id, Approver: daemon.ApproverFrom(ctx), PreviewedRows: daemon.PreviewedRowsFrom(ctx)}
+		req.Approval = &pipeline.Approval{TicketID: id, Approver: daemon.ApproverFrom(ctx), PreviewedRows: daemon.PreviewedRowsFrom(ctx), AuditID: daemon.AskedAuditFrom(ctx)}
 	}
 	dec, err := a.p.Query(ctx, req)
 	if err != nil {
