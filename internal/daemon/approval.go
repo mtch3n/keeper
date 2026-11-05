@@ -45,11 +45,13 @@ func (d *Daemon) dequeueLocked(ticketID, action string) []Event {
 	item := d.queue[i].item
 	d.queue = slices.Delete(d.queue, i, i+1)
 	state := types.TicketCancelled
+	auditID := ""
 	if tk, ok := d.tickets[ticketID]; ok {
 		state = tk.t.State
+		auditID = tk.t.AuditID
 	}
 	return []Event{{Type: EventApproval, Data: ApprovalEvent{
-		Action: action, TicketID: ticketID, State: state, Connection: item.Connection, Item: &item,
+		Action: action, TicketID: ticketID, State: state, Connection: item.Connection, Item: &item, AuditID: auditID,
 	}}}
 }
 
@@ -139,6 +141,7 @@ func (d *Daemon) startApproved(tk *ticket) {
 		auth := "ticket:" + tk.t.ID
 		ctx = context.WithValue(ctx, approverKey{}, tk.approver)
 		ctx = context.WithValue(ctx, previewedKey{}, tk.previewed)
+		ctx = context.WithValue(ctx, askedKey{}, tk.t.AuditID)
 		info := s.Info()
 
 		var res *types.QueryResult
@@ -181,6 +184,7 @@ func (d *Daemon) recordDecisions(ctx context.Context, events []Event, decision t
 		}
 		it := ev.Item
 		rec := &types.AuditRecord{
+			ID:            ev.AuditID,
 			At:            d.now(),
 			SessionID:     it.Session.ID,
 			Client:        it.Session.Client,
@@ -245,7 +249,16 @@ func (d *Daemon) AnswerTicket(ctx context.Context, s *Session, ticketID string, 
 type (
 	approverKey  struct{}
 	previewedKey struct{}
+	askedKey     struct{}
 )
+
+// AskedAuditFrom is the audit id the statement was recorded under when it
+// escalated. Its run is recorded under the same id, so Activity shows one
+// statement once.
+func AskedAuditFrom(ctx context.Context) string {
+	id, _ := ctx.Value(askedKey{}).(string)
+	return id
+}
 
 // PreviewedRowsFrom is the row count the preview of the ticket being executed
 // reported, or zero.

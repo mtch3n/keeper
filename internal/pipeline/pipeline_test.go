@@ -767,3 +767,22 @@ func Test_EVAL_C1_AColumnWithNoEntryRedactsAComputedColumnThatReadsIt(t *testing
 		t.Errorf("policy = %q, want redact", got)
 	}
 }
+
+// An approved run is recorded under the audit id its statement escalated
+// under, so the log holds one statement once.
+func TestAnApprovedRunReusesTheEscalatedAuditID(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.exec.cols = []types.ColumnMeta{computed("n", "int8")}
+		h.exec.rows = [][]any{{int64(1)}}
+		h.exec.plan = readPlan(1)
+	})
+
+	dec := h.query(t, Request{SQL: "SELECT 1", Approval: &Approval{TicketID: "tk", Approver: "ada", AuditID: "asked-1"}})
+
+	if dec.AuditID != "asked-1" {
+		t.Errorf("audit id = %q, want asked-1", dec.AuditID)
+	}
+	if len(h.audit.records) != 1 || h.audit.records[0].ID != "asked-1" {
+		t.Errorf("records = %+v, want one under asked-1", h.audit.records)
+	}
+}

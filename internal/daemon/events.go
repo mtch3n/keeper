@@ -34,6 +34,9 @@ type ApprovalEvent struct {
 	State      types.TicketState   `json:"state,omitzero"`
 	Connection string              `json:"connection,omitzero"`
 	Item       *types.ApprovalItem `json:"-"`
+	// AuditID is the record the statement escalated under; its settlement is
+	// written under the same id.
+	AuditID string `json:"-"`
 }
 
 // RequestEvent narrates a local request. It deliberately carries no request id:
