@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mtchen/keeper/internal/pgdb"
 	"github.com/mtchen/keeper/internal/ports"
@@ -102,23 +101,58 @@ func TestComputedTextOverACleanRelationIsAllowed(t *testing.T) {
 	}
 }
 
-// R7.6's third branch: a computed column with no referenced relation inherits
-// from its parameters, and is redact if that is indeterminable.
-func TestComputedColumnWithNoRelationRedactsWhenIndeterminable(t *testing.T) {
+// R7.6's last clause: constants and pg_catalog functions with no relation and
+// no token-resolved parameter carry nothing to protect. The plan guards still
+// come first.
+func TestComputedColumnWithNoRelation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		plan  func(*ports.PlanFacts) *ports.PlanFacts
+		want  types.Policy
+		basis types.Basis
+	}{
+		{"constants and catalog functions", func(p *ports.PlanFacts) *ports.PlanFacts { return p }, types.PolicyAllow, types.BasisInherited},
+		{"a volatile function", func(p *ports.PlanFacts) *ports.PlanFacts { p.Uncertain = true; return p }, types.PolicyRedact, types.BasisInherited},
+		{"a function outside pg_catalog", func(p *ports.PlanFacts) *ports.PlanFacts { p.Opaque = true; return p }, types.PolicyRedact, types.BasisInherited},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, func(h *harness) {
+				h.exec.cols = []types.ColumnMeta{computed("version", "text")}
+				h.exec.rows = [][]any{{"PostgreSQL 16"}}
+				h.authority.conn.Reads = types.ReadsNever
+				h.exec.plan = tc.plan(readPlan(1))
+			})
+
+			dec := h.query(t, Request{SQL: "SELECT version()"})
+
+			if dec.Error != nil {
+				t.Fatalf("unexpected refusal: %v", dec.Error)
+			}
+			tr := transformFor(t, dec, "version")
+			if tr.Policy != tc.want || tr.Basis != tc.basis {
+				t.Errorf("policy = %q basis = %q, want %q %q", tr.Policy, tr.Basis, tc.want, tc.basis)
+			}
+		})
+	}
+}
+
+// A computed column with no relation takes its parameter's policy, and the
+// response names the parameter as the reason.
+func TestComputedColumnWithNoRelationInheritsItsParameter(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
-		h.exec.cols = []types.ColumnMeta{computed("now", "timestamptz")}
-		h.exec.rows = [][]any{{time.Unix(0, 0)}}
+		h.exec.cols = []types.ColumnMeta{computed("n", "int8")}
+		h.exec.rows = [][]any{{int64(1)}}
 		h.exec.plan = readPlan(1)
 	})
 
-	dec := h.query(t, Request{SQL: "SELECT now()"})
+	dec := h.query(t, Request{
+		SQL:    "SELECT length($1::text)",
+		Params: []ports.Param{{Value: "Ada", Policy: types.PolicyToken}},
+	})
 
-	tr := transformFor(t, dec, "now")
-	if tr.Policy != types.PolicyRedact {
-		t.Errorf("a computed column with no relation and no parameter = %q, want redact", tr.Policy)
-	}
-	if tr.Basis != types.BasisUnknown {
-		t.Errorf("basis = %q, want unknown", tr.Basis)
+	tr := transformFor(t, dec, "n")
+	if tr.Policy != types.PolicyRedact || tr.Basis != types.BasisParameter {
+		t.Errorf("policy = %q basis = %q, want redact parameter", tr.Policy, tr.Basis)
 	}
 }
 

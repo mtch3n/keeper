@@ -92,18 +92,21 @@ func (p *Pipeline) resolveColumns(cat ports.Catalog, raw []types.ColumnMeta, pla
 // follow redacts: a relation the catalog does not know, a function whose body is
 // not in the plan, a whole-row reference.
 func (p *Pipeline) inherit(cat ports.Catalog, plan *ports.PlanFacts, req Request) (types.Policy, types.Basis) {
-	if plan == nil || (len(plan.Relations) == 0 && !plan.Opaque) {
-		// A computed column with no referenced relation inherits from its
-		// parameters (§8.4), and is redact if that is indeterminable — which,
-		// with no parameters at all, it is.
-		policies := req.paramPolicies()
-		if len(policies) == 0 {
-			return types.PolicyRedact, types.BasisUnknown
-		}
-		return types.Inherited(types.Strictest(policies...)), types.BasisParameter
+	if plan == nil {
+		return types.PolicyRedact, types.BasisUnknown
 	}
 	if plan.Opaque || plan.Uncertain {
 		return types.PolicyRedact, types.BasisInherited
+	}
+	if len(plan.Relations) == 0 {
+		// R7.6's last clause. With no relation in scope, only a token-resolved
+		// parameter can carry a protected value; constants and pg_catalog
+		// functions cannot, so SELECT 1 and SELECT version() come back allow.
+		policies := req.paramPolicies()
+		if len(policies) == 0 {
+			return types.PolicyAllow, types.BasisInherited
+		}
+		return types.Inherited(types.Strictest(policies...)), types.BasisParameter
 	}
 	for _, oid := range plan.Relations {
 		if _, ok := cat.Relation(oid); !ok {
@@ -199,7 +202,9 @@ func (p *Pipeline) applyRedaction(ctx context.Context, req Request, st *state, r
 			st.degrade("detector", "free text was not examined, so its cells were redacted whole")
 		}
 		t.Policy = c.entry.Policy
-		if t.Basis == "" {
+		// The pipeline decided the policy, so it names the basis. The redactor's
+		// own basis survives only where it reports what detection did.
+		if t.Basis != types.BasisRules && t.Basis != types.BasisUnexamined {
 			t.Basis = c.basis
 		}
 		if c.entry.Policy == types.PolicyToken && t.Namespace == "" {
