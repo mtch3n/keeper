@@ -67,7 +67,7 @@ func TestLifecycle_GetResultCarriesWhatQueryDoesAndTheRecordCountsTheRowsChanged
 			escalated++
 		}
 	}
-	if approved != 1 || escalated != 1 {
-		t.Errorf("update records: %d approved, %d escalated, want one of each (the facts lookup is not a record)", approved, escalated)
+	if approved != 1 || escalated != 0 {
+		t.Errorf("update records: %d approved, %d escalated, want one approved record: the question and the run share one id, and the facts lookup is not a record", approved, escalated)
 	}
 }
