@@ -313,7 +313,7 @@ describe('what the agent received, in the Activity record', () => {
     expect((await screen.findAllByText('⟨redacted⟩')).length).toBeGreaterThan(0)
     expect(document.body.textContent).not.toContain('█')
     expect(screen.getByText('redact')).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'secret' }).getAttribute('href')).toBe('/connections/c1/catalog?column=secret')
+    expect(screen.getByRole('link', { name: 'secret' }).getAttribute('href')).toBe('/connections/c1/catalog')
   })
 
   test('the catalog opens filtered to the column the link names', async () => {

@@ -79,6 +79,13 @@ export function ActivityPage() {
       })
       setTotal(total)
       setRecords(page)
+      // A record settled since it was opened is a new record under the same
+      // id: the detail held for the question has no result and no transforms.
+      setDetails((known) =>
+        Object.fromEntries(
+          Object.entries(known).filter(([id, d]) => page.find((r) => r.id === id)?.at === d.at),
+        ),
+      )
       setAgents((known) => {
         const next = { ...known }
         for (const r of page) next[r.session_id] ??= `${r.client.name} · ${r.client.workspace ?? 'unknown workspace'}`
@@ -94,20 +101,14 @@ export function ActivityPage() {
     void refresh()
   }, [refresh])
 
-  const toggle = async (id: string) => {
-    if (open === id) {
-      setOpen(null)
-      return
-    }
-    setOpen(id)
-    if (details[id]) return
-    try {
-      const d = await getActivityRecord(id)
-      setDetails((all) => ({ ...all, [id]: d }))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
+  const toggle = (id: string) => setOpen(open === id ? null : id)
+
+  useEffect(() => {
+    if (open === null || details[open]) return
+    getActivityRecord(open)
+      .then((d) => setDetails((all) => ({ ...all, [open]: d })))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [open, details])
 
   const { ordered, heads } = group(records ?? [])
 
@@ -200,7 +201,7 @@ export function ActivityPage() {
                     variant="ghost"
                     size="xs"
                     aria-expanded={open === r.id}
-                    onClick={() => void toggle(r.id)}
+                    onClick={() => toggle(r.id)}
                     className="w-full justify-start px-0 font-normal"
                   >
                     <ChevronRightIcon
@@ -316,18 +317,7 @@ function RecordDetail({ record, connection }: { record: ActivityDetail; connecti
                 <TableRow key={name}>
                   <TableCell className="text-meta">{name}</TableCell>
                   <TableCell className="text-meta">{t.policy}</TableCell>
-                  <TableCell className="text-meta">
-                    {t.basis === 'unknown' && !systemOnly(record) ? (
-                      <Link
-                        to={`/connections/${record.connection}/catalog?column=${encodeURIComponent(name)}`}
-                        className="underline underline-offset-4"
-                      >
-                        {basisText(t.basis)}
-                      </Link>
-                    ) : (
-                      basisText(t.basis)
-                    )}
-                  </TableCell>
+                  <TableCell className="text-meta">{basisText(t.basis)}</TableCell>
                   {spans ? <TableCell className="text-right text-meta">{t.spans_redacted ?? 0}</TableCell> : null}
                 </TableRow>
               ))}
@@ -352,7 +342,7 @@ function RecordDetail({ record, connection }: { record: ActivityDetail; connecti
                       <TableHead key={c.name}>
                         {c.policy === 'redact' ? (
                           <Link
-                            to={`/connections/${record.connection}/catalog?column=${encodeURIComponent(c.name)}`}
+                            to={`/connections/${record.connection}/catalog`}
                             className="underline underline-offset-4"
                             title="Change this column's policy in the catalog"
                           >
@@ -423,7 +413,10 @@ function connectionName(id: string, connections: ConnectionSummary[]): string {
 
 /**
  * The one action that clears a redaction keeper made because it did not know a
- * column, or, for a system catalog, that no action does.
+ * column, or, for a system catalog, that no action does. The link opens Catalog
+ * unfiltered, where unclassified columns come first: a result names its columns
+ * by their output name, which an alias or a duplicate-name suffix changes, so a
+ * filter built from it can hide the column or show another table's.
  */
 function RedactionFix({ record }: { record: ActivityDetail }) {
   const unknown = Object.entries(record.transforms ?? {})
@@ -438,11 +431,10 @@ function RedactionFix({ record }: { record: ActivityDetail }) {
       </Fact>
     )
   }
-  const only = unknown.length === 1 ? `?column=${encodeURIComponent(unknown[0])}` : ''
   return (
     <Fact label="redacted">
       {plural(unknown.length, 'column')} not in the catalog.{' '}
-      <Link to={`/connections/${record.connection}/catalog${only}`} className="underline underline-offset-4">
+      <Link to={`/connections/${record.connection}/catalog`} className="underline underline-offset-4">
         Classify in Catalog
       </Link>
     </Fact>

@@ -196,26 +196,30 @@ func (l *Log) Write(ctx context.Context, r *types.AuditRecord) error {
 // every retained day file; the total counts the records matching the filter,
 // one per audit id.
 func (l *Log) Query(ctx context.Context, f ports.AuditFilter) (ports.AuditPage, error) {
-	out := []types.AuditRecord{}
-	at := map[string]int{}
+	all := []types.AuditRecord{}
 	err := l.each(ctx, func(r types.AuditRecord) bool {
-		if !matches(r, f) {
-			return true
+		if matches(r, f) {
+			all = append(all, r)
 		}
-		// A write records its intent before it commits and its outcome after,
-		// under one id. The later record is the one that counts.
-		if i, ok := at[r.ID]; ok {
-			out[i] = r
-			return true
-		}
-		at[r.ID] = len(out)
-		out = append(out, r)
 		return true
 	})
 	if err != nil {
 		return ports.AuditPage{}, err
 	}
-	slices.Reverse(out)
+	// A write records its intent before it commits and its outcome after, and
+	// an escalated statement records the question and then the run, each pair
+	// under one id. The later record is the one that counts, and the list is
+	// in the order of its time: an approval settled an hour after the question
+	// runs an hour after the statements between them.
+	out := make([]types.AuditRecord, 0, len(all))
+	seen := map[string]bool{}
+	for _, r := range slices.Backward(all) {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			out = append(out, r)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b types.AuditRecord) int { return b.At.Compare(a.At) })
 	total := len(out)
 	out = out[min(max(f.Offset, 0), total):]
 	if f.Limit > 0 && len(out) > f.Limit {
