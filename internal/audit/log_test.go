@@ -425,6 +425,27 @@ func TestALaterRecordWithTheSameIDReplacesTheIntentRecord(t *testing.T) {
 	}
 }
 
+func TestARecordSettledLaterSortsByItsSettledTime(t *testing.T) {
+	l := newLog(t)
+	at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	for _, r := range []types.AuditRecord{
+		{ID: "a", At: at, Statement: "SELECT a"},
+		{ID: "b", At: at.Add(time.Minute), Statement: "SELECT b"},
+		{ID: "a", At: at.Add(time.Hour), Statement: "SELECT a", RowCount: 3},
+	} {
+		if err := l.Write(t.Context(), &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := l.Query(t.Context(), ports.AuditFilter{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Records) != 1 || page.Records[0].ID != "a" || page.Records[0].RowCount != 3 {
+		t.Fatalf("the newest page is %+v of %d, want the settled a first", page.Records, page.Total)
+	}
+}
+
 func TestAWriteIsRecordedEvenWhenTheCallersContextIsCancelledFirst(t *testing.T) {
 	l := newLog(t)
 	ctx, cancel := context.WithCancel(t.Context())
