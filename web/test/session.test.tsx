@@ -1,5 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { screen } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 
 import { fakeDaemon, renderApp, session } from './daemon'
@@ -41,19 +40,3 @@ describe('a browser without the dashboard session', () => {
   })
 })
 
-describe('the dashboard setting', () => {
-  test('turning the dashboard off asks first and then saves only that setting', async () => {
-    const sent: unknown[] = []
-    const d = fakeDaemon()
-    d.on('GET', '/v1/settings', () => [200, { log_retention_days: 30, connection_idle_minutes: 5 }])
-    d.on('PUT', '/v1/settings', (body) => {
-      sent.push(body)
-      return [200, { log_retention_days: 30, connection_idle_minutes: 5, ui_off: true }]
-    })
-    renderApp('/settings')
-    await userEvent.click(await screen.findByRole('switch', { name: 'Local dashboard' }))
-    expect(sent).toEqual([])
-    await userEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
-    await waitFor(() => expect(sent).toEqual([{ ui_off: true }]))
-  })
-})

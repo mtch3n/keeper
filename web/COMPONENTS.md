@@ -46,7 +46,6 @@ Inherited from trellis (CONTRACT.md §5), keeper's own semantics layered on top:
 | Select | `@/components/ui/select` | A pick from a fixed set |
 | Separator | `@/components/ui/separator` | Dividers, replacing `border-t` spacer divs |
 | Skeleton | `@/components/ui/skeleton` | Loading placeholders |
-| Switch | `@/components/ui/switch` | One on/off setting that takes effect when flipped: the local dashboard. A `Checkbox` reads as a form field waiting for Save |
 | Table | `@/components/ui/table` | Rows of like things with columns — `Catalog`, `Activity`, query results |
 | Toast | `@/components/ui/toast` | Transient action failures. Base UI ships `toast`; `sonner` is the Radix/React-Aria equivalent and is not used here |
 | Tooltip | `@/components/ui/tooltip` | The label of every icon-only button, through `IconButton`. `TooltipProvider` is mounted once in `main.tsx` |

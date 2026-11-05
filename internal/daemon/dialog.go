@@ -59,9 +59,6 @@ func dialogMessage(item types.ApprovalItem, profile, link string) string {
 		head += "  why: " + strings.Join(f.Reasons, ", ")
 	}
 	lines := []string{sql, what}
-	if link == "" {
-		link = "run `keeper approve` in a terminal"
-	}
 	switch {
 	case item.Write != nil && cut:
 		lines = append(lines, "SQL cut, rows: "+link, head)

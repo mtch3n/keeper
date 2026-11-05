@@ -191,7 +191,7 @@ func Run(args []string) int {
 	// R4.3: the source in use is a reported fact, and since it is chosen where
 	// nobody is watching, this line is the only place it is stated at the moment
 	// it is chosen.
-	if err := d.StartUI(ctx); err != nil {
+	if err := d.StartUI(); err != nil {
 		logger.Error("loopback listener", "err", err)
 		return 1
 	}

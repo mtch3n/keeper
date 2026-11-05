@@ -9,8 +9,8 @@ import (
 )
 
 // ListApprovals returns the shared approval queue, oldest first (SPEC R9.1).
-// It is shared across every session on the machine: `keeper approve` and the
-// UI both draw from it, which is why every item names its own session.
+// It is shared across every session on the machine, which is why every item
+// names its own session.
 func (c *Client) ListApprovals(ctx context.Context) ([]types.ApprovalItem, error) {
 	var out []types.ApprovalItem
 	if err := c.do(ctx, http.MethodGet, "/v1/approvals", nil, &out); err != nil {
@@ -27,10 +27,7 @@ const (
 	DecisionRefuse  ApprovalDecision = "refuse"
 )
 
-// DecideApproval approves or refuses one queued ticket. keeper approve
-// requires an interactive TTY (SPEC §3.4's stated limitation); this method
-// itself has no opinion about that — it is cmd/keeper's job to refuse to
-// call it from a non-terminal.
+// DecideApproval approves or refuses one queued ticket.
 func (c *Client) DecideApproval(ctx context.Context, ticket string, decision ApprovalDecision) error {
 	body := struct {
 		Decision ApprovalDecision `json:"decision"`

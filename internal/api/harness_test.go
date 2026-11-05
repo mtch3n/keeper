@@ -188,7 +188,7 @@ type rig struct {
 	alog  *fakeAuditLog
 	pipe  *fakePipeline
 	notes *notes
-	uictl *fakeUI
+	uictl fakeUI
 
 	sockLn  *pipeListener
 	sockSrv *http.Server
@@ -211,12 +211,6 @@ func newRig(t *testing.T) *rig {
 // newRigWith is newRig with the daemon's tuning given, for tests of its timer.
 func newRigWith(t *testing.T, cfg daemon.Config) *rig {
 	t.Helper()
-	return newRigSettings(t, cfg, nil)
-}
-
-// newRigSettings starts the daemon over a vault that already holds settings.
-func newRigSettings(t *testing.T, cfg daemon.Config, settings *types.Settings) *rig {
-	t.Helper()
 
 	conn := &types.Connection{
 		ID: "c1", Name: "prod", Engine: "postgres", Database: "app", Role: "app_ro",
@@ -231,12 +225,11 @@ func newRigSettings(t *testing.T, cfg daemon.Config, settings *types.Settings) *
 		alog:  &fakeAuditLog{},
 		pipe:  &fakePipeline{},
 		notes: &notes{},
-		uictl: &fakeUI{},
+		uictl: fakeUI{},
 		conn:  conn,
 		open:  map[string]func() error{},
 	}
 
-	r.vault.settings = settings
 	d, err := daemon.New(cfg, daemon.Deps{
 		Vault: r.vault,
 		Catalogs: func(id string) (ports.Catalog, error) {
@@ -261,7 +254,7 @@ func newRigSettings(t *testing.T, cfg daemon.Config, settings *types.Settings) *
 		t.Fatalf("daemon.New: %v", err)
 	}
 	r.d = d
-	if err := d.StartUI(t.Context()); err != nil {
+	if err := d.StartUI(); err != nil {
 		t.Fatalf("StartUI: %v", err)
 	}
 
@@ -346,30 +339,10 @@ func (r *rig) browser() *client {
 	return c
 }
 
-// fakeUI stands for the loopback listener's lifecycle.
-type fakeUI struct {
-	mu            sync.Mutex
-	starts, stops int
-}
+// fakeUI stands for the loopback listener.
+type fakeUI struct{}
 
-func (u *fakeUI) Start() (string, error) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.starts++
-	return "http://127.0.0.1:7774", nil
-}
-
-func (u *fakeUI) Stop() {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.stops++
-}
-
-func (u *fakeUI) counts() (starts, stops int) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.starts, u.stops
-}
+func (fakeUI) Start() (string, error) { return "http://127.0.0.1:7774", nil }
 
 // notes records what the desktop notifier was told.
 type notes struct {

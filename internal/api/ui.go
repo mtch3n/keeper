@@ -7,8 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
-
-	"github.com/mtchen/keeper/internal/daemon"
 )
 
 const uiCookie = "keeper_ui"
@@ -99,9 +97,6 @@ type uiSessionResponse struct {
 // agent session, because the secret opens every human route on loopback.
 func (s *Server) uiSession(context.Context, *reqInfo, http.ResponseWriter, *http.Request) (any, error) {
 	base, secret := s.d.UISession()
-	if base == "" {
-		return nil, daemon.ErrUIOff
-	}
 	return uiSessionResponse{Base: base, Secret: secret}, nil
 }
 

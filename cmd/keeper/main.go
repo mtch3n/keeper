@@ -1,6 +1,5 @@
 // Command keeper is the operator CLI: connection registration and G0
-// acceptance, catalog editing, approvals, allow-rule management, activity
-// review, doctor, vault control and daemon lifecycle. It is the only place
+// acceptance, catalog editing, doctor, vault control and daemon lifecycle. It is the only place
 // (with the web UI) any of that surface is reachable — SPEC §6.3 keeps all
 // of it off the MCP tool list.
 package main
@@ -34,10 +33,6 @@ func run(args []string) error {
 		return runConnection(rest)
 	case "catalog":
 		return runCatalog(rest)
-	case "approve":
-		return runApprove(rest)
-	case "activity":
-		return runActivity(rest)
 	case "doctor":
 		return runDoctor(rest)
 	case "vault":
@@ -46,8 +41,6 @@ func run(args []string) error {
 		return runDaemon(rest)
 	case "ui":
 		return runUI(rest)
-	case "settings":
-		return runSettings(rest)
 	case "hook":
 		return runHook(rest)
 	case "version":
@@ -83,14 +76,11 @@ Usage:
   keeper catalog init <name> [--sample N]
   keeper catalog edit <name> <schema.table.column> --policy P [--namespace N]
   keeper catalog ls <name> [--unclassified]
-  keeper approve [<ticket>]
-  keeper activity [--session S] [--connection C] [--since D] [--limit N]
   keeper doctor
   keeper update [--check] [--force]
   keeper vault export > file | import [--replace] file
   keeper daemon start | restart | status
   keeper ui [<path>]
-  keeper settings [set ui on|off]
   keeper hook session-start | pre-tool-use | waiting
       for the agent plugin's hooks; prints JSON for the client
   keeper mcp

@@ -52,11 +52,10 @@ type Deps struct {
 	UI UIControl
 }
 
-// UIControl is the loopback listener's lifecycle. Start returns the base
-// address it now serves; Stop releases the port.
+// UIControl binds the loopback listener. Start returns the base address it
+// now serves.
 type UIControl interface {
 	Start() (base string, err error)
-	Stop()
 }
 
 // Config is the daemon's tuning. Everything has a default; New fills the zeroes.
@@ -135,7 +134,6 @@ type Daemon struct {
 	deps         Deps
 	hub          *Hub
 	uiSecret     string
-	uiMu         sync.Mutex
 	uiBase       atomic.Value
 
 	ctx    context.Context
@@ -343,7 +341,7 @@ func (d *Daemon) exitIfIdle() {
 	d.RequestShutdown()
 }
 
-// UIBase is the dashboard's address, or "" while it is off.
+// UIBase is the dashboard's address, or "" before StartUI binds it.
 func (d *Daemon) UIBase() string { return d.uiBase.Load().(string) }
 
 // UISession is the base address and the secret that opens the dashboard. The
@@ -352,7 +350,7 @@ func (d *Daemon) UIBase() string { return d.uiBase.Load().(string) }
 func (d *Daemon) UISession() (base, secret string) { return d.UIBase(), d.uiSecret }
 
 // uiLink is the notification's link: the ticket's page behind the secret.
-// Empty while the dashboard is off, so nothing hands out a dead address.
+// Empty before StartUI, so nothing hands out a dead address.
 func (d *Daemon) uiLink(next string) string {
 	base := d.UIBase()
 	if base == "" {
@@ -361,35 +359,15 @@ func (d *Daemon) uiLink(next string) string {
 	return base + "/auth?next=" + next + "#" + d.uiSecret
 }
 
-// StartUI applies the stored setting at start: the listener is bound unless the
-// operator turned the dashboard off.
-func (d *Daemon) StartUI(ctx context.Context) error {
-	st, err := d.deps.Vault.Settings(ctx)
-	if err != nil {
-		return err
-	}
-	return d.applyUI(!st.UIOff)
-}
-
-// applyUI binds or releases the listener to match the setting.
-func (d *Daemon) applyUI(on bool) error {
-	d.uiMu.Lock()
-	defer d.uiMu.Unlock()
-	switch {
-	case on && d.UIBase() == "":
-		base := d.cfg.UIBase
-		if d.deps.UI != nil {
-			var err error
-			if base, err = d.deps.UI.Start(); err != nil {
-				return err
-			}
+// StartUI binds the loopback listener once, at start.
+func (d *Daemon) StartUI() error {
+	base := d.cfg.UIBase
+	if d.deps.UI != nil {
+		var err error
+		if base, err = d.deps.UI.Start(); err != nil {
+			return err
 		}
-		d.uiBase.Store(base)
-	case !on && d.UIBase() != "":
-		if d.deps.UI != nil {
-			d.deps.UI.Stop()
-		}
-		d.uiBase.Store("")
 	}
+	d.uiBase.Store(base)
 	return nil
 }
