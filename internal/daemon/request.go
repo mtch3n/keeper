@@ -107,9 +107,6 @@ func (d *Daemon) OpenRequest(ctx context.Context, s *Session, spec RequestSpec) 
 		}
 	}
 	base := d.UIBase()
-	if base == "" {
-		return nil, ErrUIOff
-	}
 	now := d.now()
 	id := capability()
 	r := &localRequest{

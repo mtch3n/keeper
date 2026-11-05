@@ -145,10 +145,6 @@ type Settings struct {
 	// ConnectionIdleMinutes is how long a database's connections stay open
 	// with nobody using them; the next use reconnects.
 	ConnectionIdleMinutes int `json:"connection_idle_minutes"`
-	// UIOff turns the local dashboard off: no loopback port is bound. It is a
-	// negative so that a vault written before the setting existed has the
-	// dashboard on.
-	UIOff bool `json:"ui_off,omitzero"`
 }
 
 // DefaultSettings are a fresh vault's settings.

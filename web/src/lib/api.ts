@@ -243,8 +243,6 @@ export interface Settings {
   log_retention_days: number
   /** How long a database's connections stay open with nobody using them. */
   connection_idle_minutes: number
-  /** Absent means the dashboard is on. */
-  ui_off?: boolean
 }
 
 export function getSettings() {

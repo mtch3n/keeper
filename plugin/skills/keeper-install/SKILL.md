@@ -123,8 +123,8 @@ README has the exact lines.
 ## What to hand back rather than do
 
 - `sudo` anything.
-- `keeper connect`, `keeper catalog edit`, `keeper connection set`, `keeper approve`
-  and `keeper vault export`. They are the person's.
+- `keeper connect`, `keeper catalog edit`, `keeper connection set` and
+  `keeper vault export`. They are the person's.
 - Supplying a connection string.
 
 Finish by telling the person what is done, what is left, and the exact command for

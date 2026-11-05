@@ -10,14 +10,11 @@ import (
 	"github.com/mtchen/keeper/internal/client"
 )
 
-func TestHookDeniesTheDashboardLinkAndTheSettingsChangeToAnAgent(t *testing.T) {
-	for _, c := range []string{`keeper ui`, `~/.local/bin/keeper ui /r/abc`, `keeper settings set ui off`, `keeper settings set ui on`} {
+func TestHookDeniesTheDashboardLinkToAnAgent(t *testing.T) {
+	for _, c := range []string{`keeper ui`, `~/.local/bin/keeper ui /r/abc`} {
 		if deniedCommand(c, nil) == "" {
 			t.Errorf("%q: want denied", c)
 		}
-	}
-	if reason := deniedCommand(`keeper settings`, nil); reason != "" {
-		t.Errorf("reading the settings is denied: %q", reason)
 	}
 }
 

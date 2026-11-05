@@ -101,10 +101,7 @@ accepts.
   the statement. The agent gets a ticket and a local link, which opens nothing until
   you have run `keeper ui` in a terminal. The ticket waits in the Inbox of the
   dashboard, and keeper sends a desktop notification with a link that signs you
-  in. With the dashboard off, there is no link and `keeper approve` decides the
-  ticket. The agent polls `get_result` until a person decides.
-
-`keeper approve` lists and decides tickets from a terminal.
+  in. The agent polls `get_result` until a person decides.
 
 ## Declare personal data columns
 
@@ -229,8 +226,6 @@ want the daemon to stay up.
 keeper doctor                    # daemon, key source, connections
 keeper daemon status
 keeper ui                        # the dashboard's link, with its secret
-keeper settings set ui off       # no dashboard, no open port; "on" turns it back on
-keeper activity --since 24h      # what ran, and what was applied to it
 ```
 
 Windows compiles and does not run: there is no named pipe and no single-daemon

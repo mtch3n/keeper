@@ -13,10 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"text/tabwriter"
-	"time"
 	"unicode"
 
 	"golang.org/x/term"
@@ -199,217 +197,6 @@ func catalogEdit(ctx context.Context, args []string) error {
 	return nil
 }
 
-// --------------------------------------------------------------- approve ---
-
-func runApprove(args []string) error {
-	fs := flag.NewFlagSet("approve", flag.ContinueOnError)
-	refuse := fs.Bool("refuse", false, "refuse instead of approving")
-	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	ctx := context.Background()
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	queue, err := cli.ListApprovals(ctx)
-	if err != nil {
-		return err
-	}
-	if fs.NArg() == 0 {
-		if *asJSON {
-			return printJSON(queue)
-		}
-		return printQueue(queue)
-	}
-
-	// SPEC §3.4's stated limitation: this raises the bar and does not close the
-	// gap. An agent with shell access runs as the same OS user and can reach the
-	// same daemon; "not exposed as an MCP tool" is enforceable, "cannot originate
-	// from the agent" is not. Closing it properly needs a separate OS user or an
-	// out-of-band confirmation.
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return fmt.Errorf("approve: refusing to decide without a terminal on stdin")
-	}
-
-	ticket := fs.Arg(0)
-	item, ok := findTicket(queue, ticket)
-	if !ok {
-		return fmt.Errorf("approve: no queued ticket %q", ticket)
-	}
-	printApproval(item)
-
-	decision := client.DecisionApprove
-	if *refuse {
-		decision = client.DecisionRefuse
-	}
-	verb := "Approve"
-	if *refuse {
-		verb = "Refuse"
-	}
-	if !confirm(fmt.Sprintf("%s this statement?", verb)) {
-		fmt.Println("nothing decided")
-		return nil
-	}
-
-	if err := cli.DecideApproval(ctx, ticket, decision); err != nil {
-		return err
-	}
-	fmt.Printf("%sd %s\n", strings.ToLower(verb), ticket)
-	return nil
-}
-
-func printQueue(queue []types.ApprovalItem) error {
-	if len(queue) == 0 {
-		fmt.Println("nothing is waiting")
-		return nil
-	}
-	// R9.1: oldest first, and every row names its origin. Two agents on the same
-	// database with similar SQL are otherwise indistinguishable, which is the
-	// normal case with three windows open.
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TICKET\tAGENT\tWORKSPACE\tCONNECTION\tAGE")
-	for _, it := range queue {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			it.TicketID, it.Session.Client.Name, it.Session.Client.Workspace,
-			it.Connection, age(it.CreatedAt))
-	}
-	w.Flush()
-	fmt.Println("\nkeeper approve <ticket> to decide one.")
-	return nil
-}
-
-// printApproval is §9.2's layout: facts first, SQL last. A human cannot tell
-// from the SQL alone what the result contains.
-func printApproval(it types.ApprovalItem) {
-	f := it.Facts
-	fmt.Printf("agent     %s · %s\n", renderSQL(it.Session.Client.Name), renderSQL(it.Session.Client.Workspace))
-	if it.Write != nil && it.Write.Unpreviewed {
-		fmt.Printf("impact    %s · about %d rows (an estimate) · %s\n",
-			it.Write.Operation, it.Write.RowCount, relations(f.Relations))
-		fmt.Println("          not previewed: the statement calls a function with side effects")
-	} else if it.Write != nil {
-		fmt.Printf("impact    %s · %d rows as of the preview, %s ago · %s\n",
-			it.Write.Operation, it.Write.RowCount, age(it.Write.PreviewedAt), relations(f.Relations))
-		fmt.Println("          the count is not a lock; the executed count is reported back")
-	} else {
-		fmt.Printf("impact    %d rows · %s\n", f.EstimatedRows, relations(f.Relations))
-	}
-	if len(f.Egress) > 0 {
-		fmt.Printf("egress    %s\n", strings.Join(f.Egress, ", "))
-	}
-	fmt.Printf("cost      est. %.0f\n", f.EstimatedCost)
-	if len(f.Reasons) > 0 {
-		fmt.Printf("why       %s\n", strings.Join(f.Reasons, ", "))
-	}
-	fmt.Println(strings.Repeat("-", 60))
-	fmt.Printf("SQL       %s\n", renderSQL(it.SQL))
-	if it.Write != nil {
-		fmt.Println()
-		fmt.Println("Approving executes a change to stored data. Revoking this approval")
-		fmt.Println("afterwards stops future writes and restores nothing.")
-	}
-	fmt.Println()
-}
-
-// -------------------------------------------------------------- activity ---
-
-func runActivity(args []string) error {
-	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
-	session := fs.String("session", "", "filter by session id")
-	conn := fs.String("connection", "", "filter by connection")
-	since := fs.Duration("since", 0, "how far back to look, e.g. 24h")
-	limit := fs.Int("limit", 50, "maximum records")
-	asJSON := fs.Bool("json", false, "emit JSON")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	ctx := context.Background()
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	if fs.NArg() == 1 {
-		rec, err := cli.GetActivityRecord(ctx, fs.Arg(0))
-		if err != nil {
-			return err
-		}
-		return printJSON(rec)
-	}
-
-	f := client.ActivityFilter{SessionID: *session, Limit: *limit}
-	if *conn != "" {
-		// Records carry the connection's id. A name passed through unresolved
-		// matched nothing and printed an empty log.
-		if f.ConnectionID, err = resolveConnectionID(ctx, cli, *conn); err != nil {
-			return err
-		}
-	}
-	if *since > 0 {
-		f.Since = time.Now().Add(-*since)
-	}
-	page, err := cli.ListActivity(ctx, f)
-	if err != nil {
-		return err
-	}
-	recs := page.Records
-	if *asJSON {
-		return printJSON(recs)
-	}
-	if len(recs) == 0 {
-		fmt.Println("no activity")
-		return nil
-	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "WHEN\tCONNECTION\tOUTCOME\tROWS\tPOLICIES APPLIED\tSTATEMENT")
-	for _, r := range recs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.At.Format(time.RFC3339), r.Connection, outcomeOf(r), rowsOf(r),
-			transformSummary(r.Transforms), truncate(renderSQL(r.Statement), 60))
-	}
-	w.Flush()
-	if page.Total > len(recs) {
-		fmt.Printf("\nShowing the newest %d of %d records. Raise --limit to see more.\n", len(recs), page.Total)
-	}
-	// R10d: the log records what keeper intended to emit. Saying "values masked"
-	// here would claim something the log cannot establish.
-	fmt.Println("\nPolicies applied, not bytes verified: the log records the decision,")
-	fmt.Println("not proof that redaction ran correctly (SPEC R10d).")
-	fmt.Println("Literals are never stored, so the statement shown is the statement as kept.")
-	return nil
-}
-
-// outcomeOf says what happened to a record's statement, in the words the
-// dashboard uses: ran, asked (it escalated and has no answer yet), the decision
-// with who made it, or the error code of a failure.
-func outcomeOf(r types.AuditRecord) string {
-	switch {
-	case r.Decision != "":
-		if r.Approver != "" && r.Decision != types.DecisionExpired {
-			return string(r.Decision) + " by " + r.Approver
-		}
-		return string(r.Decision)
-	case r.ErrorCode == types.CodeApprovalRequired:
-		return "asked"
-	case r.ErrorCode != "":
-		return string(r.ErrorCode)
-	}
-	return "ran"
-}
-
-// rowsOf is the row count, or a dash for a statement that did not run.
-func rowsOf(r types.AuditRecord) string {
-	if r.ErrorCode != "" && r.Decision != types.DecisionApproved {
-		return "-"
-	}
-	return strconv.Itoa(r.RowCount)
-}
-
 // --------------------------------------------------------------- version ---
 
 // runVersion prints both versions, always, whether or not they agree.
@@ -513,11 +300,7 @@ func runDoctor(args []string) error {
 	// keeperd opens the vault before it serves and exits if it cannot, so a
 	// daemon that answered this call has an open vault by construction.
 	fmt.Printf("vault         open, key source %s\n", rep.KeySource)
-	if rep.UIBase == "" {
-		fmt.Printf("ui            off; run `keeper settings set ui on` to turn it on\n")
-	} else {
-		fmt.Printf("ui            on, %s\n", rep.UIBase)
-	}
+	fmt.Printf("ui            %s\n", rep.UIBase)
 	fmt.Printf("activity log  encrypted with the vault's key, kept %d day(s)\n", rep.LogRetentionDays)
 	fmt.Printf("databases     connected only when needed; closed after %d idle minute(s)\n", rep.ConnectionIdleMinutes)
 	if rep.Detector != nil && rep.Detector.Name != "" {
@@ -740,52 +523,6 @@ func uiURL(s *client.UISession, next string) string {
 	return s.Base + "/auth" + q + "#" + s.Secret
 }
 
-// ---------------------------------------------------------------- settings ---
-
-func runSettings(args []string) error {
-	fs := flag.NewFlagSet("settings", flag.ContinueOnError)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	ctx := context.Background()
-	cli, err := connectDaemon(ctx)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	rest := fs.Args()
-	if len(rest) == 0 {
-		st, err := cli.GetSettings(ctx)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("ui            %s\n", onOff(!st.UIOff))
-		fmt.Printf("log retention %d day(s)\n", st.LogRetentionDays)
-		fmt.Printf("idle          %d minute(s)\n", st.ConnectionIdleMinutes)
-		return nil
-	}
-	if len(rest) != 3 || rest[0] != "set" || rest[1] != "ui" || (rest[2] != "on" && rest[2] != "off") {
-		return fmt.Errorf("settings: usage: keeper settings [set ui on|off]")
-	}
-	if err := cli.SetUIOff(ctx, rest[2] == "off"); err != nil {
-		return err
-	}
-	if rest[2] == "off" {
-		fmt.Println("ui off: the dashboard port is closed, and any open page stopped working. Approve in the terminal with `keeper approve`.")
-	} else {
-		fmt.Println("ui on: run `keeper ui` for the link.")
-	}
-	return nil
-}
-
-func onOff(on bool) string {
-	if on {
-		return "on"
-	}
-	return "off"
-}
-
 // ---------------------------------------------------------------- shared ---
 
 // renderSQL makes a trojan-source payload and terminal control bytes visible
@@ -819,48 +556,6 @@ func policyArgs(p types.ColumnPolicy) string {
 	return "  " + strings.Join(parts, " ")
 }
 
-func transformSummary(m map[string]types.Transform) string {
-	if len(m) == 0 {
-		return "-"
-	}
-	counts := map[types.Policy]int{}
-	for _, t := range m {
-		if t.Policy != types.PolicyAllow {
-			counts[t.Policy]++
-		}
-	}
-	if len(counts) == 0 {
-		return "-"
-	}
-	var parts []string
-	for _, p := range []types.Policy{types.PolicyToken, types.PolicyRedact, types.PolicyScan} {
-		if n := counts[p]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", n, p))
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
-func relations(rels []types.RelationRef) string {
-	var s []string
-	for _, r := range rels {
-		s = append(s, r.String())
-	}
-	if len(s) == 0 {
-		return "(none)"
-	}
-	return strings.Join(s, ", ")
-}
-
-func findTicket(queue []types.ApprovalItem, id string) (types.ApprovalItem, bool) {
-	for _, it := range queue {
-		if it.TicketID == id {
-			return it, true
-		}
-	}
-	return types.ApprovalItem{}, false
-}
-
 func confirm(prompt string) bool {
 	fmt.Printf("%s [y/N] ", prompt)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -872,30 +567,6 @@ func confirm(prompt string) bool {
 		return true
 	}
 	return false
-}
-
-func age(t time.Time) string {
-	if t.IsZero() {
-		return "-"
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return strconv.Itoa(int(d.Seconds())) + "s"
-	case d < time.Hour:
-		return strconv.Itoa(int(d.Minutes())) + "m"
-	case d < 24*time.Hour:
-		return strconv.Itoa(int(d.Hours())) + "h"
-	default:
-		return strconv.Itoa(int(d.Hours()/24)) + "d"
-	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
 }
 
 // sortedEntries iterates a catalog map in a stable order, so two runs of the

@@ -11,7 +11,7 @@ import (
 	"github.com/mtchen/keeper/internal/types"
 )
 
-// ActivityFilter narrows `keeper activity`. Zero values mean "no filter" for
+// ActivityFilter narrows ListActivity. Zero values mean "no filter" for
 // that field, matching [ports.AuditFilter] which this mirrors over the wire.
 type ActivityFilter struct {
 	SessionID    string
@@ -52,15 +52,6 @@ func (c *Client) ListActivity(ctx context.Context, f ActivityFilter) (ports.Audi
 		return ports.AuditPage{}, err
 	}
 	return out, nil
-}
-
-// GetActivityRecord returns one audit record in full.
-func (c *Client) GetActivityRecord(ctx context.Context, auditID string) (*types.AuditRecord, error) {
-	var out types.AuditRecord
-	if err := c.do(ctx, http.MethodGet, "/v1/activity/"+url.PathEscape(auditID), nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }
 
 // DoctorReport is `keeper doctor`'s answer when it can reach the daemon:

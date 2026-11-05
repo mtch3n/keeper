@@ -71,9 +71,8 @@ func (c *uiControl) isRetired(srv *http.Server) bool {
 	return c.retired[srv]
 }
 
-// Stop frees the port at once and gives the request that asked for it, usually
-// the page switching the dashboard off, a moment to get its answer before every
-// open page and event stream is cut.
+// Stop frees the port at once and gives a request in flight a moment to get its
+// answer before every open page and event stream is cut.
 func (c *uiControl) Stop() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
