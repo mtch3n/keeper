@@ -56,8 +56,8 @@ describe('the Activity log', () => {
     renderApp('/activity')
     await userEvent.click(await screen.findByRole('button', { name: 'Read public.t' }))
     expect(await screen.findByText(/1 column not in the catalog/)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Classify in Catalog' }).getAttribute('href')).toBe('/connections/c1/catalog?column=note')
-    expect(screen.getByRole('link', { name: 'not in the catalog' }).getAttribute('href')).toBe('/connections/c1/catalog?column=note')
+    expect(screen.getByRole('link', { name: 'Classify in Catalog' }).getAttribute('href')).toBe('/connections/c1/catalog')
+    expect(screen.getByText('not in the catalog')).toBeTruthy()
     expect(screen.getByLabelText(/unclassified/i)).toBeTruthy()
   })
 
@@ -69,5 +69,23 @@ describe('the Activity log', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Read pg_catalog.pg_database' }))
     expect(await screen.findByText(/keeper does not classify system catalogs/)).toBeTruthy()
     expect(screen.queryByRole('link', { name: 'Classify in Catalog' })).toBeNull()
+  })
+
+  test('a record opened while it was asked shows its result once it is approved', async () => {
+    let settled = false
+    const asked = rec('a1', { error_code: 'approval_required', row_count: 0 })
+    const ran = rec('a1', { at: new Date(Date.now() + 60_000).toISOString(), decision: 'approved', approver: 'ana', row_count: 1 })
+    const d = daemon([])
+    d.on('GET', '/v1/activity', () => [200, [settled ? ran : asked]])
+    d.on('GET', '/v1/activity/a1', () => [200, settled
+      ? { ...ran, result: { rows: [[1]], columns: [{ name: 'n', type: 'int4', policy: 'allow' }], row_count: 1, transforms: {}, audit_id: 'a1' } }
+      : asked])
+    renderApp('/activity')
+    const open = await screen.findByRole('button', { name: 'SELECT a1' })
+    await userEvent.click(open)
+    expect(await screen.findByText(/Not kept/)).toBeTruthy()
+    settled = true
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByText('1 row(s)')).toBeTruthy()
   })
 })
