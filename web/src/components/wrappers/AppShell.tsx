@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
-import { AgentsIndicator } from '@/components/wrappers/AgentsIndicator'
 import { Lamp } from '@/components/wrappers/Lamp'
 import { Brand } from '@/components/wrappers/Brand'
 import { ThemeToggle } from '@/components/wrappers/ThemeToggle'
@@ -95,7 +94,6 @@ export function AppShell({
               </span>
             </span>
           )}
-          <AgentsIndicator />
           <ThemeToggle />
         </div>
       </div>

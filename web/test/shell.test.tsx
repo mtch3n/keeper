@@ -58,23 +58,6 @@ describe('the shell', () => {
     expect(tabs.getByRole('link', { name: 'Connections' }).getAttribute('aria-current')).toBe('page')
   })
 
-  test('SHELL-C2 the agents indicator counts and lists connected agents', async () => {
-    daemon({ sessions: [s1, s2] })
-    renderApp('/connections')
-    const indicator = await screen.findByRole('button', { name: /2 agents/i })
-    await userEvent.click(indicator)
-    const list = within(await screen.findByRole('dialog'))
-    expect(list.getByText('/home/u/shop')).toBeTruthy()
-    expect(list.getByText('/home/u/billing')).toBeTruthy()
-  })
-
-  test('SHELL-C3 with no agent connected the indicator says so', async () => {
-    daemon()
-    renderApp('/connections')
-    await userEvent.click(await screen.findByRole('button', { name: /no agents/i }))
-    expect(within(await screen.findByRole('dialog')).getByText(/no agent is connected/i)).toBeTruthy()
-  })
-
   test('SHELL-C4 the header picker switches connection and keeps the tab', async () => {
     daemon()
     renderApp('/connections/c1/catalog')
