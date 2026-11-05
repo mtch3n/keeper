@@ -5,7 +5,6 @@ import { describe, expect, test } from 'vitest'
 import { detail, doctorReport, fakeDaemon, renderApp, session, summary } from './daemon'
 
 const s1 = session('s1', 'claude-code', '/home/u/shop')
-const s2 = session('s2', 'codex', '/home/u/billing')
 
 function pending() {
   return {
