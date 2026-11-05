@@ -106,23 +106,90 @@ export function onRelations(
   return rels?.length ? `${kind} on ${relationList(rels)}` : kind
 }
 
+/** Where a person decided, for the approvers that are a surface rather than a name. */
+const WHERE: Record<string, string> = { dialog: 'in the terminal', ui: 'in the dashboard' }
+
+/** Error codes that are a decision's own record, not a failure of the statement. */
+const DECIDED = new Set(['approval_required', 'approval_refused'])
+
 /**
- * What happened to an audit record's statement, in plain words: it ran, it
- * escalated and was only asked about, a person or the clock settled it, or it
- * failed with a code.
+ * What happened to an audit record's statement, as one of a closed set of words:
+ * ran, asked, approved, refused, cancelled, expired, or failed with its code. A
+ * statement approved and then failed reads failed: the approval is in the record.
  */
 export function outcomeText(r: {
   decision?: string
   approver?: string
   error_code?: string
 }): string {
-  if (r.decision) return r.approver && r.decision !== 'expired' ? `${r.decision} by ${r.approver}` : r.decision
+  if (r.error_code && !DECIDED.has(r.error_code)) return `failed · ${r.error_code}`
+  if (r.decision === 'expired') return 'expired'
+  if (r.decision) return r.approver ? `${r.decision} ${WHERE[r.approver] ?? `by ${r.approver}`}` : r.decision
   if (r.error_code === 'approval_required') return 'asked'
-  return r.error_code || 'ran'
+  return 'ran'
+}
+
+const VERBS: Record<string, string> = {
+  SELECT: 'Read',
+  INSERT: 'Insert into',
+  UPDATE: 'Update',
+  DELETE: 'Delete from',
+  MERGE: 'Merge into',
+}
+
+/**
+ * A record's title: what the statement did to which tables, "Read public.orders".
+ * A statement that touches no table has nothing better than its own text.
+ */
+export function recordTitle(r: {
+  statement: string
+  statement_type: string
+  relations?: { schema: string; relation: string }[]
+}): string {
+  const rels = r.relations ?? []
+  if (rels.length === 0) return renderSQL(r.statement)
+  const verb = VERBS[r.statement_type] ?? r.statement_type
+  const names = rels.slice(0, 2).map((x) => `${x.schema}.${x.relation}`).join(', ')
+  return rels.length > 2 ? `${verb} ${names} +${rels.length - 2}` : `${verb} ${names}`
+}
+
+/** A local calendar day, for grouping: 2026-11-05. */
+export function dayKey(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** A day's name: Today, Yesterday, then the date. */
+export function dayLabel(iso: string): string {
+  const key = dayKey(iso)
+  const now = new Date()
+  if (key === dayKey(now.toISOString())) return 'Today'
+  now.setDate(now.getDate() - 1)
+  if (key === dayKey(now.toISOString())) return 'Yesterday'
+  return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+/** The time of day a moment fell at: 14:02. */
+export function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+const BASES: Record<string, string> = {
+  catalog: 'set in the catalog',
+  rules: 'detection rules',
+  inherited: 'computed from its inputs',
+  parameter: 'follows a parameter',
+  unknown: 'not in the catalog',
+  unexamined: 'not examined',
+}
+
+/** Why a column got its policy, in words; an unknown basis shows as itself. */
+export function basisText(basis: string): string {
+  return BASES[basis] ?? basis
 }
 
 /** A record's row count, or a dash when the statement did not run. */
 export function rowsText(r: { decision?: string; error_code?: string; row_count: number }): string {
-  if (r.error_code && r.decision !== 'approved') return '—'
+  if (r.error_code) return '—'
   return String(r.row_count)
 }

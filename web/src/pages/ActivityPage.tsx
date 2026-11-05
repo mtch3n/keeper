@@ -13,7 +13,19 @@ import { Fact, Facts } from '@/components/wrappers/Facts'
 import { PagedTable } from '@/components/wrappers/PagedTable'
 import { getActivityRecord, listActivity, listConnections } from '@/lib/api'
 import { usePaging } from '@/lib/paging'
-import { age, durationMs, outcomeText, relationList, renderSQL, rowsText } from '@/lib/render'
+import {
+  basisText,
+  clockTime,
+  dayKey,
+  dayLabel,
+  durationMs,
+  plural,
+  outcomeText,
+  recordTitle,
+  relationList,
+  renderSQL,
+  rowsText,
+} from '@/lib/render'
 import { cn } from '@/lib/utils'
 import type { ActivityDetail, AuditRecord, ColumnMeta, ConnectionSummary, QueryResult, Transform } from '@/lib/types'
 
@@ -97,6 +109,8 @@ export function ActivityPage() {
     }
   }
 
+  const { ordered, heads } = group(records ?? [])
+
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-title">Activity</h1>
@@ -147,60 +161,76 @@ export function ActivityPage() {
       ) : (
         <PagedTable
           paging={paging}
-          items={records}
+          items={ordered}
           total={total}
           unit="records"
           label="Activity"
           head={
             <TableHeader>
               <TableRow>
-                <TableHead className="w-8" />
-                <TableHead>When</TableHead>
-                <TableHead className="hidden lg:table-cell">Agent</TableHead>
-                <TableHead>Connection</TableHead>
-                <TableHead>Decision</TableHead>
-                <TableHead className="hidden text-right lg:table-cell">Rows</TableHead>
+                <TableHead className="w-16">When</TableHead>
+                <TableHead>What</TableHead>
+                <TableHead className="hidden sm:table-cell">Connection</TableHead>
+                <TableHead>Outcome</TableHead>
+                <TableHead className="text-right">Rows</TableHead>
                 <TableHead className="hidden lg:table-cell">Policies applied</TableHead>
-                <TableHead>Statement</TableHead>
               </TableRow>
             </TableHeader>
           }
           row={(r) => (
-              <Fragment key={r.id}>
-                <TableRow className="cursor-pointer" aria-expanded={open === r.id} onClick={() => void toggle(r.id)}>
-                  <TableCell>
+            <Fragment key={r.id}>
+              {heads.get(r.id)?.day ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={COLUMNS} className="pt-4 text-heading">
+                    {heads.get(r.id)!.day}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+              {heads.get(r.id)?.session ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={COLUMNS} className="text-label text-muted-foreground">
+                    {heads.get(r.id)!.session}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+              <TableRow>
+                <TableCell className="text-meta">{clockTime(r.at)}</TableCell>
+                <TableCell className="max-w-48 sm:max-w-xs lg:max-w-md">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    aria-expanded={open === r.id}
+                    onClick={() => void toggle(r.id)}
+                    className="w-full justify-start px-0 font-normal"
+                  >
                     <ChevronRightIcon
                       aria-hidden="true"
-                      className={cn('size-4 text-muted-foreground transition-transform', open === r.id && 'rotate-90')}
+                      className={cn('text-muted-foreground transition-transform', open === r.id && 'rotate-90')}
                     />
+                    <span className="truncate">{recordTitle(r)}</span>
+                  </Button>
+                </TableCell>
+                <TableCell className="hidden text-meta sm:table-cell">{connectionName(r.connection, connections)}</TableCell>
+                <TableCell className="text-meta whitespace-normal">{outcomeText(r)}</TableCell>
+                <TableCell className="text-right text-meta">{rowsText(r)}</TableCell>
+                <TableCell className="hidden text-meta lg:table-cell">{summarize(r.transforms)}</TableCell>
+              </TableRow>
+              {open === r.id ? (
+                <TableRow
+                  key={details[r.id] ? 'loaded' : 'loading'}
+                  ref={(el) => el?.scrollIntoView?.({ block: 'nearest' })}
+                  className="hover:bg-transparent"
+                >
+                  <TableCell colSpan={COLUMNS} className="max-w-0 p-0 whitespace-normal">
+                    {details[r.id] ? (
+                      <RecordDetail record={details[r.id]} connection={connectionName(r.connection, connections)} />
+                    ) : (
+                      <Skeleton className="h-24 w-full" />
+                    )}
                   </TableCell>
-                  <TableCell className="text-meta">{age(r.at)} ago</TableCell>
-                  <TableCell className="hidden text-meta lg:table-cell">{r.client.name}</TableCell>
-                  <TableCell className="text-meta">
-                    {connections.find((c) => c.id === r.connection)?.name ??
-                      (connections.length > 0 ? 'removed connection' : r.connection)}
-                  </TableCell>
-                  <TableCell className="text-meta whitespace-normal">{outcomeText(r)}</TableCell>
-                  <TableCell className="hidden text-right text-meta lg:table-cell">{rowsText(r)}</TableCell>
-                  <TableCell className="hidden text-meta lg:table-cell">{summarize(r.transforms)}</TableCell>
-                  <TableCell className="max-w-20 truncate text-meta sm:max-w-xs lg:max-w-md">{renderSQL(r.statement)}</TableCell>
                 </TableRow>
-                {open === r.id ? (
-                  <TableRow
-                    key={details[r.id] ? 'loaded' : 'loading'}
-                    ref={(el) => el?.scrollIntoView?.({ block: 'nearest' })}
-                    className="hover:bg-transparent"
-                  >
-                    <TableCell colSpan={8} className="max-w-0 p-0 whitespace-normal">
-                      {details[r.id] ? (
-                        <RecordDetail record={details[r.id]} />
-                      ) : (
-                        <Skeleton className="h-24 w-full" />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-              </Fragment>
+              ) : null}
+            </Fragment>
           )}
         />
       )}
@@ -244,27 +274,69 @@ function Filter({
   )
 }
 
-function RecordDetail({ record }: { record: ActivityDetail }) {
+function RecordDetail({ record, connection }: { record: ActivityDetail; connection: string }) {
+  const transforms = Object.entries(record.transforms ?? {})
+  const spans = transforms.some(([, t]) => t.spans_redacted)
   return (
     <div className="flex min-w-0 flex-col gap-4 bg-muted/30 p-4 sm:p-6">
       <Facts>
-        <Fact label="audit id">
-          <span className="text-meta">{record.id}</span>
-        </Fact>
-        <Fact label="agent">
-          {record.client.name} · {record.client.workspace ?? 'unknown workspace'}
-        </Fact>
+        {record.approver && record.decision && outcomeText(record) !== outcomeText({ decision: record.decision, approver: record.approver }) ? (
+          <Fact label="decision">{outcomeText({ decision: record.decision, approver: record.approver })}</Fact>
+        ) : null}
+        <RedactionFix record={record} />
+        <Fact label="connection">{connection}</Fact>
         <Fact label="relations">{relationList(record.relations)}</Fact>
-        <Fact label="rows">{rowsText(record)}</Fact>
         <Fact label="duration">{durationMs(record.duration)}</Fact>
-        {record.approver ? <Fact label="approver">{record.approver}</Fact> : null}
-        {record.error_code ? <Fact label="error">{record.error_code}</Fact> : null}
         {record.collisions ? (
           <Fact label="collisions">
             {record.collisions} cell(s) redacted: token already bound
           </Fact>
         ) : null}
+        <Fact label="audit id">
+          <span className="text-meta">{record.id}</span>
+        </Fact>
       </Facts>
+
+      <Separator />
+
+      <div>
+        <h3 className="text-label text-muted-foreground">policies applied</h3>
+        {transforms.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Column</TableHead>
+                <TableHead>Policy</TableHead>
+                <TableHead>Why</TableHead>
+                {spans ? <TableHead className="text-right">Spans redacted</TableHead> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {transforms.map(([name, t]) => (
+                <TableRow key={name}>
+                  <TableCell className="text-meta">{name}</TableCell>
+                  <TableCell className="text-meta">{t.policy}</TableCell>
+                  <TableCell className="text-meta">
+                    {t.basis === 'unknown' && !systemOnly(record) ? (
+                      <Link
+                        to={`/connections/${record.connection}/catalog?column=${encodeURIComponent(name)}`}
+                        className="underline underline-offset-4"
+                      >
+                        {basisText(t.basis)}
+                      </Link>
+                    ) : (
+                      basisText(t.basis)
+                    )}
+                  </TableCell>
+                  {spans ? <TableCell className="text-right text-meta">{t.spans_redacted ?? 0}</TableCell> : null}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <p className="text-meta text-muted-foreground">none</p>
+        )}
+      </div>
 
       <Separator />
 
@@ -314,41 +386,9 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
         )}
       </div>
 
-      <Separator />
-
-      <div>
-        <h3 className="text-label text-muted-foreground">policies applied</h3>
-        {record.transforms && Object.keys(record.transforms).length > 0 ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Column</TableHead>
-                <TableHead>Policy</TableHead>
-                <TableHead>Basis</TableHead>
-                <TableHead className="text-right">Spans redacted</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {Object.entries(record.transforms).map(([name, t]) => (
-                <TableRow key={name}>
-                  <TableCell className="text-meta">{name}</TableCell>
-                  <TableCell className="text-meta">{t.policy}</TableCell>
-                  <TableCell className="text-meta">
-                    {t.basis}
-                  </TableCell>
-                  <TableCell className="text-right text-meta">{t.spans_redacted ?? 0}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <p className="text-meta text-muted-foreground">none</p>
-        )}
-      </div>
-
       {record.degradations?.length ? (
         <div>
-          <h3 className="text-label text-muted-foreground">degradations</h3>
+          <h3 className="text-label text-muted-foreground">checks that did not run</h3>
           <ul className="text-sm">
             {record.degradations.map((d, i) => (
               <li key={i}>
@@ -356,7 +396,6 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
               </li>
             ))}
           </ul>
-          <p className="text-meta text-muted-foreground">These layers did not run; coverage was narrower.</p>
         </div>
       ) : null}
 
@@ -368,15 +407,59 @@ function RecordDetail({ record }: { record: ActivityDetail }) {
   )
 }
 
+/** Schemas keeper's catalog never holds, so a column read from one stays unclassified. */
+const SYSTEM = new Set(['pg_catalog', 'information_schema'])
+
+/** True when a statement read system catalogs and nothing else. */
+function systemOnly(record: AuditRecord): boolean {
+  const rels = record.relations ?? []
+  return rels.length > 0 && rels.every((r) => SYSTEM.has(r.schema))
+}
+
+/** A connection's name, or what became of it. */
+function connectionName(id: string, connections: ConnectionSummary[]): string {
+  return connections.find((c) => c.id === id)?.name ?? (connections.length > 0 ? 'removed connection' : id)
+}
+
+/**
+ * The one action that clears a redaction keeper made because it did not know a
+ * column, or, for a system catalog, that no action does.
+ */
+function RedactionFix({ record }: { record: ActivityDetail }) {
+  const unknown = Object.entries(record.transforms ?? {})
+    .filter(([, t]) => t.basis === 'unknown')
+    .map(([name]) => name)
+  if (unknown.length === 0) return null
+  if (systemOnly(record)) {
+    return (
+      <Fact label="redacted">
+        {plural(unknown.length, 'column')} from a system catalog. keeper does not classify system catalogs, so
+        these stay redacted.
+      </Fact>
+    )
+  }
+  const only = unknown.length === 1 ? `?column=${encodeURIComponent(unknown[0])}` : ''
+  return (
+    <Fact label="redacted">
+      {plural(unknown.length, 'column')} not in the catalog.{' '}
+      <Link to={`/connections/${record.connection}/catalog${only}`} className="underline underline-offset-4">
+        Classify in Catalog
+      </Link>
+    </Fact>
+  )
+}
+
 /**
  * Which of `Cell`'s treatments a returned value gets. Decided from the column's
  * policy and basis, as the agent's copy was, never from how the value looks —
- * except the redacted marker, which is also what a token collision emits.
+ * except the redacted marker, which is also what a token collision emits. An
+ * unclassified column is checked first: its cells are the marker too, and
+ * showing them as plain redactions hides the one cell that needs a person.
  */
 function cellValue(v: unknown, column: ColumnMeta, transforms: Record<string, Transform>): CellValue {
   if (v === null || v === undefined) return { kind: 'null' }
-  if (v === REDACTED) return { kind: 'redacted' }
   if (transforms[column.name]?.basis === 'unknown') return { kind: 'unclassified' }
+  if (v === REDACTED) return { kind: 'redacted' }
   const text = typeof v === 'string' ? v : JSON.stringify(v)
   switch (column.policy) {
     case 'allow':
@@ -408,4 +491,41 @@ function summarize(transforms: Record<string, Transform> | undefined): string {
   }
   if (counts.size === 0) return '—'
   return [...counts.entries()].map(([policy, n]) => `${n} ${policy}`).join(' ')
+}
+
+const COLUMNS = 6
+
+/** Who ran a record: the agent and its workspace. */
+function who(r: AuditRecord): string {
+  return `${r.client.name} · ${r.client.workspace ?? 'unknown workspace'}`
+}
+
+/**
+ * The page's records by day, then by agent and workspace within a day, so two
+ * sessions of one agent in one workspace read as one trail, each in the order
+ * the server sent them, newest first. A record that starts a day or a session
+ * carries the heading to draw above it.
+ */
+function group(records: AuditRecord[]) {
+  const days = new Map<string, Map<string, AuditRecord[]>>()
+  for (const r of records) {
+    const day = days.get(dayKey(r.at)) ?? new Map<string, AuditRecord[]>()
+    days.set(dayKey(r.at), day)
+    day.set(who(r), [...(day.get(who(r)) ?? []), r])
+  }
+  const ordered: AuditRecord[] = []
+  const heads = new Map<string, { day?: string; session?: string }>()
+  for (const sessions of days.values()) {
+    let first = true
+    for (const rs of sessions.values()) {
+      const r = rs[0]
+      heads.set(r.id, {
+        day: first ? dayLabel(r.at) : undefined,
+        session: who(r),
+      })
+      first = false
+      ordered.push(...rs)
+    }
+  }
+  return { ordered, heads }
 }
