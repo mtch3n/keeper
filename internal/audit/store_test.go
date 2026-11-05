@@ -125,25 +125,3 @@ func Test_LOG_C5_ShorterRetentionPrunesOnTheNextRun(t *testing.T) {
 		t.Errorf("files after shortening = %v, want only the 2-day-old one", files)
 	}
 }
-
-func Test_LOG_C6_APlaintextLogIsReportedAndNeverRead(t *testing.T) {
-	root := t.TempDir()
-	legacy := filepath.Join(root, "audit.log")
-	if err := os.WriteFile(legacy, []byte(`{"id":"plain"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	l, err := New(Config{Dir: filepath.Join(root, "activity"), Key: testKey, Detector: detect.NewPatterns(), Now: func() time.Time { return today }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	if got := l.LegacyPlaintext(); got != legacy {
-		t.Errorf("LegacyPlaintext = %q, want %q", got, legacy)
-	}
-	recs, _ := records(t, l, ports.AuditFilter{})
-	for _, r := range recs {
-		if r.ID == "plain" {
-			t.Error("the plaintext log was read")
-		}
-	}
-}

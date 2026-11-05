@@ -341,7 +341,6 @@ export interface DoctorReport {
   /** How long a database's connections stay open with nobody using them. */
   connection_idle_minutes: number
   /** A plaintext log an earlier keeper left, never read; absent when there is none. */
-  legacy_audit_log?: string
   /** What was examining the data, and whether it could reach the network. */
   detector?: { name: string; version?: string; network_posture: string }
 }

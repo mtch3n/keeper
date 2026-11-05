@@ -388,4 +388,3 @@ func (fakeDetector) Identity() ports.DetectorIdentity {
 }
 
 func (*fakeAuditLog) Prune(context.Context, int) error { return nil }
-func (*fakeAuditLog) LegacyPlaintext() string          { return "" }

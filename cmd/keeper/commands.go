@@ -520,9 +520,6 @@ func runDoctor(args []string) error {
 	}
 	fmt.Printf("activity log  encrypted with the vault's key, kept %d day(s)\n", rep.LogRetentionDays)
 	fmt.Printf("databases     connected only when needed; closed after %d idle minute(s)\n", rep.ConnectionIdleMinutes)
-	if rep.LegacyAuditLog != "" {
-		fmt.Printf("              a plaintext log from an earlier keeper is still at %s; it is never read — delete it when you no longer need it\n", rep.LegacyAuditLog)
-	}
 	if rep.Detector != nil && rep.Detector.Name != "" {
 		// R8.5g: "what was examining my data, and could it talk to anyone" has
 		// to be answerable after the fact, so it is answerable now.

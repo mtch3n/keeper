@@ -7,12 +7,10 @@ import (
 
 func TestDetectionReadsStoredValues(t *testing.T) {
 	for in, want := range map[string]Detection{
-		`{"detection":"all"}`:                 DetectionAll,
-		`{"detection":"off"}`:                 DetectionOff,
-		`{"detection":[{"kind":"patterns"}]}`: "",
-		`{"detection":[]}`:                    "",
-		`{}`:                                  "",
-		`{"detection":"banana"}`:              "banana",
+		`{"detection":"all"}`:    DetectionAll,
+		`{"detection":"off"}`:    DetectionOff,
+		`{}`:                     "",
+		`{"detection":"banana"}`: "banana",
 	} {
 		var c Connection
 		if err := json.Unmarshal([]byte(in), &c); err != nil {

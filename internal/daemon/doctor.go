@@ -30,9 +30,6 @@ type DoctorReport struct {
 	// ConnectionIdleMinutes is how long a database's connections stay open
 	// with nobody using them.
 	ConnectionIdleMinutes int `json:"connection_idle_minutes"`
-	// LegacyAuditLog is a plaintext audit.log an earlier keeper left, which
-	// the encrypted log never reads; the operator can delete it.
-	LegacyAuditLog string `json:"legacy_audit_log,omitzero"`
 }
 
 // ConnectionHealth is one connection's line in doctor: what the vault holds,
@@ -74,7 +71,6 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 		rep.Detector = &id
 	}
 
-	rep.LegacyAuditLog = d.deps.Audit.LegacyPlaintext()
 	if st, err := d.deps.Vault.Settings(ctx); err == nil {
 		rep.LogRetentionDays = st.LogRetentionDays
 		rep.ConnectionIdleMinutes = st.ConnectionIdleMinutes

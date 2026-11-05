@@ -72,7 +72,6 @@ type Log struct {
 	key      func() ([]byte, error)
 	detector ports.Detector
 	now      func() time.Time
-	legacy   string
 
 	mu         sync.Mutex
 	aead       cipher.AEAD
@@ -97,20 +96,8 @@ func New(cfg Config) (*Log, error) {
 	if l.now == nil {
 		l.now = time.Now
 	}
-	if p := filepath.Join(filepath.Dir(cfg.Dir), "audit.log"); fileExists(p) {
-		l.legacy = p
-	}
 	return l, nil
 }
-
-func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
-}
-
-// LegacyPlaintext is the path of a plaintext audit.log an earlier keeper left,
-// or empty. It is reported so the operator can remove it, and never read.
-func (l *Log) LegacyPlaintext() string { return l.legacy }
 
 // Unreadable is how many lines the most recent read could not open: a damaged
 // or foreign line is skipped, counted and reported, never fatal.
