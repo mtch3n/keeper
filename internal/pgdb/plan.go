@@ -255,6 +255,11 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 		}
 	}
 
+	if len(ordered) == 0 && !facts.Opaque {
+		// With no relation in scope the pipeline allows a computed column
+		// (R7.6), so nothing may hide in a constant the planner made.
+		facts.Opaque = foldable(ctx, c)
+	}
 	names, oids, err := db.resolveRelations(ctx, c, ordered)
 	if err != nil {
 		return nil, err
@@ -325,6 +330,36 @@ func callsUnsafe(ctx context.Context, c *conn, planJSON []byte, functions []stri
 		return true, true
 	}
 	return v, foreign || f
+}
+
+// foldableSQL finds an IMMUTABLE function outside pg_catalog and
+// information_schema that the session role may call. PostgreSQL runs such a
+// call while it plans when its arguments are constants, so EXPLAIN shows the
+// result as a constant and names neither the function nor what it read: a
+// function declared IMMUTABLE that reads a table puts that table's values into
+// a column the plan says came from nowhere. Extension functions are not exempt.
+const foldableSQL = `SELECT EXISTS (
+  SELECT 1 FROM pg_proc
+   WHERE provolatile = 'i'
+     AND pronamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+     AND has_function_privilege(oid, 'EXECUTE'))`
+
+// foldable reports whether a constant in this plan could be a value a
+// planner-time call read. A failed lookup counts as yes.
+func foldable(ctx context.Context, c *conn) bool {
+	sp, err := c.tx.Begin(ctx)
+	if err != nil {
+		return true
+	}
+	var found bool
+	if err := sp.QueryRow(ctx, foldableSQL).Scan(&found); err != nil {
+		_ = sp.Rollback(ctx)
+		return true
+	}
+	if sp.Commit(ctx) != nil {
+		return true
+	}
+	return found
 }
 
 // resolveColumnsSQL turns (schema, relation, column) names into the
