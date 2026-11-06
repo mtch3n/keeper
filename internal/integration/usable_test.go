@@ -30,6 +30,13 @@ func TestMask_MASK_C24_SystemCatalogsAnswerDiagnosticsWithoutAsking(t *testing.T
 
 func TestMask_MASK_C25_SystemTextKeeperDoesNotClassifyStaysHidden(t *testing.T) {
 	e := newLeanEnv(t)
+	row := parseBody(t, e.query(t, e.agent, e.ro, "SELECT backend_type, query FROM pg_stat_activity WHERE pid = pg_backend_pid()"))
+	if len(row.Rows) != 1 {
+		t.Fatalf("no row for this session: %v", row)
+	}
+	if kind, _ := row.Rows[0][0].(string); kind != "client backend" {
+		t.Errorf("backend_type = %v, want it shown beside the hidden query", row.Rows[0][0])
+	}
 	for _, sql := range []string{
 		"SELECT query FROM pg_stat_activity WHERE pid = pg_backend_pid()",
 		"SELECT pg_get_functiondef('public.luhn(text)'::regprocedure) AS def",
