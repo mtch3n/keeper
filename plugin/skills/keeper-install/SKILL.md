@@ -63,9 +63,10 @@ keeper daemon start
 socket, the key source and each connection's state.
 
 If `version` reports two different numbers, an old daemon is still running from
-before an upgrade. `keeper daemon restart` replaces it. **Tell the user what that
-costs first**: it cancels every waiting ticket and invalidates every token that
-any agent session holds. Never restart it on your own initiative.
+before an upgrade. keeper's MCP server restarts it on its next call when nothing
+waits on a person. When the error says approvals, tickets or local requests are
+waiting, `keeper daemon restart` replaces it. **Tell the user what that costs
+first**: it cancels what is waiting. Never restart it on your own initiative.
 
 ## 3. Is there a connection
 

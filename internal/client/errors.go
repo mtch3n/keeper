@@ -26,18 +26,23 @@ func decodeError(resp *http.Response) error {
 
 // VersionMismatchError is returned by [Dial] when the daemon's build does not
 // match this client's. SPEC §3.4: the client must name both versions and
-// point at `keeper daemon restart`, and must never restart the daemon itself
-// — doing so would cancel every other window's pending tickets.
+// point at `keeper daemon restart`. keeper mcp settles a mismatch itself when
+// nothing waits on a person (UPG-D1, UPG-D2); Waiting says why it did not.
 type VersionMismatchError struct {
 	ClientVersion string
 	DaemonVersion string
+	// Waiting is how many approvals, tickets and local requests a restart
+	// would cancel, when that is why the daemon was not restarted.
+	Waiting int
 }
 
 func (e *VersionMismatchError) Error() string {
-	return fmt.Sprintf(
-		"keeper: version mismatch — this client is %s, the running daemon is %s; run `keeper daemon restart` (never automatic: it cancels every other window's pending tickets)",
-		e.ClientVersion, e.DaemonVersion,
-	)
+	msg := fmt.Sprintf("keeper: version mismatch — this client is %s, the running daemon is %s; run `keeper daemon restart`",
+		e.ClientVersion, e.DaemonVersion)
+	if e.Waiting > 0 {
+		msg += fmt.Sprintf(". keeper did not restart it because %d approval(s), ticket(s) or local request(s) are waiting; a restart cancels them", e.Waiting)
+	}
+	return msg
 }
 
 // StaleSessionError means the socket connection this Client held died and

@@ -9,13 +9,16 @@ import (
 func TestEffectiveSettingsOfStoredValues(t *testing.T) {
 	c := &types.Connection{ID: "c1", Name: "prod", Reads: "", Writes: "approve"}
 	h := connectionHealth(c)
-	if h.Reads != types.ReadsAlways {
-		t.Errorf("stored empty reads show as %q, want always", h.Reads)
+	if h.Reads != types.ReadsUncertain {
+		t.Errorf("stored empty reads show as %q, want the registration default uncertain", h.Reads)
+	}
+	if h := connectionHealth(&types.Connection{Reads: "sometimes"}); h.Reads != types.ReadsAlways {
+		t.Errorf("stored unknown reads show as %q, want always", h.Reads)
 	}
 	if h.Writes != types.WritesOff {
 		t.Errorf("stored approve writes show as %q, want off", h.Writes)
 	}
-	if got := updated(c); got.Reads != types.ReadsAlways || got.Writes != types.WritesOff {
+	if got := updated(c); got.Reads != types.ReadsUncertain || got.Writes != types.WritesOff {
 		t.Errorf("update result shows reads %q writes %q", got.Reads, got.Writes)
 	}
 	if c.Reads != "" || c.Writes != "approve" {

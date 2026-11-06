@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
@@ -72,10 +73,14 @@ func (d *Daemon) Connections(ctx context.Context) ([]ConnectionSummary, error) {
 	return out, nil
 }
 
-// effectiveReads is what the pipeline does with a stored value: an empty or
-// unknown one asks on every read, so it shows as always.
+// effectiveReads is what the pipeline does with a stored value: none is the
+// registration default, uncertain, and an unknown one asks on every read, so it
+// shows as always.
 func effectiveReads(r types.Reads) types.Reads {
-	if r.Valid() {
+	switch {
+	case r == "":
+		return types.ReadsUncertain
+	case r.Valid():
 		return r
 	}
 	return types.ReadsAlways
@@ -127,13 +132,21 @@ func (d *Daemon) Describe(ctx context.Context, ref string) (*ConnectionDetail, e
 	// Every catalog layer needs the catalog open, and opening is what an
 	// unreachable database answers with a connect timeout. Asking once keeps
 	// describe from paying that timeout again for each layer.
-	if cat, err := d.deps.Catalogs(id); err != nil {
-		for _, reason := range []string{"entries unavailable", "backlog unavailable", "freshness unknown"} {
-			det.Degradations = append(det.Degradations, types.Degradation{Layer: "catalog", Reason: reason})
+	cat, err := d.deps.Catalogs(id)
+	if err != nil {
+		// The database could not be reached, or its catalog read: say why once,
+		// and do not try again for the layers below (HLT-D3).
+		reason := "catalog unavailable"
+		if ke, ok := errors.AsType[*types.Error](err); ok {
+			reason = ke.Summary
+			if ke.Action != "" {
+				reason += "; " + ke.Action
+			}
 		}
-	} else {
-		d.describeCatalog(ctx, id, cat, det)
+		det.Degradations = append(det.Degradations, types.Degradation{Layer: "database", Reason: reason})
+		return det, nil
 	}
+	d.describeCatalog(ctx, id, cat, det)
 	if rels, err := d.deps.Executor.Introspect(ctx, id); err == nil {
 		for _, r := range rels {
 			if !slices.Contains(det.Schemas, r.Ref.Schema) {

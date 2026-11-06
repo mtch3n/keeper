@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -177,4 +179,38 @@ func shutdown(ctx context.Context, socketPath string) {
 		return
 	}
 	resp.Body.Close()
+}
+
+// DaemonStatus reads the running daemon's version and, from a daemon that
+// reports it, how many approvals, tickets and local requests a restart would
+// cancel. It needs no session, so it answers across a version mismatch.
+// waiting is nil when the daemon does not report the count.
+func DaemonStatus(ctx context.Context, socketPath string) (version string, waiting *int, err error) {
+	hc := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", socketPath)
+			},
+		},
+		Timeout: 5 * time.Second,
+	}
+	defer hc.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/version", nil)
+	if err != nil {
+		return "", nil, err
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Version string `json:"version"`
+		Waiting *int   `json:"waiting"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body); err != nil {
+		return "", nil, err
+	}
+	return body.Version, body.Waiting, nil
 }

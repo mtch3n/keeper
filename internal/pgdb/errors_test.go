@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -216,4 +217,39 @@ func Test_HLT_C2_AConnectTimeoutIsUnreachableNotATimeout(t *testing.T) {
 func isCode(err error, code types.Code) bool {
 	ke, ok := errors.AsType[*types.Error](err)
 	return ok && ke.Code == code
+}
+
+func Test_HLT_C3_AConnectTimeoutSaysTheServerDidNotAnswer(t *testing.T) {
+	// A listener that accepts and never speaks is what a server behind a
+	// filtering firewall looks like to a client with a deadline.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	_, err = pgx.Connect(ctx, "postgres://u@"+ln.Addr().String()+"/db?sslmode=disable")
+	if err == nil {
+		t.Fatal("a silent listener completed a login")
+	}
+	ke, ok := errors.AsType[*types.Error](convert(err))
+	if !ok || ke.Code != types.CodeUnreachable || !strings.Contains(ke.Summary, "did not answer") ||
+		!strings.Contains(ke.Action, "firewall") || !strings.Contains(ke.Action, "VPN") || !strings.Contains(ke.Action, "allowed addresses") {
+		t.Errorf("convert(connect timeout) = %+v, want the no-answer reason", ke)
+	}
+}
+
+func TestAnUnresolvableHostSaysSo(t *testing.T) {
+	_, err := pgx.Connect(t.Context(), "postgres://u@keeper-test-no-such-host.invalid:5432/db?sslmode=disable&connect_timeout=2")
+	if err == nil {
+		t.Skip("the .invalid name resolved")
+	}
+	ke, ok := errors.AsType[*types.Error](convert(err))
+	if !ok || ke.Code != types.CodeUnreachable || !strings.Contains(ke.Summary, "does not resolve") {
+		t.Errorf("convert(no such host) = %+v, want the name reason", ke)
+	}
+	if strings.Contains(ke.Summary+ke.Action, "keeper-test-no-such-host") {
+		t.Errorf("the host name was copied into the error: %+v", ke)
+	}
 }

@@ -128,6 +128,9 @@ func connectionShow(ctx context.Context, args []string) error {
 	if detail.CatalogStatus.Unclassified > 0 {
 		fmt.Printf("           %d unclassified column(s)\n", detail.CatalogStatus.Unclassified)
 	}
+	for _, dg := range detail.Degradations {
+		fmt.Printf("%-10s %s\n", dg.Layer+":", dg.Reason)
+	}
 	return nil
 }
 

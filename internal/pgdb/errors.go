@@ -2,8 +2,12 @@ package pgdb
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"net"
 	"strings"
+	"syscall"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -78,13 +82,15 @@ func convert(err error) error {
 	if ke, ok := errors.AsType[*types.Error](err); ok {
 		return ke
 	}
+	// A connection that never opened is not a statement that failed. It is
+	// checked before the server's own code, because a login refused while
+	// connecting carries one, and before the context, because a connect that
+	// times out is both.
+	if _, ok := errors.AsType[*pgconn.ConnectError](err); ok {
+		return unreachable(err)
+	}
 	if pg, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return keeperError(codeForSQLState(pg.Code, pg.Routine))
-	}
-	// A connection that never opened is not a statement that failed. It is
-	// checked before the context, because a connect that times out is both.
-	if _, ok := errors.AsType[*pgconn.ConnectError](err); ok {
-		return keeperError(types.CodeUnreachable)
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
@@ -96,6 +102,50 @@ func convert(err error) error {
 	default:
 		return keeperError(types.CodeInternal)
 	}
+}
+
+// unreachable says which part of connecting failed (HLT-D2). The reason is
+// chosen from the Go error type and the SQLSTATE; no text from the server or
+// the resolver is copied, and every reason keeps the code unreachable.
+func unreachable(err error) *types.Error {
+	summary, action := summaries[types.CodeUnreachable], actions[types.CodeUnreachable]
+	var dns *net.DNSError
+	var netErr net.Error
+	var tlsVerify *tls.CertificateVerificationError
+	var tlsHeader tls.RecordHeaderError
+	var unknownCA x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	pg, isPG := errors.AsType[*pgconn.PgError](err)
+	switch {
+	case isPG && (pg.Code == "28P01" || className(pg.Code) == "28"):
+		summary = "the server rejected this connection's login"
+		action = "check the password and the role, and that the server accepts this machine's address (pg_hba.conf, or the provider's access rules)"
+	case isPG && pg.Code == "3D000":
+		summary = "the database this connection names does not exist on the server"
+		action = "check the database name of this connection"
+	case isPG && pg.Code == "53300":
+		summary = "the server has no free connections"
+		action = "retry later, or ask an operator to raise max_connections"
+	case isPG && pg.Code == "57P03":
+		summary = "the server is starting up or shutting down"
+		action = "retry in a moment"
+	case errors.As(err, &dns):
+		summary = "the host name of this connection does not resolve"
+		action = "check the host name, and the VPN or DNS this machine needs to find it"
+	case errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH):
+		summary = "this machine has no route to the server"
+		action = "connect the VPN or network this server is reached through, and check that it is reachable from this machine"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		summary = "the server refused the connection: nothing is listening on that port"
+		action = "check that the server is running and reachable from this machine on that port"
+	case errors.As(err, &tlsVerify), errors.As(err, &tlsHeader), errors.As(err, &unknownCA), errors.As(err, &hostname):
+		summary = "the TLS handshake with the server failed"
+		action = "check this connection's sslmode and the server's certificate"
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
+		summary = "the server did not answer before the connect timeout"
+		action = "a firewall, a VPN or the server's allowed addresses keep this machine from reaching it; check that it is reachable from this machine"
+	}
+	return &types.Error{Code: types.CodeUnreachable, Summary: summary, Action: action}
 }
 
 // codeForSQLState maps a SQLSTATE to keeper's coarser closed set. The mapping is

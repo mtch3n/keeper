@@ -189,8 +189,12 @@ func (s *Server) schema(ctx context.Context, _ *reqInfo, _ http.ResponseWriter, 
 
 type versionResponse struct {
 	Version string `json:"version"`
+	// Waiting counts approvals, tickets and local requests a restart would
+	// cancel. It needs no session, because a client at another version is
+	// refused one.
+	Waiting int `json:"waiting"`
 }
 
 func (s *Server) version(_ context.Context, _ *reqInfo, _ http.ResponseWriter, _ *http.Request) (any, error) {
-	return versionResponse{Version: s.d.Version()}, nil
+	return versionResponse{Version: s.d.Version(), Waiting: s.d.Waiting()}, nil
 }
