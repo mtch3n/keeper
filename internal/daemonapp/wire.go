@@ -169,6 +169,8 @@ func newCatalogs(v *vault.Vault, exec *pgdb.DB, detectors ports.DetectorFor, dir
 	return &catalogs{
 		store: catalog.NewStore(catalog.Dependencies{
 			Introspector: exec,
+			System:       exec,
+			Stats:        exec,
 			Sampler:      exec,
 			Privileges:   exec,
 			Fingerprints: exec,

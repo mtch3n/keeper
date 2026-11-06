@@ -176,7 +176,9 @@ func personalByName(name string) (types.ColumnPolicy, bool) {
 		return types.ColumnPolicy{Policy: types.PolicyRedact}, true
 	case has("salary", "wage", "wages", "income", "compensation", "pay_rate"):
 		return types.ColumnPolicy{Policy: types.PolicyRedact}, true
-	case has("full_name", "first_name", "last_name", "given_name", "family_name", "surname", "middle_name"):
+	case has("full_name", "first_name", "last_name", "given_name", "family_name", "surname", "middle_name",
+		"fullname", "firstname", "lastname", "contact_name", "customer_name", "patient_name", "member_name",
+		"owner_name", "holder_name", "cardholder_name", "recipient_name", "employee_name", "display_name", "nickname"):
 		return types.ColumnPolicy{Policy: types.PolicyToken, Namespace: "person_name"}, true
 	case has("address", "street", "street_address", "postal_address", "home_address"):
 		return types.ColumnPolicy{Policy: types.PolicyRedact}, true

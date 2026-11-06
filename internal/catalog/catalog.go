@@ -52,6 +52,17 @@ type Catalog struct {
 	overlay   map[columnKey]types.ColumnPolicy
 	merged    map[columnKey]types.ColumnPolicy
 	cache     *identityCache
+	system    map[uint32]systemRelation
+
+	// refresh re-introspects, re-resolves and re-classifies. Fresh calls it
+	// when a relation changed shape or was created after the catalog opened.
+	refresh func(ctx context.Context) error
+	// refreshMu lets one statement refresh while the others wait for it.
+	refreshMu sync.Mutex
+	// unresolvable are relations a refresh did not resolve, such as a foreign
+	// table or one the role cannot read. They do not trigger another. Guarded
+	// by refreshMu.
+	unresolvable map[uint32]bool
 
 	// writeMu serializes the edit path (Put, Raise): read-modify-write-reload
 	// against the YAML files. mu above guards only the in-memory maps, so a
@@ -131,7 +142,8 @@ func (c *Catalog) Lookup(tableOID uint32, attNum uint16) (types.ColumnPolicy, bo
 	defer c.mu.RUnlock()
 	cc, ok := c.cache.lookupColumn(tableOID, attNum)
 	if !ok {
-		return types.ColumnPolicy{}, false
+		p, ok := c.system[tableOID].cols[attNum]
+		return p, ok
 	}
 	p, ok := c.merged[cc.Column]
 	return p, ok
@@ -152,6 +164,10 @@ func (c *Catalog) Relation(tableOID uint32) (types.RelationRef, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	ref, _, ok := c.cache.relation(tableOID)
+	if !ok {
+		sr, ok := c.system[tableOID]
+		return sr.ref, ok
+	}
 	return ref, ok
 }
 
@@ -166,16 +182,68 @@ func (c *Catalog) Readable(ctx context.Context, rel types.RelationRef) ([]string
 }
 
 // Fresh reports whether the catalog's fingerprints still match the database.
-// A false answer is uncertainty, not permission (SPEC R5.6b): with no
-// Fingerprinter configured, or with a relation this cache has never resolved,
+// A relation that changed shape, or that was created after the catalog opened,
+// is re-resolved and classified first (SPEC §5.1: resolved at connect and on
+// fingerprint change), so a new table is classified rather than unknown. A
+// false answer is uncertainty, not permission (SPEC R5.6b): with no
+// Fingerprinter configured, or a relation still unresolved after the refresh,
 // freshness cannot be established and Fresh says so rather than guessing.
+// A system catalog relation does not drift and is not checked.
 func (c *Catalog) Fresh(ctx context.Context, relations []uint32) (bool, error) {
 	if c.fingerprints == nil {
 		return false, nil
 	}
+	fresh, err := c.fresh(ctx, relations)
+	if fresh || err != nil || c.refresh == nil {
+		return fresh, err
+	}
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	if fresh, err := c.fresh(ctx, relations); fresh || err != nil {
+		return fresh, err
+	}
+	if !c.worthRefreshing(relations) {
+		return false, nil
+	}
+	if err := c.refresh(ctx); err != nil {
+		return false, err
+	}
+	c.mu.RLock()
+	for _, oid := range relations {
+		if _, ok := c.cache.storedFingerprint(oid); !ok {
+			if c.unresolvable == nil {
+				c.unresolvable = map[uint32]bool{}
+			}
+			c.unresolvable[oid] = true
+		}
+	}
+	c.mu.RUnlock()
+	return c.fresh(ctx, relations)
+}
+
+// worthRefreshing is false when every relation the cache lacks already failed
+// to resolve and every one it has still matches.
+func (c *Catalog) worthRefreshing(relations []uint32) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, oid := range relations {
+		if _, ok := c.system[oid]; ok {
+			continue
+		}
+		if _, ok := c.cache.storedFingerprint(oid); ok || !c.unresolvable[oid] {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Catalog) fresh(ctx context.Context, relations []uint32) (bool, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, oid := range relations {
+		if _, ok := c.system[oid]; ok {
+			continue
+		}
 		stored, ok := c.cache.storedFingerprint(oid)
 		if !ok {
 			return false, nil

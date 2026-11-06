@@ -28,6 +28,7 @@ func (e *leanEnv) registerPathless(t *testing.T, name string) string {
 
 func TestMask_MASK_C17_ANewProfileIsUsableWithNoCatalogStep(t *testing.T) {
 	e := newLeanEnv(t)
+	e.super(t, `ANALYZE customers`)
 	conn := e.registerPathless(t, "fresh")
 	body := e.query(t, e.agent, conn, "SELECT id, created_at, email, loyalty_tier FROM customers ORDER BY id LIMIT 5")
 
@@ -48,8 +49,8 @@ func TestMask_MASK_C17_ANewProfileIsUsableWithNoCatalogStep(t *testing.T) {
 		if mail, _ := row[2].(string); !strings.Contains(mail, "email") || strings.Contains(mail, "@") {
 			t.Errorf("row %d email = %v, want a token", i, row[2])
 		}
-		if tier, _ := row[3].(string); !strings.Contains(tier, "redacted") {
-			t.Errorf("row %d loyalty_tier = %v, want redacted", i, row[3])
+		if tier, _ := row[3].(string); tier == "" || strings.Contains(tier, "redacted") {
+			t.Errorf("row %d loyalty_tier = %v, want it scanned and shown", i, row[3])
 		}
 	}
 	if !strings.Contains(out.Hint, "keeper catalog edit fresh") {

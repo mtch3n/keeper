@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"context"
 	"fmt"
 	"maps"
+	"reflect"
+	"strings"
 
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
@@ -11,7 +14,12 @@ import (
 // classifyDefault is the policy a column gets when nobody has classified it:
 // a name that says personal data wins, then the column's type decides. A token
 // needs a text value to hash, so a personal name on any other type is redacted.
-func classifyDefault(kind byte, col ports.Column) types.ColumnPolicy {
+//
+// Unnamed text is scanned only when the planner's statistics say it is short
+// and has few distinct values, like a status or a tier: pattern detection does
+// not find a person's name, and free text is where a name is written. Free text,
+// and text with no statistics yet, is redacted.
+func classifyDefault(kind byte, col ports.Column, shape TextShape, known bool) types.ColumnPolicy {
 	if kind == 'v' || kind == 'm' {
 		// A view column can be a base column under another name; its mask is not
 		// carried over, so only a person's declaration lets it through.
@@ -27,8 +35,29 @@ func classifyDefault(kind byte, col ports.Column) types.ColumnPolicy {
 	switch family {
 	case ports.FamilyNumeric, ports.FamilyBoolean, ports.FamilyDateTime, ports.FamilyUUID:
 		return types.ColumnPolicy{Policy: types.PolicyAllow}
+	case ports.FamilyText:
+		// A column called just "name" names a person as often as a product,
+		// and its values are short and few, so the statistics cannot tell.
+		if secretByName(col.Name) || strings.EqualFold(col.Name, "name") {
+			return types.ColumnPolicy{Policy: types.PolicyRedact}
+		}
+		// Detection masks the identifiers it finds and the rest of the text
+		// shows. With detection off, or a detector that fails, the cell is
+		// redacted whole, so this is never weaker than redact.
+		if known && shape.categorical() {
+			return types.ColumnPolicy{Policy: types.PolicyScan}
+		}
+		return types.ColumnPolicy{Policy: types.PolicyRedact}
 	}
 	return types.ColumnPolicy{Policy: types.PolicyRedact}
+}
+
+// secretByName is a text column whose name says it holds a credential.
+// Detection does not recognise a key or a hash, so scanning would release it.
+func secretByName(name string) bool {
+	return nameHas(name)("key", "api_key", "apikey", "secret", "client_secret", "token",
+		"access_token", "refresh_token", "password", "passwd", "password_hash", "hash",
+		"salt", "private_key", "credential", "credentials", "otp", "pin")
 }
 
 func tokenIfText(p types.ColumnPolicy, family ports.TypeFamily) types.ColumnPolicy {
@@ -53,30 +82,31 @@ func contactByName(name string) (types.ColumnPolicy, bool) {
 	return types.ColumnPolicy{}, false
 }
 
-// classify writes a default into the overlay for every column that has no entry
-// in either file. A committed entry is a person's decision and an overlay entry
-// is an earlier default, so neither is touched and a second run adds nothing.
-func (c *Catalog) classify(relations []ports.Relation) error {
+// classify rewrites the overlay as the default for every column with no
+// committed entry. A committed entry is a person's decision and is never
+// touched. The overlay holds only defaults, so it is recomputed rather than
+// kept: a default written by an older rule would otherwise outlive the rule.
+func (c *Catalog) classify(relations []ports.Relation, shapes map[columnKey]TextShape) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
 	c.mu.RLock()
-	merged := c.merged
-	overlay := maps.Clone(c.overlay)
+	committed := c.committed
+	before := c.overlay
 	c.mu.RUnlock()
 
-	added := false
+	overlay := map[columnKey]types.ColumnPolicy{}
 	for _, rel := range relations {
 		for _, col := range rel.Columns {
 			key := columnKey{Schema: rel.Ref.Schema, Table: rel.Ref.Relation, Column: col.Name}
-			if _, ok := merged[key]; ok {
+			if _, ok := committed[key]; ok {
 				continue
 			}
-			overlay[key] = classifyDefault(rel.Kind, col)
-			added = true
+			shape, known := shapes[key]
+			overlay[key] = classifyDefault(rel.Kind, col, shape, known)
 		}
 	}
-	if !added {
+	if maps.EqualFunc(overlay, before, func(a, b types.ColumnPolicy) bool { return reflect.DeepEqual(a, b) }) {
 		return nil
 	}
 	if err := saveYAMLFile(c.paths.Overlay, overlay); err != nil {
@@ -107,4 +137,23 @@ func (c *Catalog) AutoMasked(cols []types.ColumnMeta) bool {
 		}
 	}
 	return false
+}
+
+// TextShape is what the planner's statistics say about a text column, without
+// reading a value: how many distinct values it holds and their average width.
+type TextShape struct {
+	Distinct float64
+	AvgWidth int
+}
+
+// categorical is a column like a status, a tier or a carrier: few values, all
+// short. Its thresholds keep prose out: a sentence is wider than 32 bytes.
+func (s TextShape) categorical() bool {
+	return s.Distinct > 0 && s.Distinct <= 100 && s.AvgWidth > 0 && s.AvgWidth <= 32
+}
+
+// TextStats reads pg_stats for every text column the role can read.
+// internal/pgdb's DB satisfies it.
+type TextStats interface {
+	TextShapes(ctx context.Context, connID string) (map[types.RelationRef]map[string]TextShape, error)
 }

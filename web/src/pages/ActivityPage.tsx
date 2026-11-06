@@ -397,15 +397,6 @@ function RecordDetail({ record, connection }: { record: ActivityDetail; connecti
   )
 }
 
-/** Schemas keeper's catalog never holds, so a column read from one stays unclassified. */
-const SYSTEM = new Set(['pg_catalog', 'information_schema'])
-
-/** True when a statement read system catalogs and nothing else. */
-function systemOnly(record: AuditRecord): boolean {
-  const rels = record.relations ?? []
-  return rels.length > 0 && rels.every((r) => SYSTEM.has(r.schema))
-}
-
 /** A connection's name, or what became of it. */
 function connectionName(id: string, connections: ConnectionSummary[]): string {
   return connections.find((c) => c.id === id)?.name ?? (connections.length > 0 ? 'removed connection' : id)
@@ -413,7 +404,7 @@ function connectionName(id: string, connections: ConnectionSummary[]): string {
 
 /**
  * The one action that clears a redaction keeper made because it did not know a
- * column, or, for a system catalog, that no action does. The link opens Catalog
+ * column. The link opens Catalog
  * unfiltered, where unclassified columns come first: a result names its columns
  * by their output name, which an alias or a duplicate-name suffix changes, so a
  * filter built from it can hide the column or show another table's.
@@ -423,14 +414,6 @@ function RedactionFix({ record }: { record: ActivityDetail }) {
     .filter(([, t]) => t.basis === 'unknown')
     .map(([name]) => name)
   if (unknown.length === 0) return null
-  if (systemOnly(record)) {
-    return (
-      <Fact label="redacted">
-        {plural(unknown.length, 'column')} from a system catalog. keeper does not classify system catalogs, so
-        these stay redacted.
-      </Fact>
-    )
-  }
   return (
     <Fact label="redacted">
       {plural(unknown.length, 'column')} not in the catalog.{' '}

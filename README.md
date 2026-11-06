@@ -106,10 +106,20 @@ accepts.
 ## Declare personal data columns
 
 keeper classifies a column on its own by its name and its type only. A name that
-says personal data gets `token` (or `redact` when the column is not text). Other
-text columns are redacted. Numeric, boolean, date and time, and UUID columns are
+says personal data gets `token` (or `redact` when the column is not text). A text
+column whose name says it holds a key, a secret, a token, a password or a hash is
+redacted. A text column that PostgreSQL's statistics (`pg_stats`) show as short
+with few distinct values, such as a status, gets `scan`: detection masks
+the identifiers it finds and the rest shows. Other text, text with no statistics
+yet, and a column named just `name` are redacted, because detection does not find
+a person's name in free text. Numeric, boolean, date and time, and UUID columns are
 allowed, except in a view or materialized view, where every column is
-redacted. `keeper catalog init <profile> --sample N` samples N rows per column and
+redacted. A table created later is classified the first time a statement reads it.
+
+The system catalogs (`pg_catalog`, `information_schema`) are classified by keeper
+and do not appear in the catalog: names, counts, sizes and states show. Statement
+text (`pg_stat_activity.query`), function and view definitions, passwords,
+connection strings, options and sampled column values (`pg_stats`) are redacted. `keeper catalog init <profile> --sample N` samples N rows per column and
 prints proposals in two groups, safe to accept in bulk and needs review. It only
 proposes: it changes nothing until you run `keeper catalog edit`. To set the
 policy of one column yourself:
@@ -137,7 +147,14 @@ restores them on another machine. keeper does not store the passphrase.
 - **The `uncertain` rule looks for volatile function calls in the plan.** It
   misses a function that is declared STABLE or IMMUTABLE but calls a volatile one.
   It also misses immutable functions that run at plan time. For certainty, set
-  `reads=always`.
+  `reads=always`. Volatile `pg_catalog` functions that only read, such as
+  `pg_database_size` and the `pg_stat_get_*` counters, do not count.
+- **A computed column trusts that an IMMUTABLE function does not read a table.**
+  PostgreSQL runs such a function at plan time, so the plan does not show what it
+  read. keeper redacts computed columns when the database has a callable
+  IMMUTABLE function, not installed by an extension, whose body names a table or
+  another such function, runs dynamic SQL, or is not SQL or PL/pgSQL. A function
+  that hides a table name from that check is not found.
 - **The preview of a write does not undo what a trigger does outside the
   transaction.** keeper runs a write in a transaction and rolls it back to count
   the rows. A trigger can call a function with an effect that stays, such as
