@@ -216,6 +216,9 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 
 	w := walkPlan(roots)
 	volatile, foreign := callsUnsafe(ctx, c, raw, w.functions)
+	if !w.opaque && !foreign {
+		foreign = foldable(ctx, c)
+	}
 
 	facts := &ports.PlanFacts{
 		EstimatedRows: w.rows,
@@ -255,11 +258,6 @@ func (db *DB) explain(ctx context.Context, c *conn, sql string, params []ports.P
 		}
 	}
 
-	if len(ordered) == 0 && !facts.Opaque {
-		// With no relation in scope the pipeline allows a computed column
-		// (R7.6), so nothing may hide in a constant the planner made.
-		facts.Opaque = foldable(ctx, c)
-	}
 	names, oids, err := db.resolveRelations(ctx, c, ordered)
 	if err != nil {
 		return nil, err
@@ -287,9 +285,36 @@ var callName = regexp.MustCompile(`(?:\\"([^"\\]+)\\"|([A-Za-z_][A-Za-z0-9_$]*))
 // maxScannedPlan bounds the plan text the call and flow readers will scan.
 const maxScannedPlan = 1 << 20
 
-const callsSQL = `SELECT coalesce(bool_or(provolatile = 'v'), false),
+// A volatile pg_catalog function that only reads — a size, a statistics
+// counter, the clock, a random number — is not counted. Counting them made
+// every diagnostic query wait for a person.
+const callsSQL = `SELECT coalesce(bool_or(provolatile = 'v' AND NOT (pronamespace = 'pg_catalog'::regnamespace AND (
+                   proname LIKE 'pg\_stat\_get\_%' OR proname = ANY($2)))), false),
        coalesce(bool_or(pronamespace <> 'pg_catalog'::regnamespace), false)
   FROM pg_proc WHERE lower(proname) = ANY($1)`
+
+// readOnlyVolatile are pg_catalog functions PostgreSQL marks volatile that read
+// and change nothing.
+var readOnlyVolatile = []string{
+	"pg_database_size", "pg_relation_size", "pg_total_relation_size", "pg_table_size",
+	"pg_indexes_size", "pg_tablespace_size", "random", "random_normal", "clock_timestamp",
+	"timeofday", "gen_random_uuid", "uuidv4", "uuidv7", "pg_current_wal_lsn",
+	"pg_current_wal_insert_lsn", "pg_current_wal_flush_lsn", "pg_last_wal_receive_lsn",
+	"pg_last_wal_replay_lsn", "pg_last_xact_replay_timestamp", "pg_is_in_recovery",
+	"txid_current_if_assigned", "pg_current_xact_id_if_assigned", "pg_stat_get_snapshot_timestamp",
+}
+
+// readsText are pg_catalog functions whose result is text keeper classifies
+// nowhere: a definition, a session's query, a file. Their inputs are an oid or
+// a pid, so inheriting from the inputs would allow what the catalog redacts.
+var readsText = map[string]bool{
+	"pg_get_functiondef": true, "pg_get_viewdef": true, "pg_get_ruledef": true,
+	"pg_get_triggerdef": true, "pg_get_expr": true, "pg_get_constraintdef": true,
+	"pg_get_indexdef": true, "pg_get_statisticsobjdef": true, "pg_get_partition_constraintdef": true,
+	"pg_get_function_arg_default": true, "pg_stat_get_activity": true,
+	"pg_stat_get_backend_activity": true, "current_query": true,
+	"pg_read_file": true, "pg_read_binary_file": true, "lo_get": true, "loread": true,
+}
 
 // operatorCall is a schema-qualified operator, which the server prints only for
 // an operator outside pg_catalog.
@@ -311,6 +336,9 @@ func callsUnsafe(ctx context.Context, c *conn, planJSON []byte, functions []stri
 	}
 	for i := range names {
 		names[i] = strings.ToLower(names[i])
+		if readsText[names[i]] {
+			foreign = true
+		}
 	}
 	if len(names) == 0 {
 		return false, foreign
@@ -322,7 +350,7 @@ func callsUnsafe(ctx context.Context, c *conn, planJSON []byte, functions []stri
 		return true, true
 	}
 	var v, f bool
-	if err := sp.QueryRow(ctx, callsSQL, names).Scan(&v, &f); err != nil {
+	if err := sp.QueryRow(ctx, callsSQL, names, readOnlyVolatile).Scan(&v, &f); err != nil {
 		_ = sp.Rollback(ctx)
 		return true, true
 	}
@@ -333,16 +361,42 @@ func callsUnsafe(ctx context.Context, c *conn, planJSON []byte, functions []stri
 }
 
 // foldableSQL finds an IMMUTABLE function outside pg_catalog and
-// information_schema that the session role may call. PostgreSQL runs such a
-// call while it plans when its arguments are constants, so EXPLAIN shows the
-// result as a constant and names neither the function nor what it read: a
-// function declared IMMUTABLE that reads a table puts that table's values into
-// a column the plan says came from nowhere. Extension functions are not exempt.
-const foldableSQL = `SELECT EXISTS (
-  SELECT 1 FROM pg_proc
-   WHERE provolatile = 'i'
-     AND pronamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
-     AND has_function_privilege(oid, 'EXECUTE'))`
+// information_schema that the session role may call and that can read a
+// table. PostgreSQL runs such a call while it plans when its arguments are
+// constants, so EXPLAIN shows the result as a constant and names neither the
+// function nor what it read: a function declared IMMUTABLE that reads a table
+// puts that table's values into a column the plan says came from nowhere.
+//
+// A function counts when its body names a user relation or another such
+// function, runs dynamic SQL, depends on a relation (a SQL-standard body), or
+// is in a language whose body keeper cannot read. A pure helper like a check
+// digit names none of these and does not count, and neither does a function an
+// extension installed: pgcrypto, uuid-ossp and pg_trgm put IMMUTABLE functions
+// in public on most databases, and counting either made every computed column
+// redact. Hiding a table name from this check takes the database owner
+// writing an obfuscated function; the agent cannot create one.
+const foldableSQL = `WITH f AS (
+  SELECT p.oid, p.proname, p.prolang, p.prosrc FROM pg_proc p
+   WHERE p.provolatile = 'i'
+     AND p.pronamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+     AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                      WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+     AND has_function_privilege(p.oid, 'EXECUTE'))
+SELECT EXISTS (
+  SELECT 1 FROM f
+   WHERE f.prolang NOT IN (SELECT oid FROM pg_language WHERE lanname IN ('sql', 'plpgsql'))
+      OR f.prosrc ~* '\mexecute\M'
+      OR EXISTS (SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_proc'::regclass AND d.objid = f.oid
+                    AND d.refclassid = 'pg_class'::regclass)
+      OR EXISTS (SELECT 1 FROM pg_class c
+                  WHERE c.relkind IN ('r', 'v', 'm', 'p', 'f')
+                    AND c.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+                    AND c.relnamespace::regnamespace::text NOT LIKE 'pg\_toast%'
+                    AND f.prosrc ~* ('\m' || regexp_replace(c.relname, '([^A-Za-z0-9_])', '\\\1', 'g') || '\M'))
+      OR EXISTS (SELECT 1 FROM f g
+                  WHERE g.oid <> f.oid
+                    AND f.prosrc ~* ('\m' || g.proname || '\M')))`
 
 // foldable reports whether a constant in this plan could be a value a
 // planner-time call read. A failed lookup counts as yes.

@@ -132,9 +132,8 @@ func (p *Pipeline) inherit(cat ports.Catalog, plan *ports.PlanFacts, req Request
 }
 
 // noteColumns records why a result is narrower than the table, so an approver
-// or an explain sees it, and notes a catalog that no longer matches its
-// database. Neither changes the outcome.
-func (p *Pipeline) noteColumns(ctx context.Context, st *state) {
+// or an explain sees it. It does not change the outcome.
+func (p *Pipeline) noteColumns(st *state) {
 	for _, c := range st.cols {
 		switch {
 		case c.basis == types.BasisUnknown:
@@ -143,6 +142,12 @@ func (p *Pipeline) noteColumns(ctx context.Context, st *state) {
 			st.reason(ReasonMasked)
 		}
 	}
+}
+
+// checkFresh runs before G5 so that a table created or altered after the
+// catalog opened is resolved and classified by the time its columns are looked
+// up. What is still stale after that is noted; it does not change the outcome.
+func (p *Pipeline) checkFresh(ctx context.Context, st *state) {
 	if st.plan == nil {
 		return
 	}

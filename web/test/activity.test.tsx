@@ -61,16 +61,6 @@ describe('the Activity log', () => {
     expect(screen.getByLabelText(/unclassified/i)).toBeTruthy()
   })
 
-  test('a system catalog column says keeper does not classify it and offers no link', async () => {
-    const r = rec('a1', { relations: [{ schema: 'pg_catalog', relation: 'pg_database' }], transforms: { datname: { policy: 'redact', basis: 'unknown' } } })
-    const d = daemon([r])
-    d.on('GET', '/v1/activity/a1', () => [200, r])
-    renderApp('/activity')
-    await userEvent.click(await screen.findByRole('button', { name: 'Read pg_catalog.pg_database' }))
-    expect(await screen.findByText(/keeper does not classify system catalogs/)).toBeTruthy()
-    expect(screen.queryByRole('link', { name: 'Classify in Catalog' })).toBeNull()
-  })
-
   test('a record opened while it was asked shows its result once it is approved', async () => {
     let settled = false
     const asked = rec('a1', { error_code: 'approval_required', row_count: 0 })

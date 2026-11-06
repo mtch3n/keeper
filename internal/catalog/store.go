@@ -24,6 +24,12 @@ type Dependencies struct {
 	Detectors    ports.DetectorFor
 	Privileges   PrivilegeChecker
 	Fingerprints Fingerprinter
+	// System classifies pg_catalog and information_schema. Nil leaves their
+	// columns unknown, so they redact.
+	System SystemIntrospector
+	// Stats tells categorical text from free text. Nil, or a failed read,
+	// leaves every unnamed text column redacted.
+	Stats TextStats
 }
 
 // Store is internal/catalog's implementation of ports.CatalogStore: the edit
@@ -57,16 +63,24 @@ func (s *Store) Open(ctx context.Context, connID string, paths Paths) (*Catalog,
 		return nil, err
 	}
 	if s.deps.Introspector != nil {
-		relations, err := s.deps.Introspector.Introspect(ctx, connID)
-		if err == nil {
-			err = c.resolve(ctx, relations)
+		c.refresh = func(ctx context.Context) error {
+			relations, err := s.deps.Introspector.Introspect(ctx, connID)
+			if err == nil {
+				err = c.resolve(ctx, relations)
+			}
+			if err == nil {
+				err = c.classify(relations, s.shapes(ctx, connID))
+			}
+			return err
 		}
-		if err == nil {
-			err = c.classify(relations)
-		}
-		if err != nil {
+		if err := c.refresh(ctx); err != nil {
 			c.close()
 			return nil, fmt.Errorf("catalog: opening %s: %w", connID, err)
+		}
+	}
+	if s.deps.System != nil {
+		if relations, err := s.deps.System.IntrospectSystem(ctx, connID); err == nil {
+			c.setSystem(relations)
 		}
 	}
 
@@ -110,6 +124,24 @@ func (s *Store) recatalogIdentity(ctx context.Context, c *Catalog) error {
 		return fmt.Errorf("catalog: introspecting %s: %w", c.connID, err)
 	}
 	return c.resolve(ctx, relations)
+}
+
+// shapes reads the text statistics, keyed like the catalog.
+func (s *Store) shapes(ctx context.Context, connID string) map[columnKey]TextShape {
+	out := map[columnKey]TextShape{}
+	if s.deps.Stats == nil {
+		return out
+	}
+	byRel, err := s.deps.Stats.TextShapes(ctx, connID)
+	if err != nil {
+		return out
+	}
+	for rel, cols := range byRel {
+		for col, shape := range cols {
+			out[columnKey{Schema: rel.Schema, Table: rel.Relation, Column: col}] = shape
+		}
+	}
+	return out
 }
 
 func (s *Store) get(connID string) (*Catalog, error) {

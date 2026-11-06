@@ -251,6 +251,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 		return refuse(ke)
 	}
 	st.plan = plan
+	p.checkFresh(ctx, st)
 
 	// --- G2 routing ------------------------------------------------------
 	// The statement is a write because the plan says so, not because the agent
@@ -262,7 +263,7 @@ func (p *Pipeline) query(ctx context.Context, req Request, st *state) *Decision 
 
 	// --- G5 output identity ----------------------------------------------
 	st.cols = p.resolveColumns(st.cat, described, plan, req)
-	p.noteColumns(ctx, st)
+	p.noteColumns(st)
 
 	if outcome == types.OutcomeAsk && req.Approval == nil {
 		return p.escalate(ctx, req, st)
@@ -491,6 +492,7 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 		return nil, asKeeperError(err)
 	}
 	st.plan = plan
+	p.checkFresh(ctx, st)
 
 	out := &types.ExplainResult{
 		StatementType: plan.StatementType,
@@ -502,7 +504,7 @@ func (p *Pipeline) explain(ctx context.Context, req Request, st *state) (*types.
 	out.Outcome = outcome
 	if refusal == nil {
 		st.cols = p.resolveColumns(st.cat, described, plan, req)
-		p.noteColumns(ctx, st)
+		p.noteColumns(st)
 		out.OutputColumns = publicColumns(st.cols)
 		st.outputColumns = out.OutputColumns
 	}

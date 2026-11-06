@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/mtchen/keeper/internal/catalog"
 	"github.com/mtchen/keeper/internal/ports"
 	"github.com/mtchen/keeper/internal/types"
 )
@@ -39,16 +40,26 @@ SELECT c.oid::int8,
   JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
   JOIN pg_type t ON t.oid = a.atttypid
  WHERE c.relkind IN ('r', 'v', 'm', 'p')
-   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND (n.nspname IN ('pg_catalog', 'information_schema')) = $1
    AND n.nspname NOT LIKE 'pg\_toast%'
    AND has_any_column_privilege(c.oid, 'SELECT')
  ORDER BY n.nspname, c.relname, a.attnum`
 
 // Introspect implements ports.Executor.
 func (db *DB) Introspect(ctx context.Context, connID string) ([]ports.Relation, error) {
+	return db.introspect(ctx, connID, false)
+}
+
+// IntrospectSystem lists the pg_catalog and information_schema relations the
+// role can read, so a statement over them is classified rather than unknown.
+func (db *DB) IntrospectSystem(ctx context.Context, connID string) ([]ports.Relation, error) {
+	return db.introspect(ctx, connID, true)
+}
+
+func (db *DB) introspect(ctx context.Context, connID string, system bool) ([]ports.Relation, error) {
 	var out []ports.Relation
 	err := db.withTx(ctx, connID, ports.RoleRead, readTx, func(ctx context.Context, c *conn) error {
-		rows, err := c.tx.Query(ctx, introspectSQL)
+		rows, err := c.tx.Query(ctx, introspectSQL, system)
 		if err != nil {
 			c.aborted = true
 			return convert(err)
@@ -153,4 +164,53 @@ func (db *DB) SampleColumn(ctx context.Context, connID string, rel types.Relatio
 		return nil, err
 	}
 	return out, nil
+}
+
+// textShapesSQL reads the planner's statistics for text columns: the distinct
+// count, made absolute where pg_stats gives a fraction of the rows, and the
+// average width. pg_stats shows only columns the role can read, and nothing
+// here reads a value.
+const textShapesSQL = `
+SELECT s.schemaname::text, s.tablename::text, s.attname::text,
+       CASE WHEN s.n_distinct >= 0 THEN s.n_distinct::float8
+            ELSE -s.n_distinct * greatest(c.reltuples, 0)::float8 END,
+       s.avg_width
+  FROM pg_stats s
+  JOIN pg_namespace n ON n.nspname = s.schemaname
+  JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = s.tablename
+ WHERE s.schemaname NOT IN ('pg_catalog', 'information_schema')
+   AND NOT s.inherited`
+
+// TextShapes implements catalog.TextStats.
+func (db *DB) TextShapes(ctx context.Context, connID string) (map[types.RelationRef]map[string]catalog.TextShape, error) {
+	out := map[types.RelationRef]map[string]catalog.TextShape{}
+	err := db.withTx(ctx, connID, ports.RoleRead, readTx, func(ctx context.Context, c *conn) error {
+		rows, err := c.tx.Query(ctx, textShapesSQL)
+		if err != nil {
+			c.aborted = true
+			return convert(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var schema, table, column string
+			var shape catalog.TextShape
+			var width int32
+			if err := rows.Scan(&schema, &table, &column, &shape.Distinct, &width); err != nil {
+				c.aborted = true
+				return convert(err)
+			}
+			shape.AvgWidth = int(width)
+			ref := types.RelationRef{Schema: schema, Relation: table}
+			if out[ref] == nil {
+				out[ref] = map[string]catalog.TextShape{}
+			}
+			out[ref][column] = shape
+		}
+		if err := rows.Err(); err != nil {
+			c.aborted = true
+			return convert(err)
+		}
+		return nil
+	})
+	return out, err
 }
