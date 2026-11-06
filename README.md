@@ -79,7 +79,7 @@ the dashboard (`keeper ui`).
 
 | Setting | Values | Meaning |
 |---|---|---|
-| `reads` | `always`, `uncertain`, `never` | `always`: every read asks a person first. `uncertain`: a read asks when its plan calls a volatile function. `never`: reads run without a question. |
+| `reads` | `always`, `uncertain`, `never` | `always`: every read asks a person first. `uncertain` (the default): a read asks when its plan calls a volatile function. `never`: reads run without a question. |
 | `writes` | `off`, `ask`, `allow` | `off`: a write is refused. `ask`: a person approves each write and sees the rows it changes. `allow`: a write runs. |
 | `detection` | `off`, `scan`, `all` | `scan` (the default): pattern detection examines the text of `scan` columns. `all`: it also examines the text of `allow` columns. `off`: it examines nothing, so `scan` cells are redacted whole. |
 
@@ -222,14 +222,20 @@ From source (Go 1.27 and pnpm):
 
 ```sh
 git clone https://github.com/mtch3n/keeper && cd keeper
-make build
-install -m755 bin/keeper ~/.local/bin/
+make install    # builds, then installs bin/keeper in ~/.local/bin
 ```
 
 After that, `keeper update --check` shows the published version, and
-`keeper update` verifies, replaces and restarts onto it. It stops when a session
-is connected or a ticket is waiting. `--force` overrides that. Only a person can
-run it. It is not an MCP tool.
+`keeper update` verifies, replaces and restarts onto it. It stops when an
+approval, a ticket or a local request is waiting. `--force` overrides that. Only
+a person can run it. It is not an MCP tool.
+
+An upgrade needs no step in each agent window. A `keeper mcp` from the new build
+restarts an older daemon when nothing waits on a person, and a `keeper mcp` from
+the old build replaces itself with the new binary on its next call and keeps its
+MCP session. Tokens issued before the restart stop resolving, and the first call
+after it says so once. When something is waiting, the error says how many, and
+`keeper daemon restart` restarts the daemon when you choose.
 
 ## The daemon
 

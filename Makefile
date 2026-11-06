@@ -13,7 +13,7 @@ PKGS    := ./...
 VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --dirty 2>/dev/null | sed 's/^v//' | grep . || echo dev)
 LDFLAGS := -X github.com/mtchen/keeper/internal/build.Version=$(VERSION)
 
-.PHONY: all build ui ui-audit check fmt vet staticcheck test test-race lint-explain plugin-version clean tidy dev changelog
+.PHONY: all build install ui ui-audit check fmt vet staticcheck test test-race lint-explain plugin-version clean tidy dev changelog
 
 all: check build
 
@@ -25,6 +25,11 @@ all: check build
 ## for software whose subject is holding a database credential.
 build: ui
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BIN)/keeper ./cmd/keeper
+
+## install — build and install bin/keeper in ~/.local/bin, where the plugin's
+## launcher looks. The running daemon moves onto it on the next MCP call.
+install: build
+	install -m 0755 $(BIN)/keeper $(HOME)/.local/bin/keeper
 
 ## ui — build the React app and stage it where //go:embed can see it
 ui:

@@ -60,7 +60,7 @@ var restartDaemon = client.RestartDaemon
 func runUpdate(args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	check := fs.Bool("check", false, "report what is published and change nothing")
-	force := fs.Bool("force", false, "restart even though live sessions or pending work would be lost, and install a release that is not newer")
+	force := fs.Bool("force", false, "restart even though waiting approvals, tickets or local requests would be cancelled, and install a release that is not newer")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -95,10 +95,8 @@ func runUpdate(args []string) error {
 	if loss != "" && !*force {
 		fmt.Println()
 		fmt.Println(loss)
-		fmt.Println("Updating means restarting the daemon, and a restart cancels every pending")
-		fmt.Println("ticket and permanently invalidates every token those sessions hold: the")
-		fmt.Println("reverse map is memory and the queries that minted them have to be re-run.")
-		fmt.Println("Nothing has been changed. Re-run with --force when that is acceptable.")
+		fmt.Println("Updating means restarting the daemon, and a restart cancels what is waiting.")
+		fmt.Println("Nothing has been changed. Settle it and run this again, or re-run with --force.")
 		return nil
 	}
 
@@ -222,10 +220,10 @@ func inFlight(ctx context.Context) (string, error) {
 		// guessing wrong here is silently cancelling another window's work.
 		return "the running daemon did not report its state, so what a restart would cancel is unknown", nil
 	}
+	// Connected sessions are not counted: each reconnects on its next call,
+	// and the tokens it held stop resolving, which a manual restart costs
+	// too. What is counted is what waits on someone (UPG-D2).
 	var parts []string
-	if n := len(rep.Sessions); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d agent session(s) connected", n))
-	}
 	if rep.PendingApprovals > 0 {
 		parts = append(parts, fmt.Sprintf("%d approval(s) waiting on a human", rep.PendingApprovals))
 	}

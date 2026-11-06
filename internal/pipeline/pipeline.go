@@ -377,7 +377,9 @@ func decide(st *state, conn *types.Connection, plan *ports.PlanFacts) (types.Out
 	switch conn.Reads {
 	case types.ReadsNever:
 		return types.OutcomeRun, nil
-	case types.ReadsUncertain:
+	case types.ReadsUncertain, "":
+		// No stored value is a profile registered before reads existed, and it
+		// gets the registration default. A value keeper does not know asks.
 		if !plan.Uncertain {
 			return types.OutcomeRun, nil
 		}

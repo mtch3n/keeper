@@ -52,19 +52,7 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 		KeySource: d.deps.Vault.KeySource(),
 		Sessions:  d.Sessions(),
 	}
-	d.mu.Lock()
-	rep.PendingApprovals = len(d.queue)
-	for _, tk := range d.tickets {
-		if !tk.t.State.Terminal() {
-			rep.OpenTickets++
-		}
-	}
-	for _, r := range d.requests {
-		if r.r.State == statePending {
-			rep.OpenRequests++
-		}
-	}
-	d.mu.Unlock()
+	rep.PendingApprovals, rep.OpenTickets, rep.OpenRequests = d.waiting()
 
 	if d.deps.Detector != nil {
 		id := d.deps.Detector.Identity()
@@ -88,4 +76,31 @@ func (d *Daemon) Doctor(ctx context.Context) *DoctorReport {
 
 func connectionHealth(c *types.Connection) ConnectionHealth {
 	return ConnectionHealth{ID: c.ID, Name: c.Name, Reads: effectiveReads(c.Reads), Writes: effectiveWrites(c.Writes), Limits: c.Limits}
+}
+
+// waiting counts what a restart would cancel under someone: approvals waiting
+// on a person, tickets not yet settled, and local requests not yet answered.
+func (d *Daemon) waiting() (approvals, tickets, requests int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	approvals = len(d.queue)
+	for _, tk := range d.tickets {
+		if !tk.t.State.Terminal() {
+			tickets++
+		}
+	}
+	for _, r := range d.requests {
+		if r.r.State == statePending {
+			requests++
+		}
+	}
+	return approvals, tickets, requests
+}
+
+// Waiting is the sum of waiting, which `/v1/version` reports without a
+// session so that a newer client can tell whether restarting this daemon
+// would cancel anything (UPG-D2).
+func (d *Daemon) Waiting() int {
+	a, t, r := d.waiting()
+	return a + t + r
 }

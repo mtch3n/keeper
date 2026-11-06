@@ -9,7 +9,7 @@ import (
 )
 
 func TestPerm_PERM_C3_aStoredReadsValueKeeperDoesNotKnowAsks(t *testing.T) {
-	for _, stored := range []types.Reads{"", "sometimes", "ALWAYS", "permissive"} {
+	for _, stored := range []types.Reads{"sometimes", "ALWAYS", "permissive"} {
 		h := newHarness(t, func(h *harness) {
 			h.authority.conn.Reads = stored
 			h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
@@ -23,6 +23,27 @@ func TestPerm_PERM_C3_aStoredReadsValueKeeperDoesNotKnowAsks(t *testing.T) {
 		if h.exec.called("Run") {
 			t.Errorf("reads=%q reached the database", stored)
 		}
+	}
+}
+
+func TestPerm_PERM_C20_aProfileWithNoStoredReadsUsesTheRegistrationDefault(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.authority.conn.Reads = ""
+		h.exec.cols = []types.ColumnMeta{fromColumn("id", "int8", cleanOID, 1)}
+		h.exec.rows = [][]any{{int64(1)}}
+		h.exec.plan = readPlan(1, cleanRef)
+	})
+	dec := h.query(t, Request{SQL: "SELECT id FROM clean_ids"})
+	if dec.Result == nil || dec.Escalation != nil {
+		t.Errorf("reads unset asked for a statement with no volatile call: %+v", dec)
+	}
+	h = newHarness(t, func(h *harness) {
+		h.authority.conn.Reads = ""
+		h.exec.plan = readPlan(1, cleanRef)
+		h.exec.plan.Uncertain = true
+	})
+	if dec := h.query(t, Request{SQL: "SELECT random()"}); dec.Escalation == nil {
+		t.Errorf("reads unset ran a volatile call without asking: %+v", dec)
 	}
 }
 

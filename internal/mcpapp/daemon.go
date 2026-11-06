@@ -21,6 +21,9 @@ type daemonHolder struct {
 	err error // sticky: a version mismatch or dead daemon does not retry itself
 	// sock is the daemon's socket. Empty means the default path.
 	sock string
+	// session is the stdio session, which a version mismatch hands to the
+	// daemon's build. Nil when not serving stdio.
+	session *session
 }
 
 // get returns the daemon connection, dialing (and starting keeperd if
@@ -66,6 +69,11 @@ func (h *daemonHolder) get(ctx context.Context, req *mcp.CallToolRequest) (*clie
 	}
 
 	cli, err := client.Dial(ctx, sock, info)
+	if vm, ok := errors.AsType[*client.VersionMismatchError](err); ok {
+		if settle(ctx, h.session, sock, vm) == nil {
+			cli, err = client.Dial(ctx, sock, info)
+		}
+	}
 	if err != nil {
 		// A version mismatch is not sticky in the way a dead daemon is: an
 		// operator may run `keeper daemon restart` and this same process
